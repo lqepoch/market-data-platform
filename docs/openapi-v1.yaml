@@ -1,0 +1,357 @@
+openapi: 3.1.0
+info:
+  title: LQEpoch Market Data Platform Read API
+  version: 1.0.0
+  description: >-
+    Read-only authenticated access to verified MDP datasets. Bars are the existing
+    lqepoch.us_equity_trade_bar_1m.v1 contract. They do not carry DatasetManifestV2
+    completion evidence. A future BarV2 response must use a separately versioned contract. The
+    router adds Cache-Control: no-store to every response, including authorization, extractor,
+    fallback, and overload errors; an existing Cache-Control value is preserved.
+servers:
+  - url: http://127.0.0.1:8088
+    description: Default loopback-only listener
+paths:
+  /healthz:
+    get:
+      operationId: liveness
+      summary: Process liveness
+      responses:
+        "200":
+          description: The HTTP process is serving requests.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    const: alive
+  /readyz:
+    get:
+      operationId: readiness
+      summary: Identity and transport configuration status
+      responses:
+        "200":
+          description: Required independent MDP verifier keys are configured.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+        "503":
+          description: The service is restricted to liveness because MDP keys are not configured.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Readiness"
+  /v1/datasets/{dataset_id}/bars:
+    get:
+      operationId: getDatasetBarsV1
+      summary: Read verified one-minute trade bars
+      description: >-
+        The JWT is checked before any request-level storage access or query. LocalTest transport
+        serves only the diagnostic namespace and always reports synthetic/synthetic/unknown
+        provenance. Curated reads require an independently authorized archive. No capture, upload,
+        account, or order operation is exposed.
+      security:
+        - mdpDelegation: []
+      parameters:
+        - name: dataset_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: namespace
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [diagnostic, curated]
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 16
+            pattern: "^[A-Z0-9.-]+$"
+      responses:
+        "200":
+          description: Verified V1 bars and the existing remote query summary.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BarsResponseV1"
+        "400":
+          description: Invalid symbol, dataset identifier, or query parameters.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid market:read delegation.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requested namespace is not authorized for the configured transport.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: The bounded result limit was exceeded.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "504":
+          description: Query deadline expired; in-flight worker cancellation is supervised.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: No authenticated service or verified query result is available.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+components:
+  headers:
+    NoStore:
+      description: Response is not cacheable by HTTP caches.
+      schema:
+        type: string
+        const: no-store
+  securitySchemes:
+    mdpDelegation:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >-
+        HS256 only; audience lqepoch-market-data; exact scope [market:read]; maximum lifetime
+        60 seconds; issuer and key are selected by kid: mdp-terminal maps to
+        eqoboard-openterminal and MDP_TERMINAL_JWT_SECRET, while mdp-research maps to
+        openterminal-research and MDP_RESEARCH_JWT_SECRET. These keys are distinct from each
+        other and from Gateway keys. Each BFF signer receives only its matching MDP key; the MDP
+        verifier receives both.
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum:
+            - invalid_request
+            - unauthorized
+            - not_authorized
+            - result_limit_exceeded
+            - query_timeout
+            - query_unavailable
+    Readiness:
+      type: object
+      required: [status, market_ready, source_entitlement]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        market_ready:
+          const: false
+          description: Remains false until trusted source and entitlement evidence is integrated.
+        source_entitlement:
+          const: unverified
+    BarsResponseV1:
+      type: object
+      required: [summary, rows]
+      properties:
+        summary:
+          $ref: "#/components/schemas/RemoteQuerySummary"
+        rows:
+          type: array
+          maxItems: 390
+          items:
+            $ref: "#/components/schemas/TradeMinuteBarV1"
+    RemoteQuerySummary:
+      type: object
+      required:
+        - namespace
+        - dataset_id
+        - schema_id
+        - source
+        - row_count
+        - returned_rows
+        - content_sha256
+        - parquet_schema_sha256
+        - cache_hit
+      properties:
+        namespace:
+          type: string
+          enum: [diagnostic, curated]
+        dataset_id:
+          type: string
+        schema_id:
+          const: lqepoch.us_equity_trade_bar_1m.v1
+        source:
+          $ref: "#/components/schemas/MarketDataSourceV1"
+        row_count:
+          description: Canonical base-10 string projection of an unsigned 64-bit value.
+          $ref: "#/components/schemas/WireU64"
+        returned_rows:
+          description: Canonical base-10 string projection of an unsigned 64-bit value.
+          $ref: "#/components/schemas/WireU64"
+        content_sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        parquet_schema_sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        cache_hit:
+          type: boolean
+    MarketDataSourceV1:
+      type: object
+      required: [provider, feed, entitlement, numeric_encoding]
+      properties:
+        provider:
+          type: string
+        feed:
+          type: string
+        entitlement:
+          type: string
+          enum: [unknown, authorized, unauthorized]
+        numeric_encoding:
+          type: string
+          enum:
+            - unspecified
+            - decimal_token
+            - integer_token
+            - binary_float64_shortest_decimal
+            - binary_float32_shortest_decimal
+            - raw_messagepack_bytes
+            - raw_json_bytes
+        source_record_id:
+          type: [string, "null"]
+    TradeMinuteBarV1:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - source_provider
+        - source_feed
+        - source_entitlement
+        - source_numeric_encoding
+        - symbol
+        - bar_start_utc
+        - bar_end_exclusive_utc
+        - available_at_utc
+        - trade_date
+        - session_id
+        - session_timezone
+        - session_policy_id
+        - session_policy_sha256
+        - session_start_utc
+        - session_end_exclusive_utc
+        - window_start_utc
+        - window_end_exclusive_utc
+        - open
+        - high
+        - low
+        - close
+        - volume
+        - trade_count
+        - quote_events_excluded
+        - source_timestamp_missing_rows
+        - sequence_gap_count
+        - late_event_count
+        - window_expected_minutes
+        - window_empty_trade_minutes
+        - source_start_utc
+        - source_end_exclusive_utc
+        - window_input_eof
+        - source_pages_exhausted
+        - completion_mode
+        - nbbo_input_status
+      properties:
+        schema_version:
+          type: integer
+          const: 1
+        source_provider: {type: string}
+        source_feed: {type: string}
+        source_entitlement: {type: string}
+        source_numeric_encoding: {type: string}
+        symbol: {type: string}
+        bar_start_utc: {$ref: "#/components/schemas/UtcTimestamp"}
+        bar_end_exclusive_utc: {$ref: "#/components/schemas/UtcTimestamp"}
+        available_at_utc: {$ref: "#/components/schemas/UtcTimestamp"}
+        trade_date: {type: string, format: date}
+        session_id: {type: string}
+        session_timezone: {type: string}
+        session_policy_id: {type: string}
+        session_policy_sha256: {type: string, pattern: "^[0-9a-f]{64}$"}
+        session_start_utc: {$ref: "#/components/schemas/UtcTimestamp"}
+        session_end_exclusive_utc: {$ref: "#/components/schemas/UtcTimestamp"}
+        window_start_utc: {$ref: "#/components/schemas/UtcTimestamp"}
+        window_end_exclusive_utc: {$ref: "#/components/schemas/UtcTimestamp"}
+        open: {$ref: "#/components/schemas/ExactDecimalString"}
+        high: {$ref: "#/components/schemas/ExactDecimalString"}
+        low: {$ref: "#/components/schemas/ExactDecimalString"}
+        close: {$ref: "#/components/schemas/ExactDecimalString"}
+        volume: {$ref: "#/components/schemas/ExactDecimalString"}
+        trade_count: {$ref: "#/components/schemas/WireU64"}
+        quote_events_excluded: {$ref: "#/components/schemas/WireU64"}
+        source_timestamp_missing_rows: {$ref: "#/components/schemas/WireU64"}
+        sequence_gap_count: {$ref: "#/components/schemas/WireU64"}
+        late_event_count: {$ref: "#/components/schemas/WireU64"}
+        window_expected_minutes: {$ref: "#/components/schemas/WireU64"}
+        window_empty_trade_minutes: {$ref: "#/components/schemas/WireU64"}
+        source_start_utc: {$ref: "#/components/schemas/UtcTimestamp"}
+        source_end_exclusive_utc: {$ref: "#/components/schemas/UtcTimestamp"}
+        window_input_eof: {type: boolean}
+        source_pages_exhausted:
+          type: [boolean, "null"]
+        completion_mode: {type: string}
+        nbbo_input_status: {type: string}
+    UtcTimestamp:
+      type: string
+      format: date-time
+      pattern: "Z$"
+    ExactDecimalString:
+      type: string
+      pattern: "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+    WireU64:
+      type: string
+      pattern: "^(0|[1-9][0-9]*)$"

@@ -6,8 +6,15 @@ use crate::error::StorageFailure;
 #[cfg(unix)]
 #[test]
 fn total_operation_deadline_kills_and_reaps_child() {
-    let mut command = Command::new("sleep");
-    command.arg("5");
+    let temp = tempfile::tempdir().unwrap();
+    let pid_path = temp.path().join("timeout-descendant.pid");
+    let mut command = Command::new("sh");
+    command
+        .args([
+            "-c",
+            "sleep 30 & echo $! > \"$MDP_TEST_CHILD_PID_FILE\"; wait",
+        ])
+        .env("MDP_TEST_CHILD_PID_FILE", &pid_path);
     let started = Instant::now();
     let result = run_bounded_command(command, 1024, Duration::from_millis(50));
     assert!(matches!(
@@ -15,6 +22,7 @@ fn total_operation_deadline_kills_and_reaps_child() {
         Err(MarketDataError::Storage(StorageFailure::Timeout))
     ));
     assert!(started.elapsed() < Duration::from_secs(2));
+    assert_pid_is_gone(read_pid(&pid_path));
 }
 
 #[cfg(unix)]
@@ -50,13 +58,51 @@ fn download_cap_kills_child_and_removes_partial_file() {
 #[cfg(unix)]
 #[test]
 fn command_deadline_closes_pipe_inherited_by_descendant_after_parent_exit() {
+    let temp = tempfile::tempdir().unwrap();
+    let pid_path = temp.path().join("inherited-pipe-descendant.pid");
     let mut command = Command::new("sh");
-    command.args(["-c", "sleep 30 & exit 0"]);
+    command
+        .args([
+            "-c",
+            "sleep 30 & echo $! > \"$MDP_TEST_CHILD_PID_FILE\"; exit 0",
+        ])
+        .env("MDP_TEST_CHILD_PID_FILE", &pid_path);
     let started = Instant::now();
     let result = run_bounded_command(command, 1024, Duration::from_secs(2)).unwrap();
     assert_eq!(result.status_code, 0);
     assert!(result.stdout.is_empty());
     assert!(started.elapsed() < Duration::from_secs(1));
+    assert_pid_is_gone(read_pid(&pid_path));
+}
+
+#[cfg(unix)]
+#[test]
+fn request_cancellation_kills_child_group_and_waits_for_reap() {
+    use std::thread;
+
+    let temp = tempfile::tempdir().unwrap();
+    let pid_path = temp.path().join("cancel-descendant.pid");
+    let cancellation = crate::cancellation::CancellationToken::new();
+    let worker_cancellation = cancellation.clone();
+    let worker_pid_path = pid_path.clone();
+    let worker = thread::spawn(move || {
+        let mut command = Command::new("sh");
+        command
+            .args([
+                "-c",
+                "sleep 30 & echo $! > \"$MDP_TEST_CHILD_PID_FILE\"; wait",
+            ])
+            .env("MDP_TEST_CHILD_PID_FILE", worker_pid_path);
+        run_bounded_command_cancellable(command, 1024, Duration::from_secs(10), worker_cancellation)
+    });
+    wait_for_file(&pid_path);
+    let descendant = read_pid(&pid_path);
+    cancellation.cancel();
+    assert!(matches!(
+        worker.join().unwrap(),
+        Err(MarketDataError::Storage(StorageFailure::Cancelled))
+    ));
+    assert_pid_is_gone(descendant);
 }
 
 #[cfg(unix)]
@@ -185,6 +231,79 @@ fn decode_worker_third_concurrent_request_fails_closed() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn rapid_worker_cancellation_keeps_capacity_until_child_group_is_reaped() {
+    use std::thread;
+
+    let _worker_guard = crate::parquet_worker::serialize_worker_test();
+    let temp = tempfile::tempdir().unwrap();
+    let markers = [
+        temp.path().join("cancel-1.pid"),
+        temp.path().join("cancel-2.pid"),
+    ];
+    let cancellations = [
+        crate::cancellation::CancellationToken::new(),
+        crate::cancellation::CancellationToken::new(),
+    ];
+    let workers = markers
+        .iter()
+        .zip(cancellations.iter())
+        .map(|(marker, cancellation)| {
+            let marker = marker.clone();
+            let cancellation = cancellation.clone();
+            thread::spawn(move || {
+                let mut command = Command::new("sh");
+                command
+                    .args([
+                        "-c",
+                        "sleep 30 & echo $! > \"$MDP_TEST_CHILD_PID_FILE\"; wait",
+                    ])
+                    .env("MDP_TEST_CHILD_PID_FILE", marker);
+                run_bounded_decode_worker_cancellable(
+                    command,
+                    1024,
+                    Duration::from_secs(10),
+                    cancellation,
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    for marker in &markers {
+        wait_for_file(marker);
+    }
+    let descendants = markers
+        .iter()
+        .map(|path| read_pid(path))
+        .collect::<Vec<_>>();
+    assert_eq!(process::active_decode_worker_count(), 2);
+    assert!(matches!(
+        run_bounded_decode_worker(Command::new("true"), 1024, Duration::from_secs(2)),
+        Err(MarketDataError::WriterLimit)
+    ));
+
+    cancellations
+        .iter()
+        .for_each(crate::cancellation::CancellationToken::cancel);
+    let attempt_while_cleaning =
+        run_bounded_decode_worker(Command::new("true"), 1024, Duration::from_secs(2));
+    for worker in workers {
+        assert!(matches!(
+            worker.join().unwrap(),
+            Err(MarketDataError::Storage(StorageFailure::Cancelled))
+        ));
+    }
+    for descendant in descendants {
+        assert_pid_is_gone(descendant);
+    }
+    if matches!(attempt_while_cleaning, Err(MarketDataError::WriterLimit)) {
+        run_bounded_decode_worker(Command::new("true"), 1024, Duration::from_secs(2)).unwrap();
+    } else {
+        attempt_while_cleaning.unwrap();
+    }
+    assert_eq!(process::active_decode_worker_count(), 0);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn decode_worker_enforces_output_and_deadline_and_rejects_child_error() {
     let _worker_guard = crate::parquet_worker::serialize_worker_test();
     assert!(matches!(
@@ -210,5 +329,46 @@ fn decode_worker_wait_child() {
         std::fs::write(marker, std::process::id().to_string()).unwrap();
         std::thread::sleep(Duration::from_millis(500));
         println!("DECODE_WORKER_DONE");
+    }
+}
+
+#[cfg(unix)]
+fn wait_for_file(path: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !path.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        path.is_file(),
+        "expected child PID marker at {}",
+        path.display()
+    );
+}
+
+#[cfg(unix)]
+fn read_pid(path: &Path) -> i32 {
+    std::fs::read_to_string(path)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}
+
+#[cfg(unix)]
+fn assert_pid_is_gone(process_id: i32) {
+    use rustix::process::{Pid, Signal, kill_process};
+
+    let pid = Pid::from_raw(process_id).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match kill_process(pid, Signal::KILL) {
+            Err(rustix::io::Errno::SRCH) => return,
+            Ok(()) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            result => {
+                panic!("descendant PID {process_id} remained after supervised cleanup: {result:?}")
+            }
+        }
     }
 }

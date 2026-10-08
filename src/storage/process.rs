@@ -11,7 +11,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{MarketDataError, Result, error::StorageFailure, queue::BackgroundWorkerPermit};
+use crate::{
+    MarketDataError, Result, cancellation::CancellationToken, error::StorageFailure,
+    queue::BackgroundWorkerPermit,
+};
 
 use super::RemoveFileOnDrop;
 
@@ -20,6 +23,11 @@ const DECODE_WORKER_MAX_ADDRESS_SPACE: u64 = 1024 * 1024 * 1024;
 const DECODE_WORKER_CPU_SECONDS: u64 = 60;
 pub(crate) const MAX_DECODE_WORKER_OUTPUT_BYTES: usize = 256 * 1024 * 1024;
 static ACTIVE_DECODE_WORKERS: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(super) fn active_decode_worker_count() -> usize {
+    ACTIVE_DECODE_WORKERS.load(Ordering::Acquire)
+}
 
 struct DecodeWorkerPermit;
 
@@ -65,7 +73,14 @@ impl SupervisedProcess {
         mut command: Command,
         operation_timeout: Duration,
         worker_name: &'static str,
+        cancellation: Option<CancellationToken>,
     ) -> Result<Self> {
+        if cancellation
+            .as_ref()
+            .is_some_and(CancellationToken::is_cancelled)
+        {
+            return Err(MarketDataError::Storage(StorageFailure::Cancelled));
+        }
         configure_process_group(&mut command)?;
         let supervisor_permit = BackgroundWorkerPermit::acquire()?;
         let deadline = Instant::now()
@@ -78,7 +93,13 @@ impl SupervisedProcess {
             .name(worker_name.to_owned())
             .spawn(move || {
                 let _supervisor_permit = supervisor_permit;
-                supervise_child(child_receiver, cancel_receiver, exit_sender, deadline);
+                supervise_child(
+                    child_receiver,
+                    cancel_receiver,
+                    exit_sender,
+                    deadline,
+                    cancellation,
+                );
             })
             .map_err(|_| MarketDataError::Storage(StorageFailure::Spawn))?;
 
@@ -163,12 +184,17 @@ fn supervise_child(
     cancel_receiver: Receiver<()>,
     exit_sender: SyncSender<SupervisedExit>,
     deadline: Instant,
+    cancellation: Option<CancellationToken>,
 ) {
     let Ok(mut child) = child_receiver.recv() else {
         return;
     };
     loop {
-        if cancel_receiver.try_recv().is_ok() {
+        if cancel_receiver.try_recv().is_ok()
+            || cancellation
+                .as_ref()
+                .is_some_and(CancellationToken::is_cancelled)
+        {
             let status = terminate_process_group(&mut child);
             let outcome = if status.is_ok() {
                 SupervisedExit::Cancelled
@@ -258,8 +284,30 @@ pub(super) fn run_bounded_command(
     output_cap: usize,
     operation_timeout: Duration,
 ) -> Result<CommandOutput> {
-    let mut process =
-        SupervisedProcess::start(command, operation_timeout, "mdp-rclone-supervisor")?;
+    run_bounded_command_with_cancel(command, output_cap, operation_timeout, None)
+}
+
+pub(super) fn run_bounded_command_cancellable(
+    command: Command,
+    output_cap: usize,
+    operation_timeout: Duration,
+    cancellation: CancellationToken,
+) -> Result<CommandOutput> {
+    run_bounded_command_with_cancel(command, output_cap, operation_timeout, Some(cancellation))
+}
+
+fn run_bounded_command_with_cancel(
+    command: Command,
+    output_cap: usize,
+    operation_timeout: Duration,
+    cancellation: Option<CancellationToken>,
+) -> Result<CommandOutput> {
+    let mut process = SupervisedProcess::start(
+        command,
+        operation_timeout,
+        "mdp-command-supervisor",
+        cancellation.clone(),
+    )?;
     let mut output = Vec::with_capacity(output_cap.min(64 * 1024));
     let read_result = process
         .stdout
@@ -274,7 +322,19 @@ pub(super) fn run_bounded_command(
     if malformed_output {
         process.cancel();
     }
+    if cancellation
+        .as_ref()
+        .is_some_and(CancellationToken::is_cancelled)
+    {
+        process.cancel();
+    }
     let outcome = process.finish()?;
+    if cancellation
+        .as_ref()
+        .is_some_and(CancellationToken::is_cancelled)
+    {
+        return Err(MarketDataError::Storage(StorageFailure::Cancelled));
+    }
     if matches!(outcome, SupervisedExit::TimedOut) {
         return Err(MarketDataError::Storage(StorageFailure::Timeout));
     }
@@ -291,16 +351,40 @@ pub(super) fn run_bounded_command(
 }
 
 pub(super) fn run_bounded_decode_worker(
+    command: Command,
+    output_cap: usize,
+    operation_timeout: Duration,
+) -> Result<Vec<u8>> {
+    run_bounded_decode_worker_with_cancel(command, output_cap, operation_timeout, None)
+}
+
+pub(super) fn run_bounded_decode_worker_cancellable(
+    command: Command,
+    output_cap: usize,
+    operation_timeout: Duration,
+    cancellation: CancellationToken,
+) -> Result<Vec<u8>> {
+    run_bounded_decode_worker_with_cancel(
+        command,
+        output_cap,
+        operation_timeout,
+        Some(cancellation),
+    )
+}
+
+fn run_bounded_decode_worker_with_cancel(
     mut command: Command,
     output_cap: usize,
     operation_timeout: Duration,
+    cancellation: Option<CancellationToken>,
 ) -> Result<Vec<u8>> {
     if output_cap == 0 || output_cap > MAX_DECODE_WORKER_OUTPUT_BYTES {
         return Err(MarketDataError::InputLimit);
     }
     let _decode_permit = DecodeWorkerPermit::acquire()?;
     configure_decode_worker_limits(&mut command)?;
-    let output = run_bounded_command(command, output_cap, operation_timeout)?;
+    let output =
+        run_bounded_command_with_cancel(command, output_cap, operation_timeout, cancellation)?;
     if output.status_code != 0 {
         return Err(MarketDataError::Parquet);
     }
@@ -349,6 +433,32 @@ pub(super) fn run_bounded_download(
     output_cap: u64,
     operation_timeout: Duration,
 ) -> Result<()> {
+    run_bounded_download_with_cancel(command, destination, output_cap, operation_timeout, None)
+}
+
+pub(super) fn run_bounded_download_cancellable(
+    command: Command,
+    destination: &Path,
+    output_cap: u64,
+    operation_timeout: Duration,
+    cancellation: CancellationToken,
+) -> Result<()> {
+    run_bounded_download_with_cancel(
+        command,
+        destination,
+        output_cap,
+        operation_timeout,
+        Some(cancellation),
+    )
+}
+
+fn run_bounded_download_with_cancel(
+    command: Command,
+    destination: &Path,
+    output_cap: u64,
+    operation_timeout: Duration,
+    cancellation: Option<CancellationToken>,
+) -> Result<()> {
     if output_cap == 0 {
         return Err(MarketDataError::InvalidInput);
     }
@@ -365,13 +475,24 @@ pub(super) fn run_bounded_download(
         .create_new(true)
         .open(destination)?;
     let mut cleanup = RemoveFileOnDrop(Some(destination.to_path_buf()));
-    let mut process =
-        SupervisedProcess::start(command, operation_timeout, "mdp-rclone-download-supervisor")?;
+    let mut process = SupervisedProcess::start(
+        command,
+        operation_timeout,
+        "mdp-download-supervisor",
+        cancellation.clone(),
+    )?;
     let mut received = 0_u64;
     let mut buffer = [0_u8; 64 * 1024];
     let mut over_limit = false;
     let mut output_error = None;
     loop {
+        if cancellation
+            .as_ref()
+            .is_some_and(CancellationToken::is_cancelled)
+        {
+            process.cancel();
+            break;
+        }
         match process.stdout.read(&mut buffer) {
             Ok(0) => break,
             Ok(count) => {
@@ -400,6 +521,12 @@ pub(super) fn run_bounded_download(
         }
     }
     let outcome = process.finish()?;
+    if cancellation
+        .as_ref()
+        .is_some_and(CancellationToken::is_cancelled)
+    {
+        return Err(MarketDataError::Storage(StorageFailure::Cancelled));
+    }
     if matches!(outcome, SupervisedExit::TimedOut) {
         return Err(MarketDataError::Storage(StorageFailure::Timeout));
     }

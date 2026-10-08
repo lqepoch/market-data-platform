@@ -79,6 +79,16 @@ name = "digest"
 version = "=0.11.3"
 reason = "The pinned SHA-2 0.10 and rustls WebPKI SHA-1 0.11 stacks use different digest API generations; this exact dependency version is reviewed."
 
+[[bans.skip]]
+name = "base64"
+version = "=0.22.1"
+reason = "jsonwebtoken 10.3.0 requires the 0.22 API while Parquet 60.0.0 requires 0.23; both exact versions are reviewed and further duplicates remain denied."
+
+[[bans.skip]]
+name = "untrusted"
+version = "=0.7.1"
+reason = "aws-lc-rs 1.18.1 uses the 0.7 API while the pinned rustls stack requires 0.9; both exact versions are reviewed and further duplicates remain denied."
+
 [licenses]
 allow = [
   "Apache-2.0",

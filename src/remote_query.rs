@@ -19,6 +19,7 @@ use crate::{
     MarketDataError, Result,
     aggregate::TradeMinuteBarV1,
     archive::TransportKind,
+    cancellation::CancellationToken,
     config::DriveConfig,
     parquet_store::{self, ParquetVerification},
     parquet_worker,
@@ -45,7 +46,7 @@ mod cleanup;
 mod export;
 use cache_fs::*;
 pub use cleanup::{RemoteCacheCleaner, RemoteCacheCleanupReport};
-use cleanup::{read_cache_receipt, verify_cache_contents};
+use cleanup::{read_cache_receipt, verify_cache_contents_cancellable};
 pub use export::write_bars_jsonl_bounded;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -181,7 +182,43 @@ impl Drop for TempDirectoryCleanup {
     }
 }
 
+struct PublishedCacheCleanup(Option<PathBuf>);
+
+impl PublishedCacheCleanup {
+    fn new(path: PathBuf) -> Self {
+        Self(Some(path))
+    }
+
+    fn keep(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for PublishedCacheCleanup {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take() {
+            let receipt = path.join(CACHE_RECEIPT_NAME);
+            let _ = fs::remove_file(receipt);
+            let _ = fs::remove_dir_all(path);
+        }
+    }
+}
+
+pub(super) fn ensure_not_cancelled(cancellation: &CancellationToken) -> Result<()> {
+    if cancellation.is_cancelled() {
+        Err(MarketDataError::Storage(
+            crate::error::StorageFailure::Cancelled,
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 impl RemoteArchiveReader {
+    pub fn transport_kind(&self) -> TransportKind {
+        self.transport_kind
+    }
+
     pub fn local_test(
         transport: LocalTestTransport,
         cache_root: impl Into<PathBuf>,
@@ -193,6 +230,22 @@ impl RemoteArchiveReader {
             cache_root.into(),
             limits,
         )
+    }
+
+    /// Construct a local-test reader whose Parquet decoding always runs in the bounded worker.
+    pub fn local_test_isolated(
+        transport: LocalTestTransport,
+        cache_root: impl Into<PathBuf>,
+        limits: RemoteCacheLimits,
+    ) -> Result<Self> {
+        let mut reader = Self::new(
+            Arc::new(transport),
+            TransportKind::LocalTest,
+            cache_root.into(),
+            limits,
+        )?;
+        reader.isolate_parquet_decode = true;
+        Ok(reader)
     }
 
     pub fn rclone_drive(
@@ -258,11 +311,39 @@ impl RemoteArchiveReader {
         dataset_id: &str,
         symbol_filter: Option<&str>,
     ) -> Result<(Vec<TradeMinuteBarV1>, RemoteQuerySummary)> {
-        let verified = self.ensure_cached(namespace, dataset_id)?;
+        self.query_bars_with_cancellation(namespace, dataset_id, symbol_filter, None)
+    }
+
+    pub fn query_bars_cancellable(
+        &self,
+        namespace: DatasetNamespace,
+        dataset_id: &str,
+        symbol_filter: Option<&str>,
+        cancellation: &CancellationToken,
+    ) -> Result<(Vec<TradeMinuteBarV1>, RemoteQuerySummary)> {
+        self.query_bars_with_cancellation(namespace, dataset_id, symbol_filter, Some(cancellation))
+    }
+
+    fn query_bars_with_cancellation(
+        &self,
+        namespace: DatasetNamespace,
+        dataset_id: &str,
+        symbol_filter: Option<&str>,
+        cancellation: Option<&CancellationToken>,
+    ) -> Result<(Vec<TradeMinuteBarV1>, RemoteQuerySummary)> {
+        if let Some(token) = cancellation {
+            ensure_not_cancelled(token)?;
+        }
+        let verified = self.ensure_cached_with_cancellation(namespace, dataset_id, cancellation)?;
+        let mut cleanup = (!verified.cache_hit)
+            .then(|| PublishedCacheCleanup::new(verified.path.parent().unwrap().to_path_buf()));
         if verified.parquet.schema_id != MINUTE_BAR_SCHEMA_ID {
             return Err(MarketDataError::ParquetSchema);
         }
-        let rows = self.query_cached_bars(&verified.path, symbol_filter)?;
+        let rows = self.query_cached_bars(&verified.path, symbol_filter, cancellation)?;
+        if let Some(token) = cancellation {
+            ensure_not_cancelled(token)?;
+        }
         let returned_rows = u64::try_from(rows.len()).map_err(|_| MarketDataError::InputLimit)?;
         let summary = RemoteQuerySummary {
             namespace,
@@ -275,6 +356,9 @@ impl RemoteArchiveReader {
             parquet_schema_sha256: verified.parquet.schema_sha256,
             cache_hit: verified.cache_hit,
         };
+        if let Some(cleanup) = cleanup.as_mut() {
+            cleanup.keep();
+        }
         Ok((rows, summary))
     }
 
@@ -289,7 +373,7 @@ impl RemoteArchiveReader {
         if verified.parquet.schema_id != MINUTE_BAR_SCHEMA_ID {
             return Err(MarketDataError::ParquetSchema);
         }
-        let rows = self.query_cached_bars(&verified.path, symbol_filter)?;
+        let rows = self.query_cached_bars(&verified.path, symbol_filter, None)?;
         write_bars_jsonl_bounded(destination, &rows, self.limits.max_export_bytes)?;
         let returned_rows = u64::try_from(rows.len()).map_err(|_| MarketDataError::InputLimit)?;
         Ok(RemoteQuerySummary {
@@ -309,15 +393,30 @@ impl RemoteArchiveReader {
         &self,
         path: &Path,
         symbol_filter: Option<&str>,
+        cancellation: Option<&CancellationToken>,
     ) -> Result<Vec<TradeMinuteBarV1>> {
         if self.isolate_parquet_decode {
-            parquet_worker::query_bars(
-                path,
-                symbol_filter,
-                self.limits.max_query_rows,
-                self.limits.max_query_result_bytes,
-            )
+            match cancellation {
+                Some(token) => parquet_worker::query_bars_cancellable(
+                    path,
+                    symbol_filter,
+                    self.limits.max_query_rows,
+                    self.limits.max_query_result_bytes,
+                    token.clone(),
+                ),
+                None => parquet_worker::query_bars(
+                    path,
+                    symbol_filter,
+                    self.limits.max_query_rows,
+                    self.limits.max_query_result_bytes,
+                ),
+            }
         } else {
+            if cancellation.is_some() {
+                return Err(MarketDataError::Storage(
+                    crate::error::StorageFailure::Unsupported,
+                ));
+            }
             parquet_store::query_bars_with_limits(
                 path,
                 symbol_filter,
@@ -332,6 +431,18 @@ impl RemoteArchiveReader {
         namespace: DatasetNamespace,
         dataset_id: &str,
     ) -> Result<VerifiedCache> {
+        self.ensure_cached_with_cancellation(namespace, dataset_id, None)
+    }
+
+    fn ensure_cached_with_cancellation(
+        &self,
+        namespace: DatasetNamespace,
+        dataset_id: &str,
+        cancellation: Option<&CancellationToken>,
+    ) -> Result<VerifiedCache> {
+        if let Some(token) = cancellation {
+            ensure_not_cancelled(token)?;
+        }
         if !safe_component(dataset_id)
             || dataset_id.starts_with('.')
             || dataset_id.ends_with('.')
@@ -361,15 +472,25 @@ impl RemoteArchiveReader {
                 namespaced_dataset_id(namespace.as_str(), dataset_id)?
             }
         };
-        let observed_manifest = self
-            .transport
-            .lookup(&transport_dataset_id, &manifest_name)?
-            .ok_or(MarketDataError::UnknownOutcome)?;
+        let observed_manifest = match cancellation {
+            Some(token) => {
+                self.transport
+                    .lookup_cancellable(&transport_dataset_id, &manifest_name, token)?
+            }
+            None => self
+                .transport
+                .lookup(&transport_dataset_id, &manifest_name)?,
+        }
+        .ok_or(MarketDataError::UnknownOutcome)?;
         validate_remote_object(&observed_manifest, self.limits.max_manifest_bytes)?;
-        let observed_object = self
-            .transport
-            .lookup(&transport_dataset_id, &object_name)?
-            .ok_or(MarketDataError::UnknownOutcome)?;
+        let observed_object = match cancellation {
+            Some(token) => {
+                self.transport
+                    .lookup_cancellable(&transport_dataset_id, &object_name, token)?
+            }
+            None => self.transport.lookup(&transport_dataset_id, &object_name)?,
+        }
+        .ok_or(MarketDataError::UnknownOutcome)?;
         validate_remote_object(&observed_object, self.limits.max_object_bytes)?;
 
         let namespace_dir = self.cache_root.join(namespace.as_str());
@@ -389,13 +510,14 @@ impl RemoteArchiveReader {
                 .checked_sub(existing.verified_at_unix_seconds)
                 .ok_or(MarketDataError::UnknownOutcome)?;
             if age < self.limits.ttl.as_secs() {
-                let mut verified = verify_cache_contents(
+                let mut verified = verify_cache_contents_cancellable(
                     dataset_id,
                     &cache_dir,
                     &existing,
                     namespace,
                     &self.limits,
                     self.isolate_parquet_decode,
+                    cancellation,
                 )?;
                 verified.cache_hit = true;
                 verified._dataset_lock = Some(lock_file);
@@ -423,13 +545,23 @@ impl RemoteArchiveReader {
         let mut cleanup = TempDirectoryCleanup(Some(partial.clone()));
         let manifest_path = partial.join(CACHE_MANIFEST_NAME);
         let object_path = partial.join(&object_name);
-        self.transport.download_with_limit(
-            &transport_dataset_id,
-            &manifest_name,
-            &manifest_path,
-            observed_manifest.size_bytes,
-        )?;
-        let manifest_bytes = read_bounded(&manifest_path, self.limits.max_manifest_bytes)?;
+        match cancellation {
+            Some(token) => self.transport.download_with_limit_cancellable(
+                &transport_dataset_id,
+                &manifest_name,
+                &manifest_path,
+                observed_manifest.size_bytes,
+                token,
+            )?,
+            None => self.transport.download_with_limit(
+                &transport_dataset_id,
+                &manifest_name,
+                &manifest_path,
+                observed_manifest.size_bytes,
+            )?,
+        }
+        let manifest_bytes =
+            read_bounded_cancellable(&manifest_path, self.limits.max_manifest_bytes, cancellation)?;
         if manifest_bytes.len() as u64 != observed_manifest.size_bytes {
             return Err(MarketDataError::UnknownOutcome);
         }
@@ -443,13 +575,23 @@ impl RemoteArchiveReader {
             &manifest,
             &observed_object,
         )?;
-        self.transport.download_with_limit(
-            &transport_dataset_id,
-            &object_name,
-            &object_path,
-            observed_object.size_bytes,
-        )?;
-        let object_hash = hash_file(&object_path, self.limits.max_object_bytes)?;
+        match cancellation {
+            Some(token) => self.transport.download_with_limit_cancellable(
+                &transport_dataset_id,
+                &object_name,
+                &object_path,
+                observed_object.size_bytes,
+                token,
+            )?,
+            None => self.transport.download_with_limit(
+                &transport_dataset_id,
+                &object_name,
+                &object_path,
+                observed_object.size_bytes,
+            )?,
+        }
+        let object_hash =
+            hash_file_cancellable(&object_path, self.limits.max_object_bytes, cancellation)?;
         if object_hash.size_bytes != observed_object.size_bytes
             || object_hash.content_sha256 != manifest.object.content_sha256
         {
@@ -457,10 +599,28 @@ impl RemoteArchiveReader {
         }
         let schema_id = schema_id_for_hash(&manifest.object.parquet_schema_sha256)?;
         let parquet = if self.isolate_parquet_decode {
-            parquet_worker::verify(&object_path, schema_id, self.limits.max_object_bytes)?
+            match cancellation {
+                Some(token) => parquet_worker::verify_cancellable(
+                    &object_path,
+                    schema_id,
+                    self.limits.max_object_bytes,
+                    token.clone(),
+                )?,
+                None => {
+                    parquet_worker::verify(&object_path, schema_id, self.limits.max_object_bytes)?
+                }
+            }
         } else {
+            if cancellation.is_some() {
+                return Err(MarketDataError::Storage(
+                    crate::error::StorageFailure::Unsupported,
+                ));
+            }
             parquet_store::verify_with_limit(&object_path, schema_id, self.limits.max_object_bytes)?
         };
+        if let Some(token) = cancellation {
+            ensure_not_cancelled(token)?;
+        }
         validate_manifest_facts(&manifest, &parquet)?;
 
         let receipt = RemoteCacheReceiptV1 {
@@ -478,11 +638,17 @@ impl RemoteArchiveReader {
             parquet_schema_sha256: parquet.schema_sha256.clone(),
             verified_at_unix_seconds: (self.now_unix_seconds)(),
         };
+        if let Some(token) = cancellation {
+            ensure_not_cancelled(token)?;
+        }
         write_new_synced(
             &partial.join(CACHE_RECEIPT_NAME),
             &serde_json::to_vec(&receipt)?,
         )?;
         File::open(&partial)?.sync_all()?;
+        if let Some(token) = cancellation {
+            ensure_not_cancelled(token)?;
+        }
 
         if cache_dir.exists() {
             let previous = self.read_receipt(&cache_dir, namespace, dataset_id)?;
@@ -494,6 +660,7 @@ impl RemoteArchiveReader {
             {
                 return Err(MarketDataError::Conflict);
             }
+            let mut published_cleanup = PublishedCacheCleanup::new(cache_dir.clone());
             replace_verified_file(
                 &partial.join(CACHE_MANIFEST_NAME),
                 &cache_dir.join(CACHE_MANIFEST_NAME),
@@ -506,22 +673,48 @@ impl RemoteArchiveReader {
             File::open(&cache_dir)?.sync_all()?;
             fs::remove_dir(&partial)?;
             cleanup.0 = None;
+            if let Some(token) = cancellation {
+                ensure_not_cancelled(token)?;
+            }
+            let mut verified = verify_cache_contents_cancellable(
+                dataset_id,
+                &cache_dir,
+                &receipt,
+                namespace,
+                &self.limits,
+                self.isolate_parquet_decode,
+                cancellation,
+            )?;
+            verified.cache_hit = false;
+            verified._dataset_lock = Some(lock_file);
+            published_cleanup.keep();
+            return Ok(verified);
         } else {
             fs::rename(&partial, &cache_dir)?;
+            let mut published_cleanup = PublishedCacheCleanup::new(cache_dir.clone());
             File::open(&namespace_dir)?.sync_all()?;
+            if let Some(token) = cancellation {
+                ensure_not_cancelled(token)?;
+            }
+            let mut verified = verify_cache_contents_cancellable(
+                dataset_id,
+                &cache_dir,
+                &receipt,
+                namespace,
+                &self.limits,
+                self.isolate_parquet_decode,
+                cancellation,
+            )?;
+            verified.cache_hit = false;
+            verified._dataset_lock = Some(lock_file);
+            published_cleanup.keep();
             cleanup.0 = None;
+            return Ok(verified);
         }
-        let mut verified = verify_cache_contents(
-            dataset_id,
-            &cache_dir,
-            &receipt,
-            namespace,
-            &self.limits,
-            self.isolate_parquet_decode,
-        )?;
-        verified.cache_hit = false;
-        verified._dataset_lock = Some(lock_file);
-        Ok(verified)
+        #[allow(unreachable_code)]
+        Err(MarketDataError::Storage(
+            crate::error::StorageFailure::CommandFailed,
+        ))
     }
 
     fn check_cache_budget(

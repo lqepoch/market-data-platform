@@ -187,6 +187,51 @@ datasets, and preserves unknown, malformed, incomplete, or unverified directorie
 does not load rclone configuration or contact Drive. Browser access remains behind an authenticated
 BFF.
 
+The HTTP service is a read-only facade over this same query path. Its only data route is
+`GET /v1/datasets/{dataset_id}/bars`, with required `namespace` and `symbol` query parameters. The
+JSON response is `{summary: ..., rows: TradeMinuteBarV1[]}` and uses the existing V1 bar
+contract. The HTTP summary preserves `RemoteQuerySummary` fields but projects `row_count` and
+`returned_rows` as canonical decimal strings; CLI JSON keeps numeric values. It does not attach or
+imply core DatasetManifestV2 completion evidence. The
+hand-maintained OpenAPI description is `docs/openapi-v1.yaml`, and schema goldens remain the type
+authority. LocalTest service instances accept only `diagnostic` and preserve
+`synthetic/synthetic/unknown` provenance. There is no route for capture, upload, accounts, or orders.
+
+The HTTP verifier requires an independent JWT key pair and audience. It accepts HS256 only, requires
+exactly `scope=["market:read"]`, an `lqepoch-market-data` audience, a lifetime no longer than 60
+seconds, and a fixed issuer/key mapping: `mdp-terminal` with `eqoboard-openterminal`, or
+`mdp-research` with `openterminal-research`. Terminal and research MDP secrets differ from one
+another and from Gateway keys. The corresponding trusted BFF signer receives only its one MDP key;
+MDP receives both. This repository slice verifies tokens but does not issue them or modify the Eqo
+BFF. Authorization runs before request-level storage reads, index lookup, or Parquet query. The
+default listener is loopback; any non-loopback bind requires both independent keys. `/healthz` is
+liveness only. `/readyz` confirms configured identity/transport and always reports
+`market_ready=false` / `source_entitlement=unverified`.
+
+The offline container smoke copies a host-built binary into an already cached runtime image by
+exact SHA-256, disables image pulls and networking, and reports host/runtime architecture and glibc
+versions. It exercises SIGINT and SIGTERM against the running process; the SIGTERM case observes an
+active isolated Parquet worker during authenticated synthetic query load and confirms the service
+joins its query supervisor before exiting. Successful startup and HTTP probes establish
+compatibility only with that local runtime image; this is not a container source build or production
+deployment validation. Production images must use a separately reviewed immutable registry digest.
+
+HTTP queries run through a service-owned supervisor, not Tokio's async executor. At most two
+blocking query jobs are active and two more can wait. The 120-second request deadline and dropped
+request cancel the shared token; the supervisor keeps job capacity until all owned children are
+killed and reaped. Shutdown cancels and joins active jobs before returning. On Unix the service
+registers SIGINT and SIGTERM before binding and routes both to the same shutdown path; registration
+failure aborts startup. Other platforms retain Tokio's portable Ctrl-C handler. Any handler error
+stops the listener and is reported after supervisor cleanup. Cache publication has a cleanup guard
+so a canceled query cannot leave a successful receipt. Linux process-group supervision remains
+mandatory; unsupported platforms fail closed instead of decoding inline.
+
+The root Dockerfile is runtime-only and requires a caller-supplied immutable base image reference.
+It does not compile Rust, fetch packages, or include rclone; the checked-in offline container smoke
+uses a cached base image ID and a host-built binary whose SHA-256 is checked after copying. This is a
+LocalTest startup/auth/query smoke, not a Drive-enabled deployment image or a production build
+attestation. A production runtime must supply a reviewed base with pinned rclone.
+
 `cleanup-staging` defaults to report-only. Applying it considers only recognized MDP temp filename
 patterns whose owner PID is no longer live, whose per-dataset publication lock can be acquired, and
 whose receipt is absent or whose committed receipt matches a validated local manifest. Mismatched,

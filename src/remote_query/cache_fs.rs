@@ -107,14 +107,35 @@ pub(super) fn schema_id_for_hash(hash: &str) -> Result<&'static str> {
 }
 
 pub(super) fn read_bounded(path: &Path, maximum: u64) -> Result<Vec<u8>> {
+    read_bounded_cancellable(path, maximum, None)
+}
+
+pub(super) fn read_bounded_cancellable(
+    path: &Path,
+    maximum: u64,
+    cancellation: Option<&CancellationToken>,
+) -> Result<Vec<u8>> {
+    if let Some(token) = cancellation {
+        ensure_not_cancelled(token)?;
+    }
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.file_type().is_file() || metadata.len() == 0 || metadata.len() > maximum {
         return Err(MarketDataError::InputLimit);
     }
     let file = File::open(path)?;
     let mut bytes = Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or(0));
-    file.take(maximum.saturating_add(1))
-        .read_to_end(&mut bytes)?;
+    let mut bounded = file.take(maximum.saturating_add(1));
+    let mut buffer = [0_u8; 16 * 1024];
+    loop {
+        if let Some(token) = cancellation {
+            ensure_not_cancelled(token)?;
+        }
+        let count = bounded.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buffer[..count]);
+    }
     if bytes.len() as u64 > maximum {
         return Err(MarketDataError::InputLimit);
     }
@@ -126,7 +147,14 @@ pub(super) struct FileHash {
     pub(super) size_bytes: u64,
 }
 
-pub(super) fn hash_file(path: &Path, maximum: u64) -> Result<FileHash> {
+pub(super) fn hash_file_cancellable(
+    path: &Path,
+    maximum: u64,
+    cancellation: Option<&CancellationToken>,
+) -> Result<FileHash> {
+    if let Some(token) = cancellation {
+        ensure_not_cancelled(token)?;
+    }
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.file_type().is_file() || metadata.len() == 0 || metadata.len() > maximum {
         return Err(MarketDataError::InputLimit);
@@ -136,6 +164,9 @@ pub(super) fn hash_file(path: &Path, maximum: u64) -> Result<FileHash> {
     let mut total = 0_u64;
     let mut buffer = [0_u8; 64 * 1024];
     loop {
+        if let Some(token) = cancellation {
+            ensure_not_cancelled(token)?;
+        }
         let count = file.read(&mut buffer)?;
         if count == 0 {
             break;
@@ -152,6 +183,16 @@ pub(super) fn hash_file(path: &Path, maximum: u64) -> Result<FileHash> {
         content_sha256: hex::encode(hasher.finalize()),
         size_bytes: total,
     })
+}
+
+fn ensure_not_cancelled(cancellation: &CancellationToken) -> Result<()> {
+    if cancellation.is_cancelled() {
+        Err(MarketDataError::Storage(
+            crate::error::StorageFailure::Cancelled,
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 pub(super) fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<()> {

@@ -372,9 +372,33 @@ pub(super) fn verify_cache_contents(
     limits: &RemoteCacheLimits,
     isolate_parquet_decode: bool,
 ) -> Result<VerifiedCache> {
+    verify_cache_contents_cancellable(
+        dataset_id,
+        cache_dir,
+        receipt,
+        namespace,
+        limits,
+        isolate_parquet_decode,
+        None,
+    )
+}
+
+pub(super) fn verify_cache_contents_cancellable(
+    dataset_id: &str,
+    cache_dir: &Path,
+    receipt: &RemoteCacheReceiptV1,
+    namespace: DatasetNamespace,
+    limits: &RemoteCacheLimits,
+    isolate_parquet_decode: bool,
+    cancellation: Option<&CancellationToken>,
+) -> Result<VerifiedCache> {
+    if let Some(token) = cancellation {
+        ensure_not_cancelled(token)?;
+    }
     validate_cache_layout(cache_dir, dataset_id)?;
     let manifest_path = cache_dir.join(CACHE_MANIFEST_NAME);
-    let manifest_bytes = read_bounded(&manifest_path, limits.max_manifest_bytes)?;
+    let manifest_bytes =
+        read_bounded_cancellable(&manifest_path, limits.max_manifest_bytes, cancellation)?;
     if sha256(&manifest_bytes) != receipt.manifest_sha256
         || manifest_bytes.len() as u64 != receipt.manifest_remote_size_bytes
     {
@@ -393,7 +417,7 @@ pub(super) fn verify_cache_contents(
     manifest.validate().map_err(|_| MarketDataError::Contract)?;
     validate_namespace(namespace, &manifest)?;
     let object_path = cache_dir.join(object_name);
-    let object_hash = hash_file(&object_path, limits.max_object_bytes)?;
+    let object_hash = hash_file_cancellable(&object_path, limits.max_object_bytes, cancellation)?;
     if object_hash.size_bytes != receipt.object_remote_size_bytes
         || object_hash.content_sha256 != receipt.object_sha256
         || object_hash.content_sha256 != manifest.object.content_sha256
@@ -402,13 +426,24 @@ pub(super) fn verify_cache_contents(
     }
     let schema_id = schema_id_for_hash(&manifest.object.parquet_schema_sha256)?;
     let parquet = if isolate_parquet_decode {
-        parquet_worker::verify(&object_path, schema_id, limits.max_object_bytes)?
+        match cancellation {
+            Some(token) => parquet_worker::verify_cancellable(
+                &object_path,
+                schema_id,
+                limits.max_object_bytes,
+                token.clone(),
+            )?,
+            None => parquet_worker::verify(&object_path, schema_id, limits.max_object_bytes)?,
+        }
     } else {
         parquet_store::verify_with_limit(&object_path, schema_id, limits.max_object_bytes)?
     };
     validate_manifest_facts(&manifest, &parquet)?;
     if receipt.parquet_schema_sha256 != parquet.schema_sha256 {
         return Err(MarketDataError::ParquetSchema);
+    }
+    if let Some(token) = cancellation {
+        ensure_not_cancelled(token)?;
     }
     Ok(VerifiedCache {
         path: object_path,

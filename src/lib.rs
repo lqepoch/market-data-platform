@@ -2,8 +2,10 @@
 
 pub mod aggregate;
 pub mod archive;
+pub mod cancellation;
 pub mod config;
 pub mod error;
+pub mod http_api;
 pub mod parquet_store;
 #[doc(hidden)]
 pub mod parquet_worker;
