@@ -1,0 +1,36 @@
+[package]
+name = "market-data-platform"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98.1"
+license = "MIT"
+publish = false
+
+[dependencies]
+arrow-array = "=60.0.0"
+arrow-schema = "=60.0.0"
+chrono = { version = "=0.4.45", features = ["serde"] }
+clap = { version = "=4.5.53", features = ["derive"] }
+fs2 = "=0.4.3"
+hex = "=0.4.3"
+market-contracts = { git = "https://github.com/lqepoch/trading-core", rev = "0a2eaff08d45e8abc1a0137dab17d5d3ef5553c8", package = "market-contracts" }
+exact-decimal = { git = "https://github.com/lqepoch/trading-core", rev = "0a2eaff08d45e8abc1a0137dab17d5d3ef5553c8", package = "exact-decimal" }
+broker-ports = { git = "https://github.com/lqepoch/broker-connectors", rev = "70a8f89378be29a700111c3c6759ae31614efeb5", package = "broker-ports" }
+alpaca-stream = { git = "https://github.com/lqepoch/broker-connectors", rev = "70a8f89378be29a700111c3c6759ae31614efeb5", package = "alpaca-stream" }
+parquet = { version = "=60.0.0", default-features = false, features = ["arrow", "zstd"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = { version = "=1.0.151", features = ["arbitrary_precision"] }
+sha2 = "=0.10.9"
+thiserror = "=2.0.21"
+tokio = { version = "=1.53.1", features = ["full"] }
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.20", features = ["env-filter"] }
+
+[features]
+benchmark-snappy = ["parquet/snap"]
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "=1.1.5", default-features = false, features = ["process"] }
+
+[dev-dependencies]
+tempfile = "=3.23.0"

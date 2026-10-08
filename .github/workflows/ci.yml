@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Rust and supply-chain checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
+
+      - name: Install pinned supply-chain tools
+        run: |
+          cargo +1.98.1 install cargo-deny --version 0.20.2 --locked
+          cargo +1.98.1 install cargo-cyclonedx --version 0.5.9 --locked
+
+      - name: Fetch locked public dependencies
+        run: cargo +1.98.1 fetch --locked
+
+      - name: Check formatting
+        run: cargo +1.98.1 fmt --all -- --check
+
+      - name: Run Clippy
+        run: CARGO_BUILD_JOBS=2 cargo +1.98.1 clippy --offline --all-targets -- -D warnings
+
+      - name: Run Rust tests
+        run: CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline
+
+      - name: Check dependency policy
+        run: cargo +1.98.1 deny --all-features check all
+
+      - name: Test supply-chain verifier
+        run: python3 -m unittest discover -s tests -p 'test_supply_chain.py'
+
+      - name: Verify committed supply-chain artifacts
+        run: python3 scripts/supply_chain.py --check
