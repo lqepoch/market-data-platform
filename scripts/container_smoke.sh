@@ -19,7 +19,7 @@ if ! docker image inspect "$RUNTIME_IMAGE_ID" >/dev/null 2>&1; then
   exit 2
 fi
 
-CARGO_TARGET_DIR="$SHARED_TARGET" CARGO_BUILD_JOBS=2 \
+CARGO_TARGET_DIR="$SHARED_TARGET" CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" \
   cargo +1.98.1 build --offline --locked --bin market-data-platform
 if [[ ! -x "$MDP_BIN" ]]; then
   echo "MDP host-built executable was not produced at the requested path" >&2

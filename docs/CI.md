@@ -41,6 +41,17 @@ The dependency fetch and pinned tool installs use public crates.io and the publi
 declared in `Cargo.toml`. The Rust, CLI, and Python tests use local fixtures and fake transports;
 they do not establish provider entitlement, remote archive access, or publication authorization.
 
+## Optional offline HTTP container smoke
+
+`scripts/container_smoke.sh` requires `MDP_RUNTIME_IMAGE_ID` to name an already cached immutable
+Linux image; it does not pull images or compile Rust inside Docker. The script builds the host binary
+with `--offline --locked`, then copies it into the runtime-only image and exercises LocalTest HTTP
+startup, authentication, a synthetic V1 query, and graceful signal shutdown. Set
+`MDP_SHARED_TARGET` to point at a warm Cargo target, `CARGO_BUILD_JOBS` to control host build
+parallelism (default `2`), and `CARGO_INCREMENTAL=0` to disable incremental compilation when
+working within a disk budget. This smoke does not exercise the opt-in capture-pair V2/V3 command or
+validate a production image/deployment.
+
 ## CodeQL
 
 `codeql.yml` runs a separate `rust` and `python` matrix on pull requests to `main` and pushes to

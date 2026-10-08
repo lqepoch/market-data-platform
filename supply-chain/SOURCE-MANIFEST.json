@@ -50,7 +50,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "09e49d939ff2f3322dc784734c564fe7236c94a57a911a5b6451b6ad13c4d8d6"
+      "sha256": "fddef88fecddee39fa1542b6af626617b212ea82a88ba2551f75454489aa1469"
     },
     {
       "path": "AGENTS.md",
@@ -62,7 +62,7 @@
     },
     {
       "path": "docs/CI.md",
-      "sha256": "5fd640e097029fdbddff5df2f0d42d35763f08f575eb03425806b555068de9c4"
+      "sha256": "56251ed1fec7215da11c072e3826d694f0681231f847fe3745239a7781fb794e"
     },
     {
       "path": "docs/ARCHITECTURE.md",
@@ -114,7 +114,7 @@
     },
     {
       "path": "scripts/container_smoke.sh",
-      "sha256": "b6ae9afec477c5ccfb5923c316df4f284d1c62fea4780e826d429ade8bba443e"
+      "sha256": "39e9a5ab1a5fee3d1678ce01c6698a27592a364679f7cc9bfb2382583c177573"
     },
     {
       "path": "tests/test_supply_chain.py",

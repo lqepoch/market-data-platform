@@ -58,9 +58,9 @@ broker runner; it does not connect to a live SIP/OPRA feed.
 
 Use Rust 1.98.1 from `rust-toolchain.toml`.
 The shared contracts are pinned to trading-core revision
-`0a2eaff08d45e8abc1a0137dab17d5d3ef5553c8` in `Cargo.toml` and `Cargo.lock`. The read-only Alpaca
+`23a87d5b5a549e4489c1a2844c4132c43148fe6b` in `Cargo.toml` and `Cargo.lock`. The read-only Alpaca
 port and stream crates are pinned to `broker-connectors` revision
-`70a8f89378be29a700111c3c6759ae31614efeb5`.
+`dc9255b68a0d6380623c14adea8cc977d3504b12`.
 
 ```sh
 cargo +1.98.1 run --offline -- synthetic --output /tmp/mdp-demo
@@ -351,7 +351,9 @@ starts concurrent authenticated synthetic queries, observes an active Parquet wo
 the service joins its query supervisor before exiting. The smoke makes no provider, OAuth, Drive, or
 broker calls; it reports host/runtime architecture and glibc versions. It verifies only that a
 host-built executable runs in the selected cached runtime image, not a container source build or
-production deployment. Production images must use a reviewed immutable registry digest.
+production deployment. Production images must use a reviewed immutable registry digest. The host
+Cargo build respects `CARGO_BUILD_JOBS` (default `2`) and `CARGO_INCREMENTAL`; set
+`MDP_SHARED_TARGET` to reuse an existing target cache.
 - Each immutable manifest describes one Parquet object. SHA-256 is calculated locally and confirmed
   by downloading and hashing the complete remote object before manifest publication. Drive MD5 is
   advisory only. UNKNOWN outcomes are reconciled from a durable receipt and remote readback; a
