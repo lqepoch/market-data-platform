@@ -262,7 +262,10 @@ Responses are capped at 4 MiB and 390 rows. An outer router middleware applies
 unmatched routes, and query overloads; existing cache directives are preserved. Each process allows
 two active query tasks with a bounded queue and 120-second deadline. Dropping a request,
 timing out, or shutting down cancels owned work and waits for child workers to be reaped before
-capacity is released.
+capacity is released. On Unix, startup registers SIGINT and SIGTERM before binding; both signals
+use the same graceful shutdown path, which joins the query supervisor before returning. Signal
+registration errors abort startup, and signal-handler errors still stop the listener and join owned
+work. Other platforms retain Tokio's portable Ctrl-C handling.
 
 The listener defaults to `127.0.0.1:8088`. `GET /healthz` is liveness only. `/readyz` reports
 identity/transport configuration but always returns `market_ready: false` and
@@ -293,10 +296,12 @@ smoke wrapper: it requires an explicit immutable `MDP_RUNTIME_BASE`, contains no
 does not include rclone. A Drive-enabled deployment needs its own reviewed immutable runtime base
 that includes a pinned rclone executable. `scripts/container_smoke.sh` uses a cached image ID,
 `--pull=false`, an offline Docker network, an exact copied-binary SHA-256 check, synthetic replay,
-authorization denial, an authenticated V1 query, and graceful shutdown. It makes no provider,
-OAuth, Drive, or broker calls; it reports host/runtime architecture and glibc versions. It verifies
-only that a host-built executable runs in the selected cached runtime image, not a container source
-build or production deployment. Production images must use a reviewed immutable registry digest.
+authorization denial, an authenticated V1 query, and real SIGINT/SIGTERM shutdown. The SIGTERM case
+starts concurrent authenticated synthetic queries, observes an active Parquet worker, and confirms
+the service joins its query supervisor before exiting. The smoke makes no provider, OAuth, Drive, or
+broker calls; it reports host/runtime architecture and glibc versions. It verifies only that a
+host-built executable runs in the selected cached runtime image, not a container source build or
+production deployment. Production images must use a reviewed immutable registry digest.
 - Each immutable manifest describes one Parquet object. SHA-256 is calculated locally and confirmed
   by downloading and hashing the complete remote object before manifest publication. Drive MD5 is
   advisory only. UNKNOWN outcomes are reconciled from a durable receipt and remote readback; a

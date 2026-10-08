@@ -46,7 +46,10 @@ those belong to `broker-connectors`.
   request deadline, and retains capacity until cancellation has killed and reaped any child worker.
   Request drop/timeout and service shutdown must cancel, join, and reap; never detach a worker or
   publish a successful cache receipt after cancellation. Isolated Parquet decoding remains Linux
-  only and must fail `Unsupported` elsewhere without inline fallback.
+  only and must fail `Unsupported` elsewhere without inline fallback. Unix service startup registers
+  SIGINT and SIGTERM before binding, and either signal follows this same graceful shutdown path;
+  registration failure aborts startup. Non-Unix platforms retain Tokio's portable Ctrl-C signal,
+  and any signal handler error still stops the listener and joins the supervisor.
   Serialize all cache misses with one cross-process budget lock, hold it through downloads and
   verification, and enforce the observed-size cap while streaming bytes to disk. Expired entries
   must not be treated as fresh or automatically evicted during queries. The local cleanup command
@@ -66,7 +69,9 @@ those belong to `broker-connectors`.
 - `scripts/container_smoke.sh` is an offline LocalTest-only container smoke. It requires an already
   cached immutable Linux runtime image ID in `MDP_RUNTIME_IMAGE_ID`, copies the host-built binary
   after an exact SHA-256 comparison, and must never pull images or build Rust inside Docker. This
-  smoke does not validate rclone, Drive, or production BFF deployment.
+  smoke verifies actual SIGINT and SIGTERM exits, including SIGTERM while an authenticated synthetic
+  query has an observed Parquet worker and the service confirms supervisor join. It does not validate
+  rclone, Drive, or production BFF deployment.
 - Synchronize README, `docs/ARCHITECTURE.md`, and `docs/openapi-v1.yaml` whenever the API, CLI,
   limits, provenance, archive
   behavior, or validation boundary changes.

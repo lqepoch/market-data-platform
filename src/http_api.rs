@@ -122,7 +122,7 @@ pub async fn serve(
     bind: SocketAddr,
     reader: Arc<RemoteArchiveReader>,
     auth: Option<AuthConfig>,
-    graceful_shutdown: impl Future<Output = ()> + Send + 'static,
+    graceful_shutdown: impl Future<Output = io::Result<()>> + Send + 'static,
 ) -> crate::Result<()> {
     if !bind.ip().is_loopback() && auth.is_none() {
         return Err(MarketDataError::InvalidInput);
@@ -136,16 +136,26 @@ pub async fn serve(
     });
     let app = app_router(state, auth);
     let shutdown_signal = query_supervisor.shutdown_signal();
+    let (signal_result_tx, signal_result_rx) = tokio::sync::oneshot::channel();
     let graceful_shutdown = async move {
-        graceful_shutdown.await;
+        let signal_result = graceful_shutdown.await;
         shutdown_signal.send_replace(true);
+        let _ = signal_result_tx.send(signal_result);
     };
     let server_result = axum::serve(listener, app)
         .with_graceful_shutdown(graceful_shutdown)
         .await;
     let shutdown_result = query_supervisor.shutdown().await;
     server_result?;
-    shutdown_result
+    shutdown_result?;
+    signal_result_rx.await.map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "HTTP graceful shutdown signal task ended without a result",
+        )
+    })??;
+    tracing::info!("MDP HTTP query supervisor joined all active workers");
+    Ok(())
 }
 
 fn app_router(state: Arc<ServiceState>, auth: Option<AuthConfig>) -> Router {

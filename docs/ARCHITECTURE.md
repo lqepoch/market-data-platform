@@ -210,16 +210,21 @@ liveness only. `/readyz` confirms configured identity/transport and always repor
 
 The offline container smoke copies a host-built binary into an already cached runtime image by
 exact SHA-256, disables image pulls and networking, and reports host/runtime architecture and glibc
-versions. Successful startup and HTTP probes establish compatibility only with that local runtime
-image; this is not a container source build or production deployment validation. Production images
-must use a separately reviewed immutable registry digest.
+versions. It exercises SIGINT and SIGTERM against the running process; the SIGTERM case observes an
+active isolated Parquet worker during authenticated synthetic query load and confirms the service
+joins its query supervisor before exiting. Successful startup and HTTP probes establish
+compatibility only with that local runtime image; this is not a container source build or production
+deployment validation. Production images must use a separately reviewed immutable registry digest.
 
 HTTP queries run through a service-owned supervisor, not Tokio's async executor. At most two
 blocking query jobs are active and two more can wait. The 120-second request deadline and dropped
 request cancel the shared token; the supervisor keeps job capacity until all owned children are
-killed and reaped. Shutdown cancels and joins active jobs before returning. Cache publication has a
-cleanup guard so a canceled query cannot leave a successful receipt. Linux process-group
-supervision remains mandatory; unsupported platforms fail closed instead of decoding inline.
+killed and reaped. Shutdown cancels and joins active jobs before returning. On Unix the service
+registers SIGINT and SIGTERM before binding and routes both to the same shutdown path; registration
+failure aborts startup. Other platforms retain Tokio's portable Ctrl-C handler. Any handler error
+stops the listener and is reported after supervisor cleanup. Cache publication has a cleanup guard
+so a canceled query cannot leave a successful receipt. Linux process-group supervision remains
+mandatory; unsupported platforms fail closed instead of decoding inline.
 
 The root Dockerfile is runtime-only and requires a caller-supplied immutable base image reference.
 It does not compile Rust, fetch packages, or include rclone; the checked-in offline container smoke

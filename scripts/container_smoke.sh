@@ -34,9 +34,14 @@ RUN_ID="$$"
 BASE_TAG="mdp-local-runtime-$RUN_ID:cached"
 SMOKE_TAG="mdp-http-local-smoke-$RUN_ID:local"
 CONTAINER="mdp-http-smoke-$RUN_ID"
+TERM_CONTAINER="mdp-http-term-smoke-$RUN_ID"
 TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/mdp-http-smoke.XXXXXX")"
 
 cleanup() {
+  docker rm --force "$TERM_CONTAINER" >/dev/null 2>&1 || true
+  if [[ -n "${LOAD_PID:-}" ]]; then
+    wait "$LOAD_PID" 2>/dev/null || true
+  fi
   docker rm --force "$CONTAINER" >/dev/null 2>&1 || true
   docker image rm "$SMOKE_TAG" >/dev/null 2>&1 || true
   docker image rm "$BASE_TAG" >/dev/null 2>&1 || true
@@ -197,12 +202,151 @@ then
   exit 1
 fi
 
-docker exec "$CONTAINER" python3 -c 'import os, signal; os.kill(1, signal.SIGINT)' || true
-EXIT_STATUS="$(docker wait "$CONTAINER")"
+docker kill --signal=INT "$CONTAINER" >/dev/null
+EXIT_STATUS="$(docker wait "$CONTAINER" || true)"
 if [[ "$EXIT_STATUS" != "0" ]]; then
   echo "service did not shut down cleanly after the container SIGINT: $EXIT_STATUS" >&2
   docker logs "$CONTAINER" >&2 || true
   exit 1
 fi
 
-echo "offline container smoke passed with host binary sha256=$SOURCE_SHA256 and cached runtime image id=$RUNTIME_IMAGE_ID (host-built runtime smoke only)"
+TERM_REPLAY_ROOT="$TEMP_ROOT/regular-session-replay"
+"$MDP_BIN" synthetic --regular-session --output "$TERM_REPLAY_ROOT" >/dev/null
+chmod 0755 "$TERM_REPLAY_ROOT"
+chmod -R a+rX "$TERM_REPLAY_ROOT/local-test-store"
+docker run --detach \
+  --name "$TERM_CONTAINER" \
+  --network none \
+  --read-only \
+  --memory 2g \
+  --cpus 2 \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m,uid=10001,gid=10001,mode=0700 \
+  --tmpfs /var/cache/mdp:rw,noexec,nosuid,nodev,size=64m,uid=10001,gid=10001,mode=0700 \
+  --mount "type=bind,source=$TERM_REPLAY_ROOT/local-test-store,target=/data/local-test-store,readonly" \
+  --env "MDP_TERMINAL_JWT_SECRET=$TERMINAL_TEST_KEY" \
+  --env "MDP_RESEARCH_JWT_SECRET=$RESEARCH_TEST_KEY" \
+  --env "RUST_LOG=info" \
+  "$SMOKE_TAG" \
+  serve --bind 0.0.0.0:8088 \
+  --local-test-root /data/local-test-store \
+  --cache-dir /var/cache/mdp >/dev/null
+
+sleep 0.5
+if [[ "$(docker inspect --format '{{.State.Status}}' "$TERM_CONTAINER")" != "running" ]]; then
+  echo "MDP SIGTERM container exited during startup:" >&2
+  docker logs "$TERM_CONTAINER" >&2 || true
+  exit 1
+fi
+
+cat > "$TEMP_ROOT/term_load.py" <<'PY'
+import base64
+import hashlib
+import hmac
+import json
+import os
+import threading
+import time
+import urllib.request
+
+base = "http://127.0.0.1:8088"
+dataset_id = "synthetic-2026-10-08-full-390-minute-session-parquet-v2-bars-1m-v1"
+path = f"/v1/datasets/{dataset_id}/bars?namespace=diagnostic&symbol=QQQ"
+
+def b64url(value):
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+now = int(time.time())
+header = {"alg": "HS256", "kid": "mdp-terminal", "typ": "JWT"}
+claims = {
+    "iss": "eqoboard-openterminal",
+    "aud": "lqepoch-market-data",
+    "sub": "container-sigterm-smoke",
+    "idp_iss": "https://identity.example.test",
+    "jti": "container-sigterm-smoke-1",
+    "iat": now,
+    "exp": now + 30,
+    "scope": ["market:read"],
+}
+unsigned = b".".join((
+    b64url(json.dumps(header, separators=(",", ":")).encode()).encode(),
+    b64url(json.dumps(claims, separators=(",", ":")).encode()).encode(),
+))
+signature = hmac.new(
+    os.environ["MDP_TERMINAL_JWT_SECRET"].encode(), unsigned, hashlib.sha256
+).digest()
+token = unsigned.decode() + "." + b64url(signature)
+request = urllib.request.Request(base + path, headers={"Authorization": "Bearer " + token})
+stop = threading.Event()
+
+def query_loop():
+    while not stop.is_set():
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                if response.status == 200:
+                    response.read()
+        except OSError:
+            if not stop.is_set():
+                time.sleep(0.002)
+
+def has_worker():
+    try:
+        with os.scandir("/proc") as entries:
+            for entry in entries:
+                if not entry.name.isdigit():
+                    continue
+                try:
+                    command = open(f"/proc/{entry.name}/cmdline", "rb").read()
+                except OSError:
+                    continue
+                if b"parquet-worker" in command:
+                    return True
+    except OSError:
+        return False
+    return False
+
+threads = [threading.Thread(target=query_loop, daemon=True) for _ in range(12)]
+for thread in threads:
+    thread.start()
+while not has_worker():
+    time.sleep(0.002)
+print("ACTIVE_PARQUET_WORKER", flush=True)
+while True:
+    time.sleep(1)
+PY
+docker exec --interactive \
+  --env "MDP_TERMINAL_JWT_SECRET=$TERMINAL_TEST_KEY" \
+  "$TERM_CONTAINER" python3 - \
+  < "$TEMP_ROOT/term_load.py" \
+  > "$TEMP_ROOT/term_load.log" 2>&1 &
+LOAD_PID=$!
+
+WORKER_OBSERVED=false
+for _ in $(seq 1 80); do
+  if grep -Fq "ACTIVE_PARQUET_WORKER" "$TEMP_ROOT/term_load.log"; then
+    WORKER_OBSERVED=true
+    break
+  fi
+  sleep 0.05
+done
+if [[ "$WORKER_OBSERVED" != true ]]; then
+  echo "the authenticated load did not expose an active Parquet worker before SIGTERM" >&2
+  docker logs "$TERM_CONTAINER" >&2 || true
+  exit 1
+fi
+
+docker kill --signal=TERM "$TERM_CONTAINER" >/dev/null
+TERM_EXIT_STATUS="$(docker wait "$TERM_CONTAINER" || true)"
+wait "$LOAD_PID" || true
+if [[ "$TERM_EXIT_STATUS" != "0" ]]; then
+  echo "service did not shut down cleanly after SIGTERM during an observed Parquet query: $TERM_EXIT_STATUS" >&2
+  docker logs "$TERM_CONTAINER" >&2 || true
+  exit 1
+fi
+TERM_LOGS="$(docker logs "$TERM_CONTAINER" 2>&1)"
+if ! grep -Fq "MDP HTTP query supervisor joined all active workers" <<< "$TERM_LOGS"; then
+  echo "SIGTERM exit did not confirm the query supervisor joined its workers" >&2
+  printf '%s\n' "$TERM_LOGS" >&2
+  exit 1
+fi
+
+echo "offline container smoke passed: SIGINT and SIGTERM exits were clean; SIGTERM arrived while an authenticated query had an observed Parquet worker; host binary sha256=$SOURCE_SHA256; cached runtime image id=$RUNTIME_IMAGE_ID (host-built runtime smoke only)"

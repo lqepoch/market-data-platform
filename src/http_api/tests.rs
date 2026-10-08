@@ -184,6 +184,36 @@ async fn non_loopback_bind_is_rejected_without_independent_market_auth() {
 }
 
 #[tokio::test]
+async fn shutdown_signal_error_still_joins_query_supervisor_and_fails_closed() {
+    let temp = tempfile::tempdir().unwrap();
+    let remote = synthetic_remote_root(&temp.path().join("remote")).await;
+    let reader = Arc::new(
+        RemoteArchiveReader::local_test_isolated(
+            LocalTestTransport::new(remote).unwrap(),
+            temp.path().join("cache"),
+            RemoteCacheLimits::default(),
+        )
+        .unwrap(),
+    );
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        super::serve("127.0.0.1:0".parse().unwrap(), reader, None, async {
+            Err(std::io::Error::other(
+                "synthetic shutdown signal registration failure",
+            ))
+        }),
+    )
+    .await
+    .expect("an invalid shutdown signal must stop the listener promptly");
+    assert!(matches!(
+        result,
+        Err(crate::MarketDataError::Io(error))
+            if error.kind() == std::io::ErrorKind::Other
+    ));
+}
+
+#[tokio::test]
 async fn missing_auth_is_rejected_before_any_cache_or_dataset_read() {
     let temp = tempfile::tempdir().unwrap();
     let remote = synthetic_remote_root(&temp.path().join("remote")).await;
@@ -320,10 +350,7 @@ async fn terminal_and_research_delegations_read_only_synthetic_diagnostic_v1_bar
     .unwrap();
     let direct_result =
         diagnostic_reader.query_bars(DatasetNamespace::Diagnostic, DATASET_ID, Some("QQQ"));
-    assert!(
-        direct_result.is_ok(),
-        "direct isolated query failed: {direct_result:?}"
-    );
+    assert!(direct_result.is_ok(), "direct isolated query failed");
     let cache = temp.path().join("cache");
     let (app, mut supervisor) = service(remote, cache.clone(), Some(test_support::auth_config()));
     for token in [

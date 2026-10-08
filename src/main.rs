@@ -1,5 +1,6 @@
 use std::{
-    io::Read,
+    future::Future,
+    io::{self, Read},
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
@@ -25,6 +26,35 @@ use market_data_platform::{
 };
 
 const MAX_SESSION_CONFIG_BYTES: usize = 1024 * 1024;
+
+#[cfg(unix)]
+fn install_shutdown_signal() -> io::Result<impl Future<Output = io::Result<()>> + Send + 'static> {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    // Register both signals before opening the listener so a registration error cannot leave a
+    // service running without the shutdown path Docker and operators expect.
+    let mut terminate = signal(SignalKind::terminate())?;
+    let mut interrupt = signal(SignalKind::interrupt())?;
+    Ok(async move {
+        tokio::select! {
+            received = terminate.recv() => received.map_or_else(
+                || Err(io::Error::new(io::ErrorKind::BrokenPipe, "SIGTERM stream closed")),
+                |_| Ok(()),
+            ),
+            received = interrupt.recv() => received.map_or_else(
+                || Err(io::Error::new(io::ErrorKind::BrokenPipe, "SIGINT stream closed")),
+                |_| Ok(()),
+            ),
+        }
+    })
+}
+
+#[cfg(not(unix))]
+fn install_shutdown_signal() -> io::Result<impl Future<Output = io::Result<()>> + Send + 'static> {
+    // Tokio's portable Ctrl-C handler is the supported graceful-shutdown signal on non-Unix
+    // platforms. Any registration error is returned by the future and still shuts down the API.
+    Ok(async { tokio::signal::ctrl_c().await })
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "mdp", about = "Offline-first market data pipeline")]
@@ -461,6 +491,7 @@ async fn run(command: Command) -> Result<()> {
             rclone_config,
             cache_dir,
         } => {
+            let shutdown_signal = install_shutdown_signal()?;
             let auth = AuthConfig::from_environment()?;
             if !bind.ip().is_loopback() && auth.is_none() {
                 return Err(MarketDataError::InvalidInput);
@@ -483,10 +514,7 @@ async fn run(command: Command) -> Result<()> {
                 )?,
                 _ => return Err(MarketDataError::InvalidInput),
             };
-            http_api::serve(bind, Arc::new(reader), auth, async {
-                let _ = tokio::signal::ctrl_c().await;
-            })
-            .await
+            http_api::serve(bind, Arc::new(reader), auth, shutdown_signal).await
         }
     }
 }

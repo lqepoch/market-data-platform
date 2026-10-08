@@ -50,19 +50,19 @@
     },
     {
       "path": "README.md",
-      "sha256": "2bf36f19d78c203519a8d55dffb373e03a365976c0486e742579f456733feb1c"
+      "sha256": "6a76626263a363735eb1485d4b584459b1b534f4f0c013d6365f704e49af8556"
     },
     {
       "path": "AGENTS.md",
-      "sha256": "340dcee212b7eef0022ac0269f973f06f6bb14b40ba4d99275bea0dfbb178780"
+      "sha256": "e5c30892ba6672d1510a83c2cbc88b8c3e6683ad52d2922d7a24af39cfeac3bf"
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "sha256": "c55516260ef40a2e9a447c4b4bdfd7ed195d6940ed20edb358165547ffc63fed"
+      "sha256": "b2df0046e9adcba2cc9634b2a0789c17e9351db69d5ef19a72a895d4ac64f2fc"
     },
     {
       "path": "docs/CHG-2026-001-MDP-HTTP-PROVENANCE.md",
-      "sha256": "92e480583123f1eb6c7181149456d89486e2502d3d935d02561000ba867fadc7"
+      "sha256": "7a03454553e281c395319cc896b34f665a095f49e2652788da87b655df83b550"
     },
     {
       "path": "docs/SUPPLY_CHAIN.md",
@@ -82,7 +82,7 @@
     },
     {
       "path": "scripts/container_smoke.sh",
-      "sha256": "f61db087e751e053df61ac5c2670b718ad7ada2bc6eacd597fff4e7bae257310"
+      "sha256": "b6ae9afec477c5ccfb5923c316df4f284d1c62fea4780e826d429ade8bba443e"
     },
     {
       "path": "tests/test_supply_chain.py",
@@ -1713,7 +1713,7 @@
       },
       {
         "path": "src/http_api.rs",
-        "sha256": "0c494c88ee2cc9b05ed4a4a0f235b3afd379a62fd4b7bafb421cf31f40657a9b"
+        "sha256": "68ee7b5397bec28e1bba4da30cd8deba5a537333c9629f499429f75cd5f16a2e"
       },
       {
         "path": "src/http_api/auth.rs",
@@ -1725,7 +1725,7 @@
       },
       {
         "path": "src/http_api/tests.rs",
-        "sha256": "be4f13656b351fa30f1f4287526796b0e12d4b331452b237647cc4a44775d2ab"
+        "sha256": "273e370a470d41ae8a4f7f73bbb04518adefd0b2268d70ebc7f25de4cbff6d2c"
       },
       {
         "path": "src/lib.rs",
@@ -1733,7 +1733,7 @@
       },
       {
         "path": "src/main.rs",
-        "sha256": "6e36fa17811d44f11af46ff2b0fea286b4180b71d25db68eaf3ad5da5437045e"
+        "sha256": "e6fcdd9b8ea222b372dea33cf66237b76c2f49f1b95b6fe1fff7eba24605452a"
       },
       {
         "path": "src/parquet_store.rs",
@@ -1836,7 +1836,7 @@
         "sha256": "672f37defce7e1d67f8d684580db4e6ce9e517afd8c6bdf67f99d96c7e573eca"
       }
     ],
-    "sha256": "832cb421d161079ba1098098c1676c9329f4463ae3e595ba86c30ca12b741aa8"
+    "sha256": "19619b46b8412f96a885ad88b3ce463a0826ba0158945c8b1a992133910b189b"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
