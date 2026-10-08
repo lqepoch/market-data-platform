@@ -155,3 +155,11 @@ remain unavailable until that broker adapter lands.
 The repository contains no Alpaca secret and no live feed/upload test. Drive project/root identity and
 available quota remain UNKNOWN; use an operator-provided authorized root and quota snapshot before
 any external write is enabled.
+
+## Supply-chain records
+
+`deny.toml` is the dependency policy for the locked all-target graph. The committed CycloneDX SBOM
+covers all-target, all-feature normal and build dependencies; dev-only packages remain in the lock
+inventory and are still checked by cargo-deny. Exact git origins and revisions are checked against
+`supply-chain/git-source-pins.json`. See `docs/SUPPLY_CHAIN.md` for generation, verification, license,
+and source-hash boundaries.

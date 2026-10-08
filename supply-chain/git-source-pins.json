@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "origin": "https://github.com/lqepoch/trading-core",
+      "rev": "4230418f7fe25f70e3011fed2ba7eb59c7e4d875",
+      "packages": [
+        "domain",
+        "exact-decimal",
+        "market-contracts"
+      ]
+    }
+  ]
+}

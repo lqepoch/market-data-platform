@@ -235,6 +235,11 @@ CARGO_BUILD_JOBS=2 cargo +1.98.1 clippy --offline --all-targets -- -D warnings
 CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline
 ```
 
+Dependency policy, the generated CycloneDX SBOM, license inventory, exact git source pins, and
+source hashes are documented in [`docs/SUPPLY_CHAIN.md`](docs/SUPPLY_CHAIN.md). After changing
+dependencies, sources, or implementation files, refresh and check those artifacts with the
+commands in that document.
+
 Tests use synthetic contracts, local files, and injected fake storage failures. They do not prove
 Alpaca entitlement, live feed behavior, rclone authentication, Google Drive connectivity, quota, or
 production publication authorization.

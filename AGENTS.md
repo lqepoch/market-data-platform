@@ -40,3 +40,8 @@ those belong to `broker-connectors`.
   changes. Keep shared-schema golden tests and the synthetic CLI replay passing.
 - Synchronize README and `docs/ARCHITECTURE.md` whenever the CLI, limits, provenance, archive
   behavior, or validation boundary changes.
+- Supply-chain changes must keep `deny.toml`, `supply-chain/git-source-pins.json`, the committed
+  CycloneDX SBOM, license inventory, and `SOURCE-MANIFEST.json` synchronized. Run
+  `cargo +1.98.1 deny --all-features check all`, `python3 -m unittest discover -s tests -p
+  'test_supply_chain.py'`, and `python3 scripts/supply_chain.py --check`; unknown licenses,
+  advisories, sources, or git revisions fail closed.
