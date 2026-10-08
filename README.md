@@ -32,6 +32,8 @@ change.
 ## Local commands
 
 Use Rust 1.98.1 from `rust-toolchain.toml`.
+The shared contracts are pinned to trading-core revision
+`4230418f7fe25f70e3011fed2ba7eb59c7e4d875` in `Cargo.toml` and `Cargo.lock`.
 
 ```sh
 cargo +1.98.1 run --offline -- synthetic --output /tmp/mdp-demo
@@ -81,13 +83,16 @@ Example session configuration (synthetic fixture only):
     "expected_symbols": ["QQQ"]
   },
   "mode": "synthetic_eof",
+  "source_is_paged": false,
   "source_pages_exhausted": null,
   "available_at": "2026-10-08T13:32:00Z"
 }
 ```
 
-`historical_eof` requires a non-synthetic provider and complete pagination evidence when the source
-is paged. Each requested symbol/minute must contain at least one timestamped trade. The requested
+`historical_eof` requires a non-synthetic provider and explicit `source_is_paged` context. Paged
+sources must report `source_pages_exhausted: true`; non-paged sources must report `null`. Output
+bars preserve that distinction as `historical_eof_paged` or `historical_eof_nonpaged`. Each requested
+symbol/minute must contain at least one timestamped trade. The requested
 window is contained in the caller-supplied session and repeated on each output row; a partial
 window must not be promoted as a whole-session sample. `available_at` must be no earlier than the
 window end and no earlier than any event receive timestamp.
@@ -95,9 +100,9 @@ window end and no earlier than any event receive timestamp.
 ## Bounds and storage contract
 
 - Raw event frame: at most 16 KiB. JSONL input: at most 64 MiB and 100,000 records.
-- Collection queues: 256 events and 64 pending submissions in the replay path; at most 32 dedicated
-  collection writer threads per process; tracked provider/feed cursors: 64; durable gap ledger:
-  64 MiB.
+- Collection/archive queues: 256 events and 64 pending submissions in the replay path; at most 32
+  combined dedicated collection and archive writer threads per process; tracked provider/feed
+  cursors: 64; durable gap ledger: 64 MiB.
 - Aggregation: at most 500 expected symbols, 390 minutes per request, 100,000 input records, and
   100,000 output rows. The checked `symbols × minutes` bound is applied before bar allocation.
 - Archive queue defaults to 4 and cannot exceed 64. Default object, manifest, and total staging

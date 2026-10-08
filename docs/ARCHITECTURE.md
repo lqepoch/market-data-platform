@@ -23,12 +23,14 @@ before typed Serde deserialization, and the total stream is capped at 64 MiB/100
 typed decoding rejects duplicate fields; the envelope selector rejects unknown keys, unknown kinds,
 and a payload that mixes event and control forms.
 
-Collection uses a bounded Tokio channel feeding one dedicated writer thread. The thread serializes
+Collection uses a bounded Tokio channel feeding one dedicated writer thread. Archive publication
+uses a bounded Tokio queue and one dedicated writer thread per queue. Both draw from the same
+process-wide 32-thread permit budget. The collection thread serializes
 per-provider/feed generation and sequence decisions with queue insertion. Gaps, stale generations,
 duplicates, and queue drops are synced to a bounded journal before the event is reported incomplete.
 Journal exhaustion and I/O failures fail the run; the pipeline does not call the gap evidence durable
-when a write fails. The process admits at most 32 such writer threads; journal append holds a file
-lock while enforcing its byte cap and syncing the record.
+when a write fails. The process-wide permit budget caps both writer classes together at 32; journal
+append holds a file lock while enforcing its byte cap and syncing the record.
 
 The current bar transform requires caller-supplied trade date, session ID, timezone, session policy
 ID/hash, exact session bounds, exact requested half-open window, and expected symbols. A complete
@@ -38,6 +40,11 @@ ordered by source time then sequence, exact decimal values drive OHLCV, source r
 time. Quotes are excluded from OHLCV and counted separately; no NBBO or quote-state completeness is
 claimed. Missing trade minutes, missing source timestamps, invalid provenance, gaps, unsupported
 options, or incomplete EOF prevent bar output.
+
+Historical replay configuration must explicitly say whether the provider endpoint is paged. Paged
+history requires `source_pages_exhausted=true` and writes `completion_mode=historical_eof_paged`;
+non-paged sources require null exhaustion and write `historical_eof_nonpaged`. Ambiguous legacy
+`historical_eof` rows are rejected.
 
 This EOF transform does not imply realtime watermark completion or historical point-in-time
 availability. Those claims require explicit source-page exhaustion, clock/watermark evidence,

@@ -153,6 +153,7 @@ fn fixture(root: &Path) -> (ArchivePublisher, FakeTransport, ArchiveRequest) {
         &crate::aggregate::CompletionEvidence {
             mode: crate::aggregate::CompletionMode::SyntheticEof,
             input_eof: true,
+            source_is_paged: false,
             source_pages_exhausted: None,
             available_at: UtcTimestamp::parse("2026-10-08T13:31:00Z").unwrap(),
         },

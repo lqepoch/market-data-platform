@@ -29,6 +29,7 @@ use parquet::{
 use crate::{
     MarketDataError, Result,
     aggregate::TradeMinuteBarV1,
+    aggregate::validate_stock_symbol,
     queue::CollectionMessage,
     schema::{
         EVENT_SCHEMA_ID, MINUTE_BAR_SCHEMA_ID, arrow_schema, fingerprint, validate_arrow_schema,
@@ -818,12 +819,9 @@ fn validate_bar_row(row: &TradeMinuteBarV1) -> Result<()> {
     )
     .map_err(|_| MarketDataError::Contract)?;
     if row.schema_version != 1
-        || row.symbol.is_empty()
-        || row.symbol.trim() != row.symbol
-        || row.session_id.is_empty()
-        || row.session_timezone.is_empty()
-        || row.session_timezone.len() > 128
-        || row.session_policy_id.is_empty()
+        || !valid_metadata_label(&row.session_id, 256)
+        || !valid_metadata_label(&row.session_timezone, 128)
+        || !valid_metadata_label(&row.session_policy_id, 256)
         || !valid_sha256(&row.session_policy_sha256)
         || row.completion_mode.is_empty()
         || row.nbbo_input_status != "excluded"
@@ -838,6 +836,7 @@ fn validate_bar_row(row: &TradeMinuteBarV1) -> Result<()> {
     {
         return Err(MarketDataError::Contract);
     }
+    validate_stock_symbol(&row.symbol)?;
 
     let session_start = timestamp_to_ns(row.session_start_utc.as_str())?;
     let session_end = timestamp_to_ns(row.session_end_exclusive_utc.as_str())?;
@@ -892,8 +891,10 @@ fn validate_bar_row(row: &TradeMinuteBarV1) -> Result<()> {
                 && entitlement == EntitlementState::Unknown
                 && encoding == NumericEncodingV1::DecimalToken
                 && row.source_pages_exhausted.is_none() => {}
-        "historical_eof"
+        "historical_eof_paged"
             if row.source_provider != "synthetic" && row.source_pages_exhausted == Some(true) => {}
+        "historical_eof_nonpaged"
+            if row.source_provider != "synthetic" && row.source_pages_exhausted.is_none() => {}
         _ => return Err(MarketDataError::Contract),
     }
 
@@ -1116,6 +1117,13 @@ fn valid_sha256(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+fn valid_metadata_label(value: &str, max_bytes: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= max_bytes
+        && value.trim() == value
+        && !value.chars().any(char::is_control)
+}
+
 fn timestamp_from_ns(value: i64) -> Result<UtcTimestamp> {
     let seconds = value.div_euclid(1_000_000_000);
     let nanos = value.rem_euclid(1_000_000_000) as u32;
@@ -1318,6 +1326,12 @@ mod tests {
         bad_range.source_end_exclusive_utc = UtcTimestamp::parse("2026-10-08T13:30:14Z").unwrap();
         let mut bad_missing_count = valid_bar();
         bad_missing_count.source_timestamp_missing_rows = 1;
+        let mut bad_symbol = valid_bar();
+        bad_symbol.symbol = "QQQ\nspoof".into();
+        let mut bad_session_id = valid_bar();
+        bad_session_id.session_id = "s".repeat(257);
+        let mut bad_policy_id = valid_bar();
+        bad_policy_id.session_policy_id = "policy\nspoof".into();
 
         for (index, row) in [
             bad_decimal,
@@ -1325,6 +1339,9 @@ mod tests {
             bad_version,
             bad_range,
             bad_missing_count,
+            bad_symbol,
+            bad_session_id,
+            bad_policy_id,
         ]
         .into_iter()
         .enumerate()
@@ -1336,5 +1353,34 @@ mod tests {
             ));
             assert!(!rejected_path.exists());
         }
+    }
+
+    #[test]
+    fn nonpaged_historical_bar_roundtrips_without_fabricated_page_evidence() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("historical-nonpaged.parquet");
+        let mut bar = valid_bar();
+        bar.source_provider = "fixture-provider".into();
+        bar.source_feed = "sip".into();
+        bar.completion_mode = "historical_eof_nonpaged".into();
+
+        let verification = write_bars(&path, &[bar.clone()]).unwrap();
+        assert_eq!(verification.footer_rows, 1);
+        assert_eq!(query_bars(&path, None).unwrap(), [bar]);
+
+        let paged_path = temp.path().join("historical-paged.parquet");
+        let mut paged_bar = valid_bar();
+        paged_bar.source_provider = "fixture-provider".into();
+        paged_bar.source_feed = "sip".into();
+        paged_bar.source_pages_exhausted = Some(true);
+        paged_bar.completion_mode = "historical_eof_paged".into();
+        write_bars(&paged_path, &[paged_bar.clone()]).unwrap();
+        assert_eq!(query_bars(&paged_path, None).unwrap(), [paged_bar]);
+
+        let mut legacy_ambiguous = valid_bar();
+        legacy_ambiguous.source_provider = "fixture-provider".into();
+        legacy_ambiguous.source_feed = "sip".into();
+        legacy_ambiguous.completion_mode = "historical_eof".into();
+        assert!(validate_bar_row(&legacy_ambiguous).is_err());
     }
 }

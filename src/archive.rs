@@ -26,6 +26,7 @@ use crate::{
     config::DriveConfig,
     error::StorageFailure,
     parquet_store::{self, ParquetVerification},
+    queue::BackgroundWorkerPermit,
     schema::{EVENT_SCHEMA_ID, MINUTE_BAR_SCHEMA_ID},
     storage::{LocalTestTransport, ObjectTransport, RcloneDriveTransport, RemoteObject},
 };
@@ -776,9 +777,11 @@ impl ArchiveWriterQueue {
             return Err(MarketDataError::InvalidInput);
         }
         let (sender, mut receiver) = mpsc::channel::<QueuedPublish>(capacity);
+        let worker_permit = BackgroundWorkerPermit::acquire()?;
         thread::Builder::new()
             .name("mdp-archive-writer".to_owned())
             .spawn(move || {
+                let _worker_permit = worker_permit;
                 while let Some(queued) = receiver.blocking_recv() {
                     let result = publisher.publish(&queued.request);
                     let _ = queued.response.send(result);

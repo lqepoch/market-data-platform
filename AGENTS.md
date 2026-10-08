@@ -11,7 +11,8 @@ those belong to `broker-connectors`.
   sequence as evidence. Never infer SIP/OPRA entitlement, convert receive time into source time, or
   label binary-float projections as exact source decimals.
 - Keep ingestion, aggregation, Parquet reads, query results, queues, gap journals, receipts, and
-  uploads within explicit byte, row, worker, and capacity bounds. Fail closed on overflow, gaps,
+  uploads within explicit byte, row, worker, and capacity bounds. The process-wide 32-thread budget
+  is shared by collection and archive writers. Fail closed on overflow, gaps,
   incomplete windows, conflicting immutable objects, and unknown publication outcomes.
 - External archive writes require separately reviewed source-admission evidence. Local-test objects
   are diagnostic only and must keep `local-test:` identities. Never run real OAuth or upload from

@@ -28,6 +28,7 @@ use crate::{
 pub struct ReplaySessionConfig {
     pub window: SessionWindow,
     pub mode: CompletionMode,
+    pub source_is_paged: bool,
     pub source_pages_exhausted: Option<bool>,
     pub available_at: UtcTimestamp,
 }
@@ -90,6 +91,7 @@ pub async fn synthetic_replay(output: &Path) -> Result<ReplayReport> {
             expected_symbols: vec!["QQQ".into()],
         },
         mode: CompletionMode::SyntheticEof,
+        source_is_paged: false,
         source_pages_exhausted: None,
         available_at: parse_time("2026-10-08T13:34:00Z")?,
     };
@@ -175,6 +177,7 @@ pub async fn replay_file(
         &CompletionEvidence {
             mode: config.mode,
             input_eof: true,
+            source_is_paged: config.source_is_paged,
             source_pages_exhausted: config.source_pages_exhausted,
             available_at: config.available_at.clone(),
         },

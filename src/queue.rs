@@ -21,26 +21,26 @@ use tokio::sync::{mpsc, oneshot};
 use crate::{MarketDataError, Result};
 
 pub const MAX_TRACKED_SOURCES: usize = 64;
-pub const MAX_COLLECTION_WRITER_WORKERS: usize = 32;
+pub const MAX_BACKGROUND_WORKERS: usize = 32;
 pub const DEFAULT_GAP_LEDGER_MAX_BYTES: u64 = 64 * 1024 * 1024;
-static ACTIVE_COLLECTION_WRITERS: AtomicUsize = AtomicUsize::new(0);
+static ACTIVE_BACKGROUND_WORKERS: AtomicUsize = AtomicUsize::new(0);
 
-struct CollectionWorkerPermit;
+pub(crate) struct BackgroundWorkerPermit;
 
-impl CollectionWorkerPermit {
-    fn acquire() -> Result<Self> {
-        ACTIVE_COLLECTION_WRITERS
+impl BackgroundWorkerPermit {
+    pub(crate) fn acquire() -> Result<Self> {
+        ACTIVE_BACKGROUND_WORKERS
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
-                (active < MAX_COLLECTION_WRITER_WORKERS).then_some(active + 1)
+                (active < MAX_BACKGROUND_WORKERS).then_some(active + 1)
             })
             .map_err(|_| MarketDataError::WriterLimit)?;
         Ok(Self)
     }
 }
 
-impl Drop for CollectionWorkerPermit {
+impl Drop for BackgroundWorkerPermit {
     fn drop(&mut self) {
-        ACTIVE_COLLECTION_WRITERS.fetch_sub(1, Ordering::AcqRel);
+        ACTIVE_BACKGROUND_WORKERS.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
@@ -312,7 +312,7 @@ impl CollectionSubmitter {
         let ledger_path = ledger.path().to_path_buf();
         let (sender, mut submissions) = mpsc::channel::<Submission>(submit_capacity);
         let (event_sender, receiver) = mpsc::channel(event_capacity);
-        let worker_permit = CollectionWorkerPermit::acquire()?;
+        let worker_permit = BackgroundWorkerPermit::acquire()?;
         let poisoned = Arc::new(AtomicBool::new(false));
         let worker_poisoned = Arc::clone(&poisoned);
         thread::Builder::new()

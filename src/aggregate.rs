@@ -2,9 +2,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use exact_decimal::ExactDecimal;
-use market_contracts::{EntitlementState, MarketEventV1, UtcTimestamp, wire_u64};
+use market_contracts::{DecimalString, EntitlementState, MarketEventV1, UtcTimestamp, wire_u64};
 use serde::{Deserialize, Serialize};
 
 use crate::{MarketDataError, Result, queue::CollectionMessage};
@@ -34,6 +34,8 @@ pub struct SessionWindow {
 pub struct CompletionEvidence {
     pub mode: CompletionMode,
     pub input_eof: bool,
+    /// Explicitly distinguishes paged REST history from non-paged event streams.
+    pub source_is_paged: bool,
     /// Paged inputs require `Some(true)`; non-paged sources may use `None`.
     pub source_pages_exhausted: Option<bool>,
     /// Actual local collection completion time, never substituted for source time.
@@ -242,14 +244,25 @@ pub fn aggregate_trade_bars(
         provenance.ok_or(MarketDataError::IncompleteWindow)?;
     let completion_mode = match completion.mode {
         CompletionMode::SyntheticEof
-            if provider == "synthetic" && completion.source_pages_exhausted.is_none() =>
+            if provider == "synthetic"
+                && !completion.source_is_paged
+                && completion.source_pages_exhausted.is_none() =>
         {
             "synthetic_eof"
         }
         CompletionMode::HistoricalEof
-            if provider != "synthetic" && completion.source_pages_exhausted == Some(true) =>
+            if provider != "synthetic"
+                && completion.source_is_paged
+                && completion.source_pages_exhausted == Some(true) =>
         {
-            "historical_eof"
+            "historical_eof_paged"
+        }
+        CompletionMode::HistoricalEof
+            if provider != "synthetic"
+                && !completion.source_is_paged
+                && completion.source_pages_exhausted.is_none() =>
+        {
+            "historical_eof_nonpaged"
         }
         _ => return Err(MarketDataError::IncompleteWindow),
     };
@@ -379,10 +392,13 @@ fn entitlement_name(entitlement: EntitlementState) -> &'static str {
 fn validate_window(window: &SessionWindow, completion: &CompletionEvidence) -> Result<()> {
     if !completion.input_eof
         || completion.source_pages_exhausted == Some(false)
+        || completion.source_is_paged != completion.source_pages_exhausted.is_some()
         || window.trade_date.len() != 10
-        || window.session_id.is_empty()
-        || window.timezone.is_empty()
-        || window.policy_id.is_empty()
+        || !valid_metadata_label(&window.session_id, 256)
+        || !valid_metadata_label(&window.timezone, 128)
+        || !valid_metadata_label(&window.policy_id, 256)
+        || !NaiveDate::parse_from_str(&window.trade_date, "%Y-%m-%d")
+            .is_ok_and(|date| date.to_string() == window.trade_date)
         || !valid_sha256(&window.policy_sha256)
         || window.session_start > window.window_start
         || window.window_start >= window.window_end_exclusive
@@ -412,7 +428,26 @@ fn validate_window(window: &SessionWindow, completion: &CompletionEvidence) -> R
     {
         return Err(MarketDataError::InvalidInput);
     }
+    for symbol in &window.expected_symbols {
+        validate_stock_symbol(symbol)?;
+    }
     Ok(())
+}
+
+pub(crate) fn validate_stock_symbol(symbol: &str) -> Result<()> {
+    let event = MarketEventV1::StockTrade {
+        symbol: symbol.to_owned(),
+        price: DecimalString::new("1").map_err(|_| MarketDataError::Contract)?,
+        size: DecimalString::new("1").map_err(|_| MarketDataError::Contract)?,
+    };
+    event.validate().map_err(|_| MarketDataError::Contract)
+}
+
+fn valid_metadata_label(value: &str, max_bytes: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= max_bytes
+        && value.trim() == value
+        && !value.chars().any(char::is_control)
 }
 
 fn timestamp_ns(timestamp: &UtcTimestamp) -> Result<i64> {
@@ -491,6 +526,7 @@ mod tests {
         CompletionEvidence {
             mode: CompletionMode::SyntheticEof,
             input_eof: true,
+            source_is_paged: false,
             source_pages_exhausted: None,
             available_at: UtcTimestamp::parse("2026-10-08T13:32:00Z").unwrap(),
         }
@@ -558,7 +594,7 @@ mod tests {
     }
 
     #[test]
-    fn historical_bars_require_explicit_page_exhaustion() {
+    fn historical_bars_preserve_explicit_pagination_context() {
         let mut events = vec![
             trade(1, "2026-10-08T13:30:10Z", "10", "1"),
             trade(2, "2026-10-08T13:31:10Z", "11", "1"),
@@ -577,16 +613,43 @@ mod tests {
         }
         let mut evidence = completion();
         evidence.mode = CompletionMode::HistoricalEof;
+        assert_eq!(
+            aggregate_trade_bars(&events, &window(), &evidence).unwrap()[0].completion_mode,
+            "historical_eof_nonpaged",
+            "non-paged historical EOF is valid when explicitly configured"
+        );
+        evidence.source_is_paged = true;
         assert!(matches!(
             aggregate_trade_bars(&events, &window(), &evidence),
-            Err(MarketDataError::IncompleteWindow)
+            Err(MarketDataError::InvalidInput)
         ));
         evidence.source_pages_exhausted = Some(true);
-        assert_eq!(
-            aggregate_trade_bars(&events, &window(), &evidence)
-                .unwrap()
-                .len(),
-            2
-        );
+        let paged = aggregate_trade_bars(&events, &window(), &evidence).unwrap();
+        assert_eq!(paged.len(), 2);
+        assert_eq!(paged[0].completion_mode, "historical_eof_paged");
+        evidence.source_pages_exhausted = Some(false);
+        assert!(matches!(
+            aggregate_trade_bars(&events, &window(), &evidence),
+            Err(MarketDataError::InvalidInput)
+        ));
+    }
+
+    #[test]
+    fn window_rejects_invalid_symbols_and_unbounded_or_controlled_ids() {
+        let messages = vec![
+            trade(1, "2026-10-08T13:30:10Z", "10", "1"),
+            trade(2, "2026-10-08T13:31:10Z", "11", "1"),
+        ];
+        let mut invalid_symbol = window();
+        invalid_symbol.expected_symbols = vec![format!("{}!", "Q".repeat(256))];
+        assert!(aggregate_trade_bars(&messages, &invalid_symbol, &completion()).is_err());
+
+        let mut invalid_session = window();
+        invalid_session.session_id = "s".repeat(257);
+        assert!(aggregate_trade_bars(&messages, &invalid_session, &completion()).is_err());
+
+        let mut invalid_policy = window();
+        invalid_policy.policy_id = "policy\nspoof".into();
+        assert!(aggregate_trade_bars(&messages, &invalid_policy, &completion()).is_err());
     }
 }
