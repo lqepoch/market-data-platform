@@ -604,6 +604,7 @@ dependencies = [
  "hex",
  "market-contracts",
  "parquet",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

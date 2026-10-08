@@ -74,8 +74,10 @@ serialized by a per-dataset filesystem lock.
 
 The Drive adapter calls rclone with an argv array, explicit config and root ID, bounded subprocess
 output, one rclone retry, and `--immutable`. A separate total wall-clock deadline kills and reaps the
-child; rclone's `--timeout` remains an idle timeout. The supervisor uses the same process-wide
-worker permit. It does not use the Google Drive SDK or implement OAuth.
+child process group; descendants that keep inherited output pipes open are terminated when the
+parent exits. rclone's `--timeout` remains an idle timeout. The supervisor uses the same
+process-wide worker permit. Platforms without process-group termination fail closed as unsupported.
+It does not use the Google Drive SDK or implement OAuth.
 Subprocess stderr and private config identifiers are never logged. Current public CLI paths only
 select local-test storage for writes; the rclone adapter has not been run against a real account.
 The explicit operator-only `remote-query-bars` command uses the same argv-only rclone adapter for

@@ -30,7 +30,9 @@ those belong to `broker-connectors`.
 - Use argument arrays for subprocesses. Do not log rclone arguments, config paths, remote names,
   root IDs, tokens, or raw provider/subprocess errors.
 - Every rclone operation must have a total wall-clock deadline separate from its idle timeout,
-  kill and reap on timeout, and consume the shared background-worker permit.
+  kill and reap its owned process group on timeout or parent exit (including descendants holding
+  inherited pipes), and consume the shared background-worker permit. Fail closed on platforms where
+  process-group termination is unsupported.
 - Run `cargo +1.98.1 fmt --all -- --check`, `CARGO_BUILD_JOBS=2 cargo +1.98.1 clippy --offline
   --all-targets -- -D warnings`, and `CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline` for Rust
   changes. Keep shared-schema golden tests and the synthetic CLI replay passing.

@@ -118,8 +118,9 @@ window end and no earlier than any event receive timestamp.
   failed temporary output.
 - One rclone operation has a configurable total wall-clock deadline (`MDP_DRIVE_OPERATION_TIMEOUT_SECS`,
   default 1800 seconds, maximum 7200). This supervisor deadline is independent of rclone's 60-second
-  idle timeout; timeout kills and reaps the child. The subprocess supervisor also consumes the
-  process-wide background-worker permit.
+  idle timeout; timeout or parent exit kills and reaps the owned process group, including descendants
+  holding inherited pipes. Platforms without process-group termination fail closed as unsupported.
+  The subprocess supervisor also consumes the process-wide background-worker permit.
 - The operator-only `remote-query-bars` CLI is read-only. It fetches exact manifest bytes, observes
   current remote IDs and sizes, streams downloads into private temporary cache files under the
   observed-size cap, then verifies SHA-256, trusted schema fingerprint, footer rows, and decoded
