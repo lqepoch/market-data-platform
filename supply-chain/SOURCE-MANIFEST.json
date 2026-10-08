@@ -1,7 +1,7 @@
 {
   "artifacts": {
-    "supply-chain/NOTICE.txt": "ac67bfcc6d43bbb8cde591074ec249f120c756b8dd1bf7e9c5e06ebbd484c066",
-    "supply-chain/market-data-platform.cdx.json": "eb428c5fbb3c374f8a04e95a76610a03ef00845d677c9cfb8ecad1bf8a306e1b"
+    "supply-chain/NOTICE.txt": "42bdc8c3a5fa0a999efe70a734ac3feb932d8b507fef6fdc32c2b4f6ffef5e46",
+    "supply-chain/market-data-platform.cdx.json": "cfb74e4bc16ac3976b79667d98202644dc65a19e9710a6e009a469ec5628a315"
   },
   "component": {
     "license": "MIT",
@@ -15,7 +15,7 @@
         "alpaca-stream",
         "broker-ports"
       ],
-      "rev": "70a8f89378be29a700111c3c6759ae31614efeb5"
+      "rev": "537550417d2fbe74343115fa2cc9c158660412f8"
     },
     {
       "origin": "https://github.com/lqepoch/trading-core",
@@ -30,11 +30,11 @@
   "inputs": [
     {
       "path": "Cargo.toml",
-      "sha256": "da4ba0445c62542b1fb95a5396bd57618915cc6b1db4cd1137d0c9ea92e54bce"
+      "sha256": "fb66a6628e821a11aa7068cb348489760374e66cb94d8741006cb0d19573407a"
     },
     {
       "path": "Cargo.lock",
-      "sha256": "cb453316d5209ad603d05dfd7c2e05ced1b6822be14e65df376bf698f8a52523"
+      "sha256": "4a5ba3b0b0911de11338039352fd6cb855257871fa1620a3568510c379e8cbd2"
     },
     {
       "path": "Dockerfile",
@@ -50,15 +50,15 @@
     },
     {
       "path": "README.md",
-      "sha256": "7f54a399d0b7496eb8465139cfa0b2dce444872c323abd3db214c79e4373a68f"
+      "sha256": "9b843293d12a1163d61c10f44d8295446058bc5cc9c9abb9dbbab183c8a3b9b5"
     },
     {
       "path": "AGENTS.md",
-      "sha256": "e5c30892ba6672d1510a83c2cbc88b8c3e6683ad52d2922d7a24af39cfeac3bf"
+      "sha256": "e60e23bd5bb1f70db46c78c613509d3649e5b7d60df65a6e441105d69ba9671f"
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "sha256": "6932e02789aef9474fc8639ef68b57c81b9802b87310e9d1b639a4bda245f90a"
+      "sha256": "5d7c840188f317a72e4e3fba62b8e1f3313f653810ce51c6fee9ccc70e3c32bf"
     },
     {
       "path": "docs/CHG-2026-001-MDP-HTTP-PROVENANCE.md",
@@ -67,6 +67,10 @@
     {
       "path": "docs/CHG-2026-001-MDP-EMPTY-TRADE-MINUTES.md",
       "sha256": "83e9c228ff317b3eb868120a566e973e8d7ec32e4fc4ba2aad603ea9783a1512"
+    },
+    {
+      "path": "docs/CHG-2026-001-MDP-DURABLE-PREDECODE-SPOOL.md",
+      "sha256": "2ac3e2c0c78a27c98972586df50fa078a21de0dc6365cddd0f77cf7d59f3226d"
     },
     {
       "path": "docs/SUPPLY_CHAIN.md",
@@ -78,11 +82,11 @@
     },
     {
       "path": "supply-chain/git-source-pins.json",
-      "sha256": "b7acf14fa1c1e6d03b864eba4430a885606cebf1bd510afe885e369aa3987fb2"
+      "sha256": "7563c42901c16b2b3c1cd8e3476ab896a5f30189aa09bf8f42fc176bf6db99ae"
     },
     {
       "path": "scripts/supply_chain.py",
-      "sha256": "61ec4484ea37973db9e706e5f8c627d701a81e21b1458ce7963c74165975a022"
+      "sha256": "2f25d56f6d165c7545845a54dc5457bbb1330030a7b382a8c872071bf9db14c9"
     },
     {
       "path": "scripts/container_smoke.sh",
@@ -112,7 +116,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "alpaca-stream",
-      "source": "git+https://github.com/lqepoch/broker-connectors?rev=70a8f89378be29a700111c3c6759ae31614efeb5#70a8f89378be29a700111c3c6759ae31614efeb5",
+      "source": "git+https://github.com/lqepoch/broker-connectors?rev=537550417d2fbe74343115fa2cc9c158660412f8#537550417d2fbe74343115fa2cc9c158660412f8",
       "version": "0.1.0"
     },
     {
@@ -287,7 +291,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "broker-ports",
-      "source": "git+https://github.com/lqepoch/broker-connectors?rev=70a8f89378be29a700111c3c6759ae31614efeb5#70a8f89378be29a700111c3c6759ae31614efeb5",
+      "source": "git+https://github.com/lqepoch/broker-connectors?rev=537550417d2fbe74343115fa2cc9c158660412f8#537550417d2fbe74343115fa2cc9c158660412f8",
       "version": "0.1.0"
     },
     {
@@ -1685,7 +1689,7 @@
     "files": [
       {
         "path": "scripts/supply_chain.py",
-        "sha256": "61ec4484ea37973db9e706e5f8c627d701a81e21b1458ce7963c74165975a022"
+        "sha256": "2f25d56f6d165c7545845a54dc5457bbb1330030a7b382a8c872071bf9db14c9"
       },
       {
         "path": "src/aggregate.rs",
@@ -1693,11 +1697,39 @@
       },
       {
         "path": "src/archive.rs",
-        "sha256": "6fdb59d5f6d61b218ff467c1d0f8c7eca19ddd7ac037f8064cb16fcebb19a20b"
+        "sha256": "096f6bfb60c50325a647a82b61f9b29599e0c1ebe02e35c38757b28ad3ec2f3d"
       },
       {
         "path": "src/archive/capture_pair.rs",
         "sha256": "ab75d4356773cc2e44a803220cd066d3078b42ff2977101de1840be98154dba0"
+      },
+      {
+        "path": "src/archive/capture_pair_v2.rs",
+        "sha256": "4e84d8601513c99565c337c9882dd6284f7aea0ccc6a239b31ff57e8d0bfb607"
+      },
+      {
+        "path": "src/archive/capture_pair_v2/rollup.rs",
+        "sha256": "fb79403a8ffae98083183c1663f06e5766ad9fce7b0840dcce9cd32b2b7b9f1a"
+      },
+      {
+        "path": "src/archive/capture_pair_v2/tests.rs",
+        "sha256": "ed3e8c785da82562ec1f23bb8f37873ae6d89a4cba95e0451924984b824bb0a0"
+      },
+      {
+        "path": "src/archive/raw_spool.rs",
+        "sha256": "8fdb0d0bab850ae84e5927bc295fc949037fa37e93146127b220ff347ac5ff17"
+      },
+      {
+        "path": "src/archive/raw_spool/linux.rs",
+        "sha256": "df64b7cb1c4d6327fcc932c4ebe711ecbe8217918daa63f47a8b76a8c9223c9c"
+      },
+      {
+        "path": "src/archive/raw_spool/linux/record.rs",
+        "sha256": "a1be5f3a0eecfdc3b5f6e7fbd6cd665bdd29fb0ff9319ee62b96d605c1fb0476"
+      },
+      {
+        "path": "src/archive/raw_spool_tests.rs",
+        "sha256": "db3e6e7a5660c7c71a1263b9654a785dd5422ff8004d8d8d9a84c635cf10cde0"
       },
       {
         "path": "src/archive/tests.rs",
@@ -1840,7 +1872,7 @@
         "sha256": "672f37defce7e1d67f8d684580db4e6ce9e517afd8c6bdf67f99d96c7e573eca"
       }
     ],
-    "sha256": "9e98b3c3f6de98f598005d8b8f41f2f1e5973efc84f09267b36f5e870451cb53"
+    "sha256": "deda1908d83c4863bda16fec1ff901a7a574b70c3087ae5e9b80d75bdcdfef6e"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
