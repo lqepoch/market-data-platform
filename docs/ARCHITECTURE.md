@@ -56,9 +56,44 @@ Event and minute-bar Parquet schemas and fingerprints are imported from core's t
 registry. The MDP maps logical field types to Arrow and compares exact field order, names, types, and
 nullability. It does not hash Arrow's display or serialization format. Parquet footer row count must
 match decoded rows. Readers and exporters stay within file/row caps.
+New writers place the descriptor and fingerprint under the core-owned metadata key names in both
+Arrow schema metadata and flat footer key/value metadata. Readers allow a legacy V1 file with no
+registry keys, allow unrelated metadata when both registry keys are absent, and require both exact
+registered values when either key is present. Partial or mismatching pairs fail closed.
 Parquet output writers enforce the object-byte limit while writing and use a cleanup guard for
 failed temporary files. Replay preflights staging against peak object/readback/manifest/receipt
 reserve, rather than only checking the directory after output has already been written.
+
+The writer uses Zstandard level 1, at most 10,000 rows per row group, and 1 MiB data/dictionary
+page targets. Readers preflight footer metadata before building an Arrow reader: at most 1,024 row
+groups, 32 MiB advertised uncompressed bytes per row group, 512 MiB total, checked per-column sums,
+and 256-row Arrow batches. The pinned Apache Parquet 60.0.0 Arrow API has no configurable maximum
+uncompressed page-size limit. Footer totals therefore do not by themselves constrain hostile page
+headers. Public verify/query paths, remote-cache verification, and cache cleanup use a separate
+Linux worker with 1 GiB address-space, 60 CPU-second, and 120-second wall-clock limits; no more than
+two workers run per process and IPC stdout is capped at 256 MiB. The existing process-group
+supervisor kills and reaps failed/timed-out workers. A decode error cannot create a verified cache
+receipt or return rows. Other operating systems fail closed with `Unsupported` instead of decoding
+inline. This is process containment, not a per-page validator or an absolute guarantee against
+every allocation pattern within the capped worker. The CLI uses Tokio's current-thread runtime so
+short-lived workers do not reserve a per-core thread pool inside the address-space cap. A malformed
+page that encodes null levels for required fields does not yet have a dedicated file-level fault
+fixture and remains unverified.
+
+The low-level `parquet_store` in-process reader functions are limited to MDP-owned output and
+trusted local fixtures. The `parquet_worker` launcher resolves `current_exe` and is CLI-owned, not a
+general SDK for embedding applications. External consumers must launch a pinned MDP worker
+executable or provide an equivalent isolated process boundary; the low-level reader is not an
+untrusted-file boundary.
+
+The optional release benchmark writes and fully reads back 100,000 synthetic trade events using
+Zstandard level 1, Snappy, and no compression. It is used to compare this schema and configuration;
+it does not establish live SIP/OPRA throughput, broker capacity, Drive transfer speed, or quotas.
+On the recorded host, the files were 1,557,077 bytes (Zstandard), 3,261,541 bytes (Snappy), and
+4,577,055 bytes (uncompressed); observed write-plus-readback throughput was approximately 152k–162k,
+169k–172k, and 180k–186k rows/second respectively. The Zstandard run peaked near 113 MiB RSS.
+These figures describe only the deterministic 100,000-row synthetic fixture and do not determine
+production shard sizes or capacity.
 
 One immutable `DatasetManifestV1` describes one Parquet object. It records source, sorted unique
 symbols, half-open source-time range, missing-source-time count, row count, canonical Parquet schema

@@ -13,7 +13,18 @@ use serde::Deserialize;
 use crate::{MarketDataError, Result, config::DriveConfig, error::StorageFailure};
 
 mod process;
-use process::{CommandOutput, run_bounded_command, run_bounded_download};
+pub(crate) use process::MAX_DECODE_WORKER_OUTPUT_BYTES;
+use process::{
+    CommandOutput, run_bounded_command, run_bounded_decode_worker, run_bounded_download,
+};
+
+pub(crate) fn run_decode_worker(
+    command: Command,
+    output_cap: usize,
+    operation_timeout: std::time::Duration,
+) -> Result<Vec<u8>> {
+    run_bounded_decode_worker(command, output_cap, operation_timeout)
+}
 
 pub const MAX_RCLONE_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 const RCLONE_TIMEOUT: &str = "60s";

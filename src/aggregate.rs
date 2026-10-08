@@ -11,7 +11,7 @@ use crate::{MarketDataError, Result, queue::CollectionMessage};
 
 const MINUTE_NS: i64 = 60_000_000_000;
 const MAX_AGGREGATION_INPUT_RECORDS: usize = 100_000;
-pub(crate) const MAX_AGGREGATION_OUTPUT_ROWS: u64 = 100_000;
+pub const MAX_AGGREGATION_OUTPUT_ROWS: u64 = 100_000;
 const MAX_EXPECTED_SYMBOLS: usize = 500;
 const MAX_WINDOW_MINUTES: u64 = 390;
 

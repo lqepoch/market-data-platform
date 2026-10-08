@@ -10,7 +10,7 @@ use market_data_platform::{
         ArchiveLimits, ArchivePublisher, DEFAULT_MAX_MANIFEST_BYTES, DEFAULT_MAX_OBJECT_BYTES,
         DEFAULT_MAX_STAGING_BYTES, DEFAULT_UPLOAD_QUEUE_CAPACITY,
     },
-    parquet_store,
+    parquet_store, parquet_worker,
     pipeline::{self, OutputTransport, ReplayOptions, ReplaySessionConfig},
     remote_query::{
         DEFAULT_MAX_EXPORT_BYTES, DEFAULT_MAX_QUERY_RESULT_BYTES, DEFAULT_REMOTE_CACHE_BYTES,
@@ -35,6 +35,12 @@ enum Command {
     Synthetic {
         #[arg(long)]
         output: PathBuf,
+        /// Use a distinct four-minute synthetic session whose session window is complete.
+        #[arg(long, conflicts_with = "regular_session")]
+        full_session: bool,
+        /// Use a distinct 390-minute synthetic session; this is not exchange-calendar evidence.
+        #[arg(long)]
+        regular_session: bool,
     },
     /// Load a bounded shared-contract JSONL file and replay it to the local-test archive.
     ReplayJsonl {
@@ -72,6 +78,27 @@ enum Command {
         symbol: Option<String>,
         #[arg(long)]
         export_jsonl: Option<PathBuf>,
+    },
+    /// Internal subprocess entrypoint; applies only to bounded Parquet decode workers.
+    #[command(hide = true)]
+    ParquetWorker {
+        #[arg(value_enum)]
+        action: ParquetWorkerAction,
+        #[arg(long)]
+        parquet: PathBuf,
+        #[arg(long)]
+        schema_id: Option<String>,
+        #[arg(long, default_value_t = DEFAULT_MAX_OBJECT_BYTES)]
+        max_object_bytes: u64,
+        #[arg(long)]
+        symbol: Option<String>,
+        #[arg(
+            long,
+            default_value_t = market_data_platform::aggregate::MAX_AGGREGATION_OUTPUT_ROWS as usize
+        )]
+        max_rows: usize,
+        #[arg(long, default_value_t = DEFAULT_MAX_QUERY_RESULT_BYTES)]
+        max_result_bytes: u64,
     },
     /// Read a manifest and Parquet object from rclone, verify them, then query/export locally.
     RemoteQueryBars {
@@ -140,6 +167,12 @@ enum NamespaceArg {
     Diagnostic,
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum ParquetWorkerAction {
+    Verify,
+    QueryBars,
+}
+
 impl NamespaceArg {
     const fn namespace(self) -> DatasetNamespace {
         match self {
@@ -158,7 +191,9 @@ impl SchemaArg {
     }
 }
 
-#[tokio::main]
+// Parquet decode workers run under a 1 GiB address-space limit; a per-core Tokio thread pool
+// consumes unnecessary virtual address space in these short-lived CLI processes.
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -166,8 +201,18 @@ async fn main() -> Result<()> {
         .init();
 
     match Args::parse().command {
-        Command::Synthetic { output } => {
-            let report = pipeline::synthetic_replay(&output).await?;
+        Command::Synthetic {
+            output,
+            full_session,
+            regular_session,
+        } => {
+            let report = if regular_session {
+                pipeline::synthetic_390_minute_session_replay(&output).await?
+            } else if full_session {
+                pipeline::synthetic_full_session_replay(&output).await?
+            } else {
+                pipeline::synthetic_replay(&output).await?
+            };
             print_json(&report)
         }
         Command::ReplayJsonl {
@@ -205,7 +250,8 @@ async fn main() -> Result<()> {
             print_json(&report)
         }
         Command::Verify { parquet, schema } => {
-            let verification = parquet_store::verify(&parquet, schema.schema_id())?;
+            let verification =
+                parquet_worker::verify(&parquet, schema.schema_id(), DEFAULT_MAX_OBJECT_BYTES)?;
             print_json(&verification)
         }
         Command::QueryBars {
@@ -214,17 +260,66 @@ async fn main() -> Result<()> {
             export_jsonl,
         } => {
             if let Some(destination) = export_jsonl {
-                let rows =
-                    parquet_store::export_bars_jsonl(&parquet, &destination, symbol.as_deref())?;
-                print_json(&serde_json::json!({ "exported_rows": rows }))
+                let rows = parquet_worker::query_bars(
+                    &parquet,
+                    symbol.as_deref(),
+                    market_data_platform::aggregate::MAX_AGGREGATION_OUTPUT_ROWS as usize,
+                    DEFAULT_MAX_QUERY_RESULT_BYTES,
+                )?;
+                let exported_rows = rows.len();
+                market_data_platform::remote_query::write_bars_jsonl_bounded(
+                    &destination,
+                    &rows,
+                    DEFAULT_MAX_EXPORT_BYTES,
+                )?;
+                print_json(&serde_json::json!({ "exported_rows": exported_rows }))
             } else {
-                let rows = parquet_store::query_bars(&parquet, symbol.as_deref())?;
+                let rows = parquet_worker::query_bars(
+                    &parquet,
+                    symbol.as_deref(),
+                    market_data_platform::aggregate::MAX_AGGREGATION_OUTPUT_ROWS as usize,
+                    DEFAULT_MAX_QUERY_RESULT_BYTES,
+                )?;
                 for row in rows {
                     println!("{}", serde_json::to_string(&row)?);
                 }
                 Ok(())
             }
         }
+        Command::ParquetWorker {
+            action,
+            parquet,
+            schema_id,
+            max_object_bytes,
+            symbol,
+            max_rows,
+            max_result_bytes,
+        } => match action {
+            ParquetWorkerAction::Verify => {
+                let schema_id = schema_id.ok_or(MarketDataError::InvalidInput)?;
+                let verification =
+                    parquet_store::verify_with_limit(&parquet, &schema_id, max_object_bytes)?;
+                print_json(&verification)
+            }
+            ParquetWorkerAction::QueryBars => {
+                let rows = parquet_store::query_bars_with_limits(
+                    &parquet,
+                    symbol.as_deref(),
+                    max_rows,
+                    max_result_bytes,
+                )?;
+                let stdout = std::io::stdout();
+                let mut output = std::io::BufWriter::new(stdout.lock());
+                for row in rows {
+                    serde_json::to_writer(&mut output, &row)?;
+                    use std::io::Write;
+                    output.write_all(b"\n")?;
+                }
+                use std::io::Write;
+                output.flush()?;
+                Ok(())
+            }
+        },
         Command::RemoteQueryBars {
             dataset_id,
             namespace,
@@ -281,7 +376,7 @@ async fn main() -> Result<()> {
             max_manifest_bytes,
             max_cache_entries,
         } => {
-            let cleaner = RemoteCacheCleaner::new(
+            let cleaner = RemoteCacheCleaner::new_isolated(
                 cache_dir,
                 RemoteCacheLimits {
                     max_object_bytes,

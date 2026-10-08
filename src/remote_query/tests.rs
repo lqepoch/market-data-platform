@@ -2,6 +2,9 @@ use super::*;
 use std::sync::atomic::AtomicUsize;
 
 use crate::storage::LocalTestTransport;
+use market_contracts::{
+    DatasetCompletionEvidenceV1, DatasetManifestV1, DatasetObjectV1, DatasetTransportV1,
+};
 
 #[derive(Clone)]
 struct CountingTransport {
@@ -78,7 +81,7 @@ async fn remote_query_hash_verifies_then_reuses_only_fresh_cache() {
         Arc::clone(&now),
         RemoteCacheLimits::default(),
     );
-    let dataset_id = "synthetic-2026-10-08-four-bars-v1-bars-1m-v1";
+    let dataset_id = "synthetic-2026-10-08-four-bars-parquet-v3-bars-1m-v1";
 
     let (bars, first) = reader
         .query_bars(DatasetNamespace::Diagnostic, dataset_id, Some("QQQ"))
@@ -142,7 +145,7 @@ async fn remote_query_rejects_corrupt_cache_without_using_unverified_rows() {
         Arc::new(AtomicU64::new(1_000)),
         RemoteCacheLimits::default(),
     );
-    let dataset_id = "synthetic-2026-10-08-four-bars-v1-bars-1m-v1";
+    let dataset_id = "synthetic-2026-10-08-four-bars-parquet-v3-bars-1m-v1";
     reader
         .query_bars(DatasetNamespace::Diagnostic, dataset_id, None)
         .unwrap();
@@ -178,7 +181,7 @@ async fn curated_namespace_rejects_synthetic_before_downloading_parquet() {
     assert!(matches!(
         reader.query_bars(
             DatasetNamespace::Curated,
-            "synthetic-2026-10-08-four-bars-v1-bars-1m-v1",
+            "synthetic-2026-10-08-four-bars-parquet-v3-bars-1m-v1",
             None
         ),
         Err(MarketDataError::PublicationNotAuthorized)
@@ -187,7 +190,7 @@ async fn curated_namespace_rejects_synthetic_before_downloading_parquet() {
     assert!(
         !temp
             .path()
-            .join("cache/curated/synthetic-2026-10-08-four-bars-v1-bars-1m-v1")
+            .join("cache/curated/synthetic-2026-10-08-four-bars-parquet-v3-bars-1m-v1")
             .exists()
     );
 }
@@ -211,7 +214,7 @@ async fn remote_query_and_jsonl_export_obey_result_and_output_byte_caps() {
         Arc::new(AtomicU64::new(1_000)),
         limits,
     );
-    let dataset_id = "synthetic-2026-10-08-four-bars-v1-bars-1m-v1";
+    let dataset_id = "synthetic-2026-10-08-four-bars-parquet-v3-bars-1m-v1";
     assert!(matches!(
         reader.query_bars(DatasetNamespace::Diagnostic, dataset_id, None),
         Err(MarketDataError::InputLimit)
@@ -257,7 +260,7 @@ async fn cleanup_remote_cache_is_dry_run_by_default_and_evicts_only_expired_veri
         Arc::clone(&now),
         RemoteCacheLimits::default(),
     );
-    let dataset_id = "synthetic-2026-10-08-four-bars-v1-bars-1m-v1";
+    let dataset_id = "synthetic-2026-10-08-four-bars-parquet-v3-bars-1m-v1";
     reader
         .query_bars(DatasetNamespace::Diagnostic, dataset_id, None)
         .unwrap();
@@ -312,7 +315,7 @@ async fn cleanup_remote_cache_skips_active_entries_and_preserves_unknown_receipt
         Arc::clone(&now),
         RemoteCacheLimits::default(),
     );
-    let dataset_id = "synthetic-2026-10-08-four-bars-v1-bars-1m-v1";
+    let dataset_id = "synthetic-2026-10-08-four-bars-parquet-v3-bars-1m-v1";
     reader
         .query_bars(DatasetNamespace::Diagnostic, dataset_id, None)
         .unwrap();
@@ -352,4 +355,98 @@ async fn cleanup_remote_cache_skips_active_entries_and_preserves_unknown_receipt
     assert_eq!(unknown_report.unknown_preserved, 1);
     assert_eq!(unknown_report.evicted, 0);
     assert!(cached_dir.is_dir());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn hostile_page_header_never_commits_cache_receipt_or_returns_verified_rows() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test();
+    let temp = tempfile::tempdir().unwrap();
+    let dataset_id = "synthetic-page-bomb-v1";
+    let object_name = format!("{dataset_id}.parquet");
+    let remote_root = temp.path().join("remote");
+    let remote_dataset = remote_root.join(dataset_id);
+    fs::create_dir_all(&remote_dataset).unwrap();
+
+    let source_path = temp.path().join("source.parquet");
+    let messages = (1_u64..=10_000)
+        .map(|sequence| {
+            crate::parquet_store::tests::event_with_record_id(
+                sequence,
+                format!("r{:0>127}", sequence),
+            )
+        })
+        .collect::<Vec<_>>();
+    let verification = crate::parquet_store::write_events(&source_path, &messages).unwrap();
+    crate::parquet_store::tests::mutate_dictionary_page_to_memory_bomb(&source_path);
+    let object_bytes = fs::read(&source_path).unwrap();
+    let content_sha256 = sha256(&object_bytes);
+    let size_bytes = u64::try_from(object_bytes.len()).unwrap();
+    fs::write(remote_dataset.join(&object_name), &object_bytes).unwrap();
+
+    let mut source = verification.source.clone();
+    source.source_record_id = None;
+    let manifest = DatasetManifestV1 {
+        schema_version: 1,
+        dataset_id: dataset_id.to_owned(),
+        source,
+        symbols: verification.symbols.clone(),
+        time_range: verification.time_range.clone(),
+        source_timestamp_missing_rows: verification.source_timestamp_missing_rows,
+        row_count: verification.footer_rows,
+        object: DatasetObjectV1 {
+            object_name: object_name.clone(),
+            object_id: Some(format!("local-test:{dataset_id}-{object_name}")),
+            size_bytes,
+            content_sha256: content_sha256.clone(),
+            parquet_schema_sha256: verification.schema_sha256.clone(),
+            parquet_footer_rows: verification.footer_rows,
+            transport: DatasetTransportV1::LocalTest,
+        },
+        completion: DatasetCompletionEvidenceV1 {
+            input_eof: true,
+            source_pages_exhausted: None,
+            readback_sha256: content_sha256,
+            verified_before_publish: true,
+        },
+    };
+    manifest.validate().unwrap();
+    fs::write(
+        remote_dataset.join(format!("{dataset_id}.manifest.json")),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let cache_root = temp.path().join("cache");
+    let mut reader = RemoteArchiveReader::local_test(
+        LocalTestTransport::new(&remote_root).unwrap(),
+        &cache_root,
+        RemoteCacheLimits::default(),
+    )
+    .unwrap();
+    reader.isolate_parquet_decode = true;
+    let pid_path = temp.path().join("cache-worker.pid");
+    let _pid_guard = crate::parquet_worker::track_worker_pid(&pid_path);
+    assert!(matches!(
+        reader.ensure_cached(DatasetNamespace::Diagnostic, dataset_id),
+        Err(MarketDataError::Parquet)
+    ));
+
+    let cached_dataset = cache_root.join("diagnostic").join(dataset_id);
+    assert!(!cached_dataset.exists());
+    assert_eq!(
+        fs::read_dir(cache_root.join(".partial")).unwrap().count(),
+        0
+    );
+    assert!(!cache_root.join(".cache-receipt.json").exists());
+
+    let process_id = fs::read_to_string(pid_path)
+        .unwrap()
+        .parse::<i32>()
+        .unwrap();
+    let pid = rustix::process::Pid::from_raw(process_id).unwrap();
+    assert!(matches!(
+        rustix::process::kill_process(pid, rustix::process::Signal::KILL),
+        Err(rustix::io::Errno::SRCH)
+    ));
 }

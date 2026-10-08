@@ -303,10 +303,11 @@ fn manifest_abort_after_create_is_reconciled_and_unknown_manifest_is_not_reuploa
         "synthetic-1".to_owned(),
         "synthetic-1.manifest.json".to_owned(),
     ));
-    assert!(matches!(
-        publisher.publish(&request),
-        Err(MarketDataError::UnknownOutcome)
-    ));
+    let retry = publisher.publish(&request);
+    assert!(
+        matches!(retry, Err(MarketDataError::UnknownOutcome)),
+        "retry without the observed manifest must remain unknown: {retry:?}"
+    );
     assert_eq!(transport.upload_count(), 2);
 }
 

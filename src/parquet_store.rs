@@ -3,12 +3,8 @@
 use std::{
     collections::BTreeSet,
     fs::{self, File, OpenOptions},
-    io::Write,
-    path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
-    },
+    path::Path,
+    sync::{Arc, atomic::AtomicBool},
 };
 
 use arrow_array::{
@@ -16,7 +12,7 @@ use arrow_array::{
     UInt64Array,
 };
 use arrow_schema::SchemaRef;
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::NaiveDate;
 use exact_decimal::ExactDecimal;
 use market_contracts::{
     DatasetTimeRangeV1, DecimalString, EntitlementState, EventMetadataV1, MarketDataSourceV1,
@@ -24,7 +20,8 @@ use market_contracts::{
 };
 use parquet::{
     arrow::{ArrowWriter, arrow_reader::ParquetRecordBatchReaderBuilder},
-    file::properties::WriterProperties,
+    basic::{Compression, ZstdLevel},
+    file::metadata::KeyValue,
 };
 
 use crate::{
@@ -37,14 +34,33 @@ use crate::{
     },
 };
 
-static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const SCHEMA_DESCRIPTOR_METADATA_KEY: &str = "lqepoch.schema_descriptor.v1";
+const SCHEMA_FINGERPRINT_METADATA_KEY: &str = "lqepoch.schema_fingerprint_sha256";
+
+const PARQUET_ROW_GROUP_ROWS: usize = 10_000;
+const PARQUET_DATA_PAGE_BYTES: usize = 1024 * 1024;
+const PARQUET_READ_BATCH_ROWS: usize = 256;
+const MAX_PARQUET_ROW_GROUPS: usize = 1024;
+const MAX_PARQUET_ROW_GROUP_UNCOMPRESSED_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_PARQUET_TOTAL_UNCOMPRESSED_BYTES: u64 = 512 * 1024 * 1024;
 
 mod facts;
+mod metadata;
+mod projection;
 mod rows;
+mod write_helpers;
 use facts::DatasetFacts;
+use metadata::{
+    trusted_schema_metadata, validate_decode_budget, validate_optional_schema_metadata,
+    writer_properties,
+};
+use projection::*;
 use rows::{decode_bar_batch, decode_event_batch, validate_bar_row};
+use write_helpers::{
+    CappedWriter, TempFileCleanup, create_new_file, parent_dir, parquet_write_error, temporary_path,
+};
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct ParquetVerification {
     pub schema_id: String,
     pub schema_sha256: String,
@@ -65,6 +81,15 @@ pub fn write_events_with_limit(
     path: &Path,
     messages: &[CollectionMessage],
     max_bytes: u64,
+) -> Result<ParquetVerification> {
+    write_events_with_compression(path, messages, max_bytes, default_compression())
+}
+
+fn write_events_with_compression(
+    path: &Path,
+    messages: &[CollectionMessage],
+    max_bytes: u64,
+    compression: Compression,
 ) -> Result<ParquetVerification> {
     if messages.len() > crate::protocol::DEFAULT_MAX_JSONL_RECORDS {
         return Err(MarketDataError::InputLimit);
@@ -178,7 +203,14 @@ pub fn write_events_with_limit(
 
     let batch =
         RecordBatch::try_new(Arc::clone(&schema), columns).map_err(|_| MarketDataError::Parquet)?;
-    write_batch_atomic(path, schema, &batch, max_bytes)?;
+    write_batch_atomic_with_compression(
+        path,
+        schema,
+        &batch,
+        max_bytes,
+        compression,
+        EVENT_SCHEMA_ID,
+    )?;
     verify_with_limit(path, EVENT_SCHEMA_ID, max_bytes)
 }
 
@@ -320,7 +352,7 @@ pub fn write_bars_with_limit(
 
     let batch =
         RecordBatch::try_new(Arc::clone(&schema), columns).map_err(|_| MarketDataError::Parquet)?;
-    write_batch_atomic(path, schema, &batch, max_bytes)?;
+    write_batch_atomic(path, schema, &batch, max_bytes, MINUTE_BAR_SCHEMA_ID)?;
     verify_with_limit(path, MINUTE_BAR_SCHEMA_ID, max_bytes)
 }
 
@@ -339,14 +371,19 @@ pub fn verify_with_limit(
     let file = File::open(path)?;
     let builder =
         ParquetRecordBatchReaderBuilder::try_new(file).map_err(|_| MarketDataError::Parquet)?;
+    validate_decode_budget(builder.metadata().as_ref())?;
     validate_arrow_schema(schema_id, builder.schema().as_ref())?;
+    validate_optional_schema_metadata(schema_id, builder.metadata().as_ref(), builder.schema())?;
     let schema_hash = fingerprint(schema_id, builder.schema().as_ref())?;
     let footer_rows = u64::try_from(builder.metadata().file_metadata().num_rows())
         .map_err(|_| MarketDataError::Parquet)?;
     if footer_rows > crate::protocol::DEFAULT_MAX_JSONL_RECORDS as u64 {
         return Err(MarketDataError::InputLimit);
     }
-    let mut reader = builder.build().map_err(|_| MarketDataError::Parquet)?;
+    let mut reader = builder
+        .with_batch_size(PARQUET_READ_BATCH_ROWS)
+        .build()
+        .map_err(|_| MarketDataError::Parquet)?;
     let mut decoded_rows = 0_u64;
     let mut facts = DatasetFacts::default();
     for batch in &mut reader {
@@ -414,14 +451,20 @@ pub fn query_bars_with_limits(
     let file = File::open(path)?;
     let builder =
         ParquetRecordBatchReaderBuilder::try_new(file).map_err(|_| MarketDataError::Parquet)?;
+    validate_decode_budget(builder.metadata().as_ref())?;
     validate_arrow_schema(MINUTE_BAR_SCHEMA_ID, builder.schema().as_ref())?;
+    validate_optional_schema_metadata(
+        MINUTE_BAR_SCHEMA_ID,
+        builder.metadata().as_ref(),
+        builder.schema(),
+    )?;
     if builder.metadata().file_metadata().num_rows()
         > crate::protocol::DEFAULT_MAX_JSONL_RECORDS as i64
     {
         return Err(MarketDataError::InputLimit);
     }
     let mut reader = builder
-        .with_batch_size(1024)
+        .with_batch_size(PARQUET_READ_BATCH_ROWS)
         .build()
         .map_err(|_| MarketDataError::Parquet)?;
     let mut rows = Vec::new();
@@ -445,7 +488,11 @@ pub fn query_bars_with_limits(
     let file = File::open(path)?;
     let builder =
         ParquetRecordBatchReaderBuilder::try_new(file).map_err(|_| MarketDataError::Parquet)?;
-    let mut full_reader = builder.build().map_err(|_| MarketDataError::Parquet)?;
+    validate_decode_budget(builder.metadata().as_ref())?;
+    let mut full_reader = builder
+        .with_batch_size(PARQUET_READ_BATCH_ROWS)
+        .build()
+        .map_err(|_| MarketDataError::Parquet)?;
     for batch in &mut full_reader {
         let batch = batch.map_err(|_| MarketDataError::Parquet)?;
         for row in decode_bar_batch(&batch)? {
@@ -510,6 +557,25 @@ fn write_batch_atomic(
     schema: SchemaRef,
     batch: &RecordBatch,
     max_bytes: u64,
+    schema_id: &str,
+) -> Result<()> {
+    write_batch_atomic_with_compression(
+        path,
+        schema,
+        batch,
+        max_bytes,
+        default_compression(),
+        schema_id,
+    )
+}
+
+fn write_batch_atomic_with_compression(
+    path: &Path,
+    schema: SchemaRef,
+    batch: &RecordBatch,
+    max_bytes: u64,
+    compression: Compression,
+    schema_id: &str,
 ) -> Result<()> {
     if max_bytes == 0 {
         return Err(MarketDataError::InvalidInput);
@@ -533,14 +599,29 @@ fn write_batch_atomic(
         written_bytes: 0,
         over_limit: Arc::clone(&over_limit),
     };
+    let schema_metadata = trusted_schema_metadata(schema_id)?;
+    let writer_schema = Arc::new(
+        schema
+            .as_ref()
+            .clone()
+            .with_metadata(schema_metadata.clone()),
+    );
+    let annotated_batch =
+        RecordBatch::try_new(Arc::clone(&writer_schema), batch.columns().to_vec())
+            .map_err(|_| MarketDataError::Parquet)?;
+    let mut flat_metadata = schema_metadata
+        .iter()
+        .map(|(key, value)| KeyValue::new(key.clone(), value.clone()))
+        .collect::<Vec<_>>();
+    flat_metadata.sort_by(|left, right| left.key.cmp(&right.key));
     let mut writer = ArrowWriter::try_new(
         capped_file,
-        Arc::clone(&schema),
-        Some(WriterProperties::builder().build()),
+        writer_schema,
+        Some(writer_properties(compression, flat_metadata)),
     )
     .map_err(|_| parquet_write_error(&over_limit))?;
     writer
-        .write(batch)
+        .write(&annotated_batch)
         .map_err(|_| parquet_write_error(&over_limit))?;
     writer
         .close()
@@ -564,263 +645,9 @@ fn write_batch_atomic(
     Ok(())
 }
 
-struct CappedWriter {
-    file: File,
-    max_bytes: u64,
-    written_bytes: u64,
-    over_limit: Arc<AtomicBool>,
-}
-
-impl Write for CappedWriter {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        let requested = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
-        if self.written_bytes.saturating_add(requested) > self.max_bytes {
-            self.over_limit.store(true, Ordering::Release);
-            return Err(std::io::Error::other("parquet byte limit exceeded"));
-        }
-        let written = self.file.write(bytes)?;
-        self.written_bytes = self
-            .written_bytes
-            .checked_add(u64::try_from(written).unwrap_or(u64::MAX))
-            .ok_or_else(|| std::io::Error::other("parquet byte count overflow"))?;
-        Ok(written)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.file.flush()
-    }
-}
-
-fn parquet_write_error(over_limit: &AtomicBool) -> MarketDataError {
-    if over_limit.load(Ordering::Acquire) {
-        MarketDataError::InputLimit
-    } else {
-        MarketDataError::Parquet
-    }
-}
-
-struct TempFileCleanup(PathBuf);
-
-impl Drop for TempFileCleanup {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
-}
-
-fn create_new_file(path: &Path) -> Result<File> {
-    fs::create_dir_all(parent_dir(path))?;
-    OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::AlreadyExists {
-                MarketDataError::Conflict
-            } else {
-                MarketDataError::Io(error)
-            }
-        })
-}
-
-fn temporary_path(path: &Path) -> PathBuf {
-    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("dataset.parquet");
-    parent_dir(path).join(format!(".{name}.tmp-{}-{sequence}", std::process::id()))
-}
-
-fn parent_dir(path: &Path) -> &Path {
-    path.parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."))
-}
-
-fn validate_no_unexpected_nulls(batch: &RecordBatch) -> Result<()> {
-    for (field, column) in batch.schema().fields().iter().zip(batch.columns()) {
-        if !field.is_nullable() && column.null_count() != 0 {
-            return Err(MarketDataError::ParquetSchema);
-        }
-    }
-    Ok(())
-}
-
-fn string_array<'a>(values: impl Iterator<Item = &'a str>) -> ArrayRef {
-    Arc::new(StringArray::from_iter_values(values))
-}
-
-fn nullable_string_array<'a>(values: impl Iterator<Item = Option<&'a str>>) -> ArrayRef {
-    Arc::new(StringArray::from(values.collect::<Vec<_>>()))
-}
-
-fn owned_string_array(values: impl Iterator<Item = String>) -> ArrayRef {
-    Arc::new(StringArray::from_iter_values(values))
-}
-
-fn timestamp_array<'a>(values: impl Iterator<Item = Option<&'a str>>) -> Result<ArrayRef> {
-    let values = values
-        .map(|value| value.map(timestamp_to_ns).transpose())
-        .collect::<Result<Vec<_>>>()?;
-    Ok(Arc::new(
-        TimestampNanosecondArray::from(values).with_timezone("UTC"),
-    ))
-}
-
-fn timestamp_to_ns(value: &str) -> Result<i64> {
-    DateTime::parse_from_rfc3339(value)
-        .map_err(|_| MarketDataError::Contract)?
-        .timestamp_nanos_opt()
-        .ok_or(MarketDataError::InvalidInput)
-}
-
-fn valid_sha256(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-}
-
-fn valid_metadata_label(value: &str, max_bytes: usize) -> bool {
-    !value.is_empty()
-        && value.len() <= max_bytes
-        && value.trim() == value
-        && !value.chars().any(char::is_control)
-}
-
-fn timestamp_from_ns(value: i64) -> Result<UtcTimestamp> {
-    let seconds = value.div_euclid(1_000_000_000);
-    let nanos = value.rem_euclid(1_000_000_000) as u32;
-    let timestamp =
-        DateTime::<Utc>::from_timestamp(seconds, nanos).ok_or(MarketDataError::InvalidInput)?;
-    UtcTimestamp::parse(&timestamp.to_rfc3339()).map_err(|_| MarketDataError::Contract)
-}
-
-struct ProjectedEvent<'a> {
-    kind: &'static str,
-    symbol: &'a str,
-    price: Option<String>,
-    size: Option<String>,
-    bid: Option<String>,
-    ask: Option<String>,
-    bid_size: Option<String>,
-    ask_size: Option<String>,
-}
-
-fn project_event(event: &MarketEventEnvelopeV1) -> Result<ProjectedEvent<'_>> {
-    Ok(match &event.event {
-        MarketEventV1::StockQuote {
-            symbol,
-            bid,
-            ask,
-            bid_size,
-            ask_size,
-        } => ProjectedEvent {
-            kind: "stock_quote",
-            symbol,
-            price: None,
-            size: None,
-            bid: bid.as_ref().map(ToString::to_string),
-            ask: ask.as_ref().map(ToString::to_string),
-            bid_size: bid_size.as_ref().map(ToString::to_string),
-            ask_size: ask_size.as_ref().map(ToString::to_string),
-        },
-        MarketEventV1::StockTrade {
-            symbol,
-            price,
-            size,
-        } => ProjectedEvent {
-            kind: "stock_trade",
-            symbol,
-            price: Some(price.as_str().to_owned()),
-            size: Some(size.as_str().to_owned()),
-            bid: None,
-            ask: None,
-            bid_size: None,
-            ask_size: None,
-        },
-        MarketEventV1::OptionQuote {
-            symbol,
-            bid,
-            ask,
-            bid_size,
-            ask_size,
-        } => ProjectedEvent {
-            kind: "option_quote",
-            symbol,
-            price: None,
-            size: None,
-            bid: bid.as_ref().map(ToString::to_string),
-            ask: ask.as_ref().map(ToString::to_string),
-            bid_size: bid_size.as_ref().map(ToString::to_string),
-            ask_size: ask_size.as_ref().map(ToString::to_string),
-        },
-        MarketEventV1::OptionTrade {
-            symbol,
-            price,
-            size,
-        } => ProjectedEvent {
-            kind: "option_trade",
-            symbol,
-            price: Some(price.as_str().to_owned()),
-            size: Some(size.as_str().to_owned()),
-            bid: None,
-            ask: None,
-            bid_size: None,
-            ask_size: None,
-        },
-    })
-}
-
-fn enum_string<T: serde::Serialize>(value: &T) -> String {
-    serde_json::to_value(value)
-        .ok()
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "unknown".to_owned())
-}
-
-fn string_column(batch: &RecordBatch, index: usize) -> Result<&StringArray> {
-    batch
-        .column(index)
-        .as_any()
-        .downcast_ref()
-        .ok_or(MarketDataError::Parquet)
-}
-
-fn value_string(array: &StringArray, index: usize) -> Result<&str> {
-    if array.is_null(index) {
-        return Err(MarketDataError::ParquetSchema);
-    }
-    Ok(array.value(index))
-}
-
-fn timestamp_value(array: &TimestampNanosecondArray, index: usize) -> Result<UtcTimestamp> {
-    if array.is_null(index) {
-        return Err(MarketDataError::ParquetSchema);
-    }
-    timestamp_from_ns(array.value(index))
-}
-
-fn u64_value(array: &UInt64Array, index: usize) -> Result<u64> {
-    if array.is_null(index) {
-        return Err(MarketDataError::ParquetSchema);
-    }
-    Ok(array.value(index))
-}
-
-fn u32_value(array: &UInt32Array, index: usize) -> Result<u32> {
-    if array.is_null(index) {
-        return Err(MarketDataError::ParquetSchema);
-    }
-    Ok(array.value(index))
-}
-
-fn bool_value(array: &BooleanArray, index: usize) -> Result<bool> {
-    if array.is_null(index) {
-        return Err(MarketDataError::ParquetSchema);
-    }
-    Ok(array.value(index))
+fn default_compression() -> Compression {
+    Compression::ZSTD(ZstdLevel::try_new(1).expect("Zstandard level 1 is valid"))
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

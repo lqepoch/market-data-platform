@@ -4,6 +4,7 @@ pub struct RemoteCacheCleaner {
     cache_root: PathBuf,
     limits: RemoteCacheLimits,
     now_unix_seconds: Arc<dyn Fn() -> u64 + Send + Sync>,
+    isolate_parquet_decode: bool,
 }
 
 impl fmt::Debug for RemoteCacheCleaner {
@@ -19,6 +20,13 @@ impl fmt::Debug for RemoteCacheCleaner {
 impl RemoteCacheCleaner {
     pub fn new(cache_root: impl Into<PathBuf>, limits: RemoteCacheLimits) -> Result<Self> {
         Self::with_clock(cache_root, limits, Arc::new(system_time_unix_seconds))
+    }
+
+    /// Construct a cleaner that verifies cached Parquet only in a resource-limited worker.
+    pub fn new_isolated(cache_root: impl Into<PathBuf>, limits: RemoteCacheLimits) -> Result<Self> {
+        let mut cleaner = Self::new(cache_root, limits)?;
+        cleaner.isolate_parquet_decode = true;
+        Ok(cleaner)
     }
 
     pub(super) fn with_clock(
@@ -39,6 +47,7 @@ impl RemoteCacheCleaner {
             cache_root: fs::canonicalize(cache_root)?,
             limits,
             now_unix_seconds,
+            isolate_parquet_decode: false,
         })
     }
 
@@ -84,6 +93,7 @@ impl RemoteCacheCleaner {
                 &receipt,
                 namespace,
                 &self.limits,
+                self.isolate_parquet_decode,
             ) {
                 Ok(cache) => cache,
                 Err(_) => {
@@ -132,6 +142,7 @@ impl RemoteCacheCleaner {
                 &current_receipt,
                 namespace,
                 &self.limits,
+                self.isolate_parquet_decode,
             )?;
             let current_age = match (self.now_unix_seconds)()
                 .checked_sub(current_receipt.verified_at_unix_seconds)
@@ -359,6 +370,7 @@ pub(super) fn verify_cache_contents(
     receipt: &RemoteCacheReceiptV1,
     namespace: DatasetNamespace,
     limits: &RemoteCacheLimits,
+    isolate_parquet_decode: bool,
 ) -> Result<VerifiedCache> {
     validate_cache_layout(cache_dir, dataset_id)?;
     let manifest_path = cache_dir.join(CACHE_MANIFEST_NAME);
@@ -389,8 +401,11 @@ pub(super) fn verify_cache_contents(
         return Err(MarketDataError::Conflict);
     }
     let schema_id = schema_id_for_hash(&manifest.object.parquet_schema_sha256)?;
-    let parquet =
-        parquet_store::verify_with_limit(&object_path, schema_id, limits.max_object_bytes)?;
+    let parquet = if isolate_parquet_decode {
+        parquet_worker::verify(&object_path, schema_id, limits.max_object_bytes)?
+    } else {
+        parquet_store::verify_with_limit(&object_path, schema_id, limits.max_object_bytes)?
+    };
     validate_manifest_facts(&manifest, &parquet)?;
     if receipt.parquet_schema_sha256 != parquet.schema_sha256 {
         return Err(MarketDataError::ParquetSchema);

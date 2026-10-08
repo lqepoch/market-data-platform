@@ -1,5 +1,21 @@
 use super::*;
+use crate::queue::CollectionMessage;
+#[cfg(feature = "benchmark-snappy")]
+use chrono::{DateTime, SecondsFormat, Utc};
+use market_contracts::{
+    DecimalString, EntitlementState, EventMetadataV1, MarketDataSourceV1, MarketEventEnvelopeV1,
+    MarketEventV1, NumericEncodingV1,
+};
+#[cfg(feature = "benchmark-snappy")]
+use parquet::basic::Compression;
+use parquet::{arrow::arrow_reader::ParquetRecordBatchReaderBuilder, basic::CompressionCodec};
+#[cfg(feature = "benchmark-snappy")]
+use std::time::Instant;
 use tempfile::tempdir;
+
+#[path = "../../tests/common/parquet_page_bomb.rs"]
+mod page_bomb_fixture;
+pub(crate) use page_bomb_fixture::mutate_dictionary_page_to_memory_bomb;
 
 fn valid_bar() -> TradeMinuteBarV1 {
     TradeMinuteBarV1 {
@@ -42,6 +58,34 @@ fn valid_bar() -> TradeMinuteBarV1 {
     }
 }
 
+pub(crate) fn event_with_record_id(sequence: u64, source_record_id: String) -> CollectionMessage {
+    let timestamp = UtcTimestamp::parse("2026-10-08T13:30:15Z").unwrap();
+    let source = MarketDataSourceV1::new(
+        "synthetic",
+        "synthetic",
+        EntitlementState::Unknown,
+        NumericEncodingV1::DecimalToken,
+        Some(source_record_id),
+    )
+    .unwrap();
+    CollectionMessage::Market(MarketEventEnvelopeV1 {
+        metadata: EventMetadataV1 {
+            schema_version: 1,
+            source,
+            generation: 1,
+            sequence,
+            raw_frame_sha256: None,
+            source_timestamp: Some(timestamp.clone()),
+            received_timestamp: timestamp,
+        },
+        event: MarketEventV1::StockTrade {
+            symbol: "QQQ".into(),
+            price: DecimalString::new("600.25").unwrap(),
+            size: DecimalString::new("1").unwrap(),
+        },
+    })
+}
+
 #[test]
 fn write_verify_and_query_share_semantic_bar_validation() {
     let temp = tempdir().unwrap();
@@ -52,6 +96,25 @@ fn write_verify_and_query_share_semantic_bar_validation() {
     assert_eq!(verification.symbols, ["QQQ"]);
     assert_eq!(query_bars(&path, Some("QQQ")).unwrap(), [valid_bar()]);
     assert!(query_bars(&path, Some("SPY")).unwrap().is_empty());
+    let parquet = ParquetRecordBatchReaderBuilder::try_new(File::open(&path).unwrap()).unwrap();
+    let schema_metadata = parquet.schema().metadata();
+    let footer_metadata = parquet
+        .metadata()
+        .file_metadata()
+        .key_value_metadata()
+        .unwrap();
+    for key in [
+        SCHEMA_DESCRIPTOR_METADATA_KEY,
+        SCHEMA_FINGERPRINT_METADATA_KEY,
+    ] {
+        let arrow_value = schema_metadata.get(key).unwrap();
+        let footer_value = footer_metadata
+            .iter()
+            .find(|entry| entry.key == key)
+            .and_then(|entry| entry.value.as_ref())
+            .unwrap();
+        assert_eq!(arrow_value, footer_value);
+    }
 
     let mut bad_decimal = valid_bar();
     bad_decimal.open = "600.2oops".into();
@@ -93,6 +156,40 @@ fn write_verify_and_query_share_semantic_bar_validation() {
 }
 
 #[test]
+fn identical_rows_write_identical_parquet_bytes_and_sorted_footer_metadata() {
+    let temp = tempdir().unwrap();
+    let first = temp.path().join("first.parquet");
+    let rows = [valid_bar()];
+    write_bars(&first, &rows).unwrap();
+    let expected_bytes = fs::read(&first).unwrap();
+    for index in 0..8 {
+        let repeated = temp.path().join(format!("repeat-{index}.parquet"));
+        write_bars(&repeated, &rows).unwrap();
+        assert_eq!(fs::read(&repeated).unwrap(), expected_bytes);
+    }
+
+    let builder = ParquetRecordBatchReaderBuilder::try_new(File::open(first).unwrap()).unwrap();
+    let keys = builder
+        .metadata()
+        .file_metadata()
+        .key_value_metadata()
+        .unwrap()
+        .iter()
+        .map(|entry| entry.key.as_str())
+        .filter(|key| {
+            *key == SCHEMA_DESCRIPTOR_METADATA_KEY || *key == SCHEMA_FINGERPRINT_METADATA_KEY
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        keys,
+        [
+            SCHEMA_DESCRIPTOR_METADATA_KEY,
+            SCHEMA_FINGERPRINT_METADATA_KEY
+        ]
+    );
+}
+
+#[test]
 fn nonpaged_historical_bar_roundtrips_without_fabricated_page_evidence() {
     let temp = tempdir().unwrap();
     let path = temp.path().join("historical-nonpaged.parquet");
@@ -131,4 +228,236 @@ fn parquet_byte_limit_rejects_and_cleans_temporary_output() {
     ));
     assert!(!path.exists());
     assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn parquet_writes_use_zstd_and_bounded_row_groups() {
+    let temp = tempdir().unwrap();
+    let path = temp.path().join("zstd.parquet");
+    write_bars(&path, &[valid_bar()]).unwrap();
+    let builder = ParquetRecordBatchReaderBuilder::try_new(File::open(path).unwrap()).unwrap();
+    assert_eq!(builder.metadata().num_row_groups(), 1);
+    assert!(builder.metadata().row_groups()[0].total_byte_size() > 0);
+    assert!(
+        builder.metadata().row_groups()[0]
+            .columns()
+            .iter()
+            .all(|column| column.compression_codec() == CompressionCodec::ZSTD)
+    );
+}
+
+#[test]
+fn decode_budget_rejects_expanded_footer_before_building_arrow_reader() {
+    let temp = tempdir().unwrap();
+    let path = temp.path().join("bounded.parquet");
+    write_bars(&path, &[valid_bar()]).unwrap();
+    let builder = ParquetRecordBatchReaderBuilder::try_new(File::open(path).unwrap()).unwrap();
+    let mut metadata = builder.metadata().as_ref().clone();
+    let mut file_builder = metadata.into_builder();
+    let mut row_groups = file_builder.take_row_groups();
+    let mut row_group_builder = row_groups.remove(0).into_builder();
+    let mut columns = row_group_builder.take_columns();
+    let expanded_column_size = i64::try_from(MAX_PARQUET_ROW_GROUP_UNCOMPRESSED_BYTES + 1).unwrap();
+    columns[0] = columns[0]
+        .clone()
+        .into_builder()
+        .set_total_uncompressed_size(expanded_column_size)
+        .build()
+        .unwrap();
+    let expanded_group_size = columns
+        .iter()
+        .map(|column| column.uncompressed_size())
+        .sum::<i64>();
+    let expanded_group = row_group_builder
+        .set_column_metadata(columns)
+        .set_total_byte_size(expanded_group_size)
+        .build()
+        .unwrap();
+    row_groups.push(expanded_group);
+    metadata = file_builder.set_row_groups(row_groups).build();
+    assert!(matches!(
+        validate_decode_budget(&metadata),
+        Err(MarketDataError::InputLimit)
+    ));
+}
+
+#[test]
+fn decode_budget_rejects_negative_and_cumulative_footer_sizes() {
+    let temp = tempdir().unwrap();
+    let path = temp.path().join("footer-budget.parquet");
+    write_bars(&path, &[valid_bar()]).unwrap();
+    let builder = ParquetRecordBatchReaderBuilder::try_new(File::open(path).unwrap()).unwrap();
+    let original = builder.metadata().as_ref().clone();
+
+    let mut negative_file = original.clone().into_builder();
+    let mut negative_groups = negative_file.take_row_groups();
+    let negative_group = negative_groups.remove(0).into_builder();
+    let negative_group = negative_group.set_total_byte_size(-1).build().unwrap();
+    negative_groups.push(negative_group);
+    let negative_metadata = negative_file.set_row_groups(negative_groups).build();
+    assert!(matches!(
+        validate_decode_budget(&negative_metadata),
+        Err(MarketDataError::Parquet)
+    ));
+
+    let mut negative_column_file = original.clone().into_builder();
+    let mut negative_column_groups = negative_column_file.take_row_groups();
+    let mut negative_column_group = negative_column_groups.remove(0).into_builder();
+    let mut negative_columns = negative_column_group.take_columns();
+    negative_columns[0] = negative_columns[0]
+        .clone()
+        .into_builder()
+        .set_total_uncompressed_size(-1)
+        .build()
+        .unwrap();
+    let negative_column_group = negative_column_group
+        .set_column_metadata(negative_columns)
+        .build()
+        .unwrap();
+    negative_column_groups.push(negative_column_group);
+    let negative_column_metadata = negative_column_file
+        .set_row_groups(negative_column_groups)
+        .build();
+    assert!(matches!(
+        validate_decode_budget(&negative_column_metadata),
+        Err(MarketDataError::Parquet)
+    ));
+
+    let base_group = original.row_groups()[0].clone();
+    let cumulative_file = original.into_builder();
+    let mut cumulative_groups = Vec::new();
+    for _ in 0..17 {
+        let mut group_builder = base_group.clone().into_builder();
+        let mut columns = group_builder.take_columns();
+        columns[0] = columns[0]
+            .clone()
+            .into_builder()
+            .set_total_uncompressed_size(
+                i64::try_from(MAX_PARQUET_ROW_GROUP_UNCOMPRESSED_BYTES).unwrap(),
+            )
+            .build()
+            .unwrap();
+        for column in columns.iter_mut().skip(1) {
+            *column = column
+                .clone()
+                .into_builder()
+                .set_total_uncompressed_size(0)
+                .build()
+                .unwrap();
+        }
+        let group = group_builder
+            .set_column_metadata(columns)
+            .set_total_byte_size(i64::try_from(MAX_PARQUET_ROW_GROUP_UNCOMPRESSED_BYTES).unwrap())
+            .build()
+            .unwrap();
+        cumulative_groups.push(group);
+    }
+    let cumulative_metadata = cumulative_file.set_row_groups(cumulative_groups).build();
+    assert!(matches!(
+        validate_decode_budget(&cumulative_metadata),
+        Err(MarketDataError::InputLimit)
+    ));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn hostile_parquet_page_header_isolated_and_worker_is_reaped() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test();
+    let temp = tempdir().unwrap();
+    let path = temp.path().join("page-header-bomb.parquet");
+    let messages = (1_u64..=10_000)
+        .map(|sequence| event_with_record_id(sequence, format!("r{:0>127}", sequence)))
+        .collect::<Vec<_>>();
+    write_events(&path, &messages).unwrap();
+    mutate_dictionary_page_to_memory_bomb(&path);
+
+    let pid_path = temp.path().join("worker.pid");
+    let _pid_guard = crate::parquet_worker::track_worker_pid(&pid_path);
+    let result = crate::parquet_worker::verify(&path, EVENT_SCHEMA_ID, u64::MAX);
+    assert!(matches!(result, Err(MarketDataError::Parquet)));
+    assert!(path.exists(), "caller remains alive after worker rejection");
+
+    let process_id = fs::read_to_string(pid_path)
+        .unwrap()
+        .parse::<i32>()
+        .unwrap();
+    let pid = rustix::process::Pid::from_raw(process_id).unwrap();
+    assert!(matches!(
+        rustix::process::kill_process(pid, rustix::process::Signal::KILL),
+        Err(rustix::io::Errno::SRCH)
+    ));
+}
+
+#[cfg(feature = "benchmark-snappy")]
+#[test]
+#[ignore = "explicit 100k-row codec and readback benchmark; run with --release --nocapture"]
+fn benchmark_100k_synthetic_trade_events() {
+    let temp = tempdir().unwrap();
+    let base = DateTime::parse_from_rfc3339("2026-10-08T13:30:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let messages = (1_u64..=100_000)
+        .map(|sequence| {
+            let source_time =
+                base + chrono::Duration::milliseconds(i64::try_from(sequence - 1).unwrap());
+            let timestamp =
+                UtcTimestamp::parse(&source_time.to_rfc3339_opts(SecondsFormat::AutoSi, true))
+                    .unwrap();
+            let price = format!(
+                "{}.{:04}",
+                600 + (sequence % 700),
+                (sequence * 7919) % 10_000
+            );
+            CollectionMessage::Market(MarketEventEnvelopeV1 {
+                metadata: EventMetadataV1 {
+                    schema_version: 1,
+                    source: MarketDataSourceV1::new(
+                        "synthetic",
+                        "synthetic",
+                        EntitlementState::Unknown,
+                        NumericEncodingV1::DecimalToken,
+                        None,
+                    )
+                    .unwrap(),
+                    generation: 1,
+                    sequence,
+                    raw_frame_sha256: None,
+                    source_timestamp: Some(timestamp.clone()),
+                    received_timestamp: timestamp,
+                },
+                event: MarketEventV1::StockTrade {
+                    symbol: "QQQ".to_owned(),
+                    price: DecimalString::new(&price).unwrap(),
+                    size: DecimalString::new((1 + sequence % 1_000).to_string()).unwrap(),
+                },
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let cases = [
+        ("zstd-1", default_compression()),
+        ("snappy", Compression::SNAPPY),
+        ("uncompressed", Compression::UNCOMPRESSED),
+    ];
+    for (label, codec) in cases {
+        let path = temp.path().join(format!("{label}.parquet"));
+        let started = Instant::now();
+        let verification = write_events_with_compression(
+            &path,
+            &messages,
+            crate::archive::DEFAULT_MAX_OBJECT_BYTES,
+            codec,
+        )
+        .unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(verification.footer_rows, 100_000);
+        assert_eq!(verification.decoded_rows, 100_000);
+        println!(
+            "codec={label} rows={} bytes={} write_plus_readback_ms={} rows_per_second={:.0}",
+            verification.decoded_rows,
+            verification.size_bytes,
+            elapsed.as_millis(),
+            100_000_f64 / elapsed.as_secs_f64(),
+        );
+    }
 }

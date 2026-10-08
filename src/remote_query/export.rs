@@ -3,7 +3,7 @@ use std::io::Write;
 
 use crate::storage::safe_object_name;
 
-pub(super) fn write_bars_jsonl_bounded(
+pub fn write_bars_jsonl_bounded(
     destination: &Path,
     rows: &[TradeMinuteBarV1],
     max_bytes: u64,

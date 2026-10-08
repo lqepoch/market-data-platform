@@ -92,3 +92,123 @@ fn local_transport_rejects_oversized_download_without_partial_file() {
     ));
     assert!(!destination.exists());
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn decode_worker_memory_bomb_is_contained_and_reaped() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test();
+    let temp = tempfile::tempdir().unwrap();
+    let pid_path = temp.path().join("worker.pid");
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .arg("--exact")
+        .arg("storage::tests::decode_worker_memory_bomb_child")
+        .arg("--nocapture")
+        .env("MDP_TEST_DECODE_MEMORY_BOMB", "1")
+        .env("MDP_TEST_DECODE_WORKER_PID_FILE", &pid_path);
+    let output = run_bounded_decode_worker(command, 16 * 1024, Duration::from_secs(30)).unwrap();
+    assert!(String::from_utf8_lossy(&output).contains("RESOURCE_LIMIT_REACHED"));
+    let process_id = std::fs::read_to_string(pid_path)
+        .unwrap()
+        .parse::<i32>()
+        .unwrap();
+    let pid = rustix::process::Pid::from_raw(process_id).unwrap();
+    assert!(matches!(
+        rustix::process::kill_process(pid, rustix::process::Signal::KILL),
+        Err(rustix::io::Errno::SRCH)
+    ));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn decode_worker_memory_bomb_child() {
+    if std::env::var_os("MDP_TEST_DECODE_MEMORY_BOMB").is_none() {
+        return;
+    }
+    let pid_path = std::env::var_os("MDP_TEST_DECODE_WORKER_PID_FILE").unwrap();
+    std::fs::write(pid_path, std::process::id().to_string()).unwrap();
+    let mut retained_pages = Vec::<Vec<u8>>::new();
+    loop {
+        let mut page = Vec::new();
+        if page.try_reserve_exact(64 * 1024 * 1024).is_err() {
+            println!("RESOURCE_LIMIT_REACHED");
+            return;
+        }
+        page.resize(64 * 1024 * 1024, 0x5a);
+        retained_pages.push(page);
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn decode_worker_third_concurrent_request_fails_closed() {
+    use std::thread;
+
+    let _worker_guard = crate::parquet_worker::serialize_worker_test();
+    let temp = tempfile::tempdir().unwrap();
+    let markers = [
+        temp.path().join("worker-1.started"),
+        temp.path().join("worker-2.started"),
+    ];
+    let workers = markers
+        .iter()
+        .map(|marker| {
+            let marker = marker.clone();
+            thread::spawn(move || {
+                let mut command = Command::new(std::env::current_exe().unwrap());
+                command
+                    .args([
+                        "--exact",
+                        "storage::tests::decode_worker_wait_child",
+                        "--nocapture",
+                    ])
+                    .env("MDP_TEST_DECODE_WAIT_MARKER", marker);
+                run_bounded_decode_worker(command, 16 * 1024, Duration::from_secs(5))
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !(markers.iter().all(|marker| marker.exists())) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(markers.iter().all(|marker| marker.exists()));
+    assert!(matches!(
+        run_bounded_decode_worker(Command::new("true"), 1024, Duration::from_secs(1)),
+        Err(MarketDataError::WriterLimit)
+    ));
+    for worker in workers {
+        let output = worker.join().unwrap().unwrap();
+        assert!(String::from_utf8_lossy(&output).contains("DECODE_WORKER_DONE"));
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn decode_worker_enforces_output_and_deadline_and_rejects_child_error() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test();
+    assert!(matches!(
+        run_bounded_decode_worker(Command::new("yes"), 128, Duration::from_secs(2)),
+        Err(MarketDataError::Storage(StorageFailure::MalformedListing))
+    ));
+    let mut timeout = Command::new("sh");
+    timeout.args(["-c", "sleep 30"]);
+    assert!(matches!(
+        run_bounded_decode_worker(timeout, 1024, Duration::from_millis(50)),
+        Err(MarketDataError::Storage(StorageFailure::Timeout))
+    ));
+    assert!(matches!(
+        run_bounded_decode_worker(Command::new("false"), 1024, Duration::from_secs(2)),
+        Err(MarketDataError::Parquet)
+    ));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn decode_worker_wait_child() {
+    if let Some(marker) = std::env::var_os("MDP_TEST_DECODE_WAIT_MARKER") {
+        std::fs::write(marker, std::process::id().to_string()).unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        println!("DECODE_WORKER_DONE");
+    }
+}

@@ -21,6 +21,7 @@ use crate::{
     archive::TransportKind,
     config::DriveConfig,
     parquet_store::{self, ParquetVerification},
+    parquet_worker,
     schema::{EVENT_SCHEMA_ID, MINUTE_BAR_SCHEMA_ID},
     storage::{
         LocalTestTransport, ObjectTransport, RcloneDriveTransport, RemoteObject,
@@ -45,7 +46,7 @@ mod export;
 use cache_fs::*;
 pub use cleanup::{RemoteCacheCleaner, RemoteCacheCleanupReport};
 use cleanup::{read_cache_receipt, verify_cache_contents};
-use export::write_bars_jsonl_bounded;
+pub use export::write_bars_jsonl_bounded;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -129,6 +130,7 @@ pub struct RemoteArchiveReader {
     cache_root: PathBuf,
     limits: RemoteCacheLimits,
     now_unix_seconds: Arc<dyn Fn() -> u64 + Send + Sync>,
+    isolate_parquet_decode: bool,
 }
 
 impl fmt::Debug for RemoteArchiveReader {
@@ -199,12 +201,14 @@ impl RemoteArchiveReader {
         limits: RemoteCacheLimits,
     ) -> Result<Self> {
         let transport = RcloneDriveTransport::new(config)?;
-        Self::new(
+        let mut reader = Self::new(
             Arc::new(transport),
             TransportKind::RcloneGoogleDrive,
             cache_root.into(),
             limits,
-        )
+        )?;
+        reader.isolate_parquet_decode = true;
+        Ok(reader)
     }
 
     fn new(
@@ -244,6 +248,7 @@ impl RemoteArchiveReader {
             cache_root,
             limits,
             now_unix_seconds,
+            isolate_parquet_decode: false,
         })
     }
 
@@ -257,12 +262,7 @@ impl RemoteArchiveReader {
         if verified.parquet.schema_id != MINUTE_BAR_SCHEMA_ID {
             return Err(MarketDataError::ParquetSchema);
         }
-        let rows = parquet_store::query_bars_with_limits(
-            &verified.path,
-            symbol_filter,
-            self.limits.max_query_rows,
-            self.limits.max_query_result_bytes,
-        )?;
+        let rows = self.query_cached_bars(&verified.path, symbol_filter)?;
         let returned_rows = u64::try_from(rows.len()).map_err(|_| MarketDataError::InputLimit)?;
         let summary = RemoteQuerySummary {
             namespace,
@@ -289,12 +289,7 @@ impl RemoteArchiveReader {
         if verified.parquet.schema_id != MINUTE_BAR_SCHEMA_ID {
             return Err(MarketDataError::ParquetSchema);
         }
-        let rows = parquet_store::query_bars_with_limits(
-            &verified.path,
-            symbol_filter,
-            self.limits.max_query_rows,
-            self.limits.max_query_result_bytes,
-        )?;
+        let rows = self.query_cached_bars(&verified.path, symbol_filter)?;
         write_bars_jsonl_bounded(destination, &rows, self.limits.max_export_bytes)?;
         let returned_rows = u64::try_from(rows.len()).map_err(|_| MarketDataError::InputLimit)?;
         Ok(RemoteQuerySummary {
@@ -308,6 +303,28 @@ impl RemoteArchiveReader {
             parquet_schema_sha256: verified.parquet.schema_sha256,
             cache_hit: verified.cache_hit,
         })
+    }
+
+    fn query_cached_bars(
+        &self,
+        path: &Path,
+        symbol_filter: Option<&str>,
+    ) -> Result<Vec<TradeMinuteBarV1>> {
+        if self.isolate_parquet_decode {
+            parquet_worker::query_bars(
+                path,
+                symbol_filter,
+                self.limits.max_query_rows,
+                self.limits.max_query_result_bytes,
+            )
+        } else {
+            parquet_store::query_bars_with_limits(
+                path,
+                symbol_filter,
+                self.limits.max_query_rows,
+                self.limits.max_query_result_bytes,
+            )
+        }
     }
 
     fn ensure_cached(
@@ -378,6 +395,7 @@ impl RemoteArchiveReader {
                     &existing,
                     namespace,
                     &self.limits,
+                    self.isolate_parquet_decode,
                 )?;
                 verified.cache_hit = true;
                 verified._dataset_lock = Some(lock_file);
@@ -438,11 +456,11 @@ impl RemoteArchiveReader {
             return Err(MarketDataError::Conflict);
         }
         let schema_id = schema_id_for_hash(&manifest.object.parquet_schema_sha256)?;
-        let parquet = parquet_store::verify_with_limit(
-            &object_path,
-            schema_id,
-            self.limits.max_object_bytes,
-        )?;
+        let parquet = if self.isolate_parquet_decode {
+            parquet_worker::verify(&object_path, schema_id, self.limits.max_object_bytes)?
+        } else {
+            parquet_store::verify_with_limit(&object_path, schema_id, self.limits.max_object_bytes)?
+        };
         validate_manifest_facts(&manifest, &parquet)?;
 
         let receipt = RemoteCacheReceiptV1 {
@@ -493,8 +511,14 @@ impl RemoteArchiveReader {
             File::open(&namespace_dir)?.sync_all()?;
             cleanup.0 = None;
         }
-        let mut verified =
-            verify_cache_contents(dataset_id, &cache_dir, &receipt, namespace, &self.limits)?;
+        let mut verified = verify_cache_contents(
+            dataset_id,
+            &cache_dir,
+            &receipt,
+            namespace,
+            &self.limits,
+            self.isolate_parquet_decode,
+        )?;
         verified.cache_hit = false;
         verified._dataset_lock = Some(lock_file);
         Ok(verified)

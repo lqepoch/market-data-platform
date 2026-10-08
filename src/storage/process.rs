@@ -5,6 +5,7 @@ use std::{
     io::{Read, Write},
     path::Path,
     process::{Child, ChildStdout, Command, ExitStatus, Stdio},
+    sync::atomic::{AtomicUsize, Ordering},
     sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -13,6 +14,31 @@ use std::{
 use crate::{MarketDataError, Result, error::StorageFailure, queue::BackgroundWorkerPermit};
 
 use super::RemoveFileOnDrop;
+
+const MAX_ACTIVE_DECODE_WORKERS: usize = 2;
+const DECODE_WORKER_MAX_ADDRESS_SPACE: u64 = 1024 * 1024 * 1024;
+const DECODE_WORKER_CPU_SECONDS: u64 = 60;
+pub(crate) const MAX_DECODE_WORKER_OUTPUT_BYTES: usize = 256 * 1024 * 1024;
+static ACTIVE_DECODE_WORKERS: AtomicUsize = AtomicUsize::new(0);
+
+struct DecodeWorkerPermit;
+
+impl DecodeWorkerPermit {
+    fn acquire() -> Result<Self> {
+        ACTIVE_DECODE_WORKERS
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
+                (active < MAX_ACTIVE_DECODE_WORKERS).then_some(active + 1)
+            })
+            .map_err(|_| MarketDataError::WriterLimit)?;
+        Ok(Self)
+    }
+}
+
+impl Drop for DecodeWorkerPermit {
+    fn drop(&mut self) {
+        ACTIVE_DECODE_WORKERS.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 pub(super) struct CommandOutput {
     pub(super) status_code: i32,
@@ -262,6 +288,59 @@ pub(super) fn run_bounded_command(
         status_code: status.code().unwrap_or(255),
         stdout: output,
     })
+}
+
+pub(super) fn run_bounded_decode_worker(
+    mut command: Command,
+    output_cap: usize,
+    operation_timeout: Duration,
+) -> Result<Vec<u8>> {
+    if output_cap == 0 || output_cap > MAX_DECODE_WORKER_OUTPUT_BYTES {
+        return Err(MarketDataError::InputLimit);
+    }
+    let _decode_permit = DecodeWorkerPermit::acquire()?;
+    configure_decode_worker_limits(&mut command)?;
+    let output = run_bounded_command(command, output_cap, operation_timeout)?;
+    if output.status_code != 0 {
+        return Err(MarketDataError::Parquet);
+    }
+    Ok(output.stdout)
+}
+
+#[cfg(target_os = "linux")]
+fn configure_decode_worker_limits(command: &mut Command) -> Result<()> {
+    use rustix::process::{Resource, Rlimit, setrlimit};
+    use std::os::unix::process::CommandExt;
+
+    // Keep this hook to async-signal-safe syscalls and errno-only error conversion. The hard and
+    // soft limits match, so the child cannot raise them after exec.
+    unsafe {
+        command.pre_exec(|| {
+            setrlimit(
+                Resource::As,
+                Rlimit {
+                    current: Some(DECODE_WORKER_MAX_ADDRESS_SPACE),
+                    maximum: Some(DECODE_WORKER_MAX_ADDRESS_SPACE),
+                },
+            )
+            .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+            setrlimit(
+                Resource::Cpu,
+                Rlimit {
+                    current: Some(DECODE_WORKER_CPU_SECONDS),
+                    maximum: Some(DECODE_WORKER_CPU_SECONDS),
+                },
+            )
+            .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?;
+            Ok(())
+        });
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn configure_decode_worker_limits(_command: &mut Command) -> Result<()> {
+    Err(MarketDataError::Storage(StorageFailure::Unsupported))
 }
 
 pub(super) fn run_bounded_download(

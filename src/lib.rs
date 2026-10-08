@@ -5,6 +5,8 @@ pub mod archive;
 pub mod config;
 pub mod error;
 pub mod parquet_store;
+#[doc(hidden)]
+pub mod parquet_worker;
 pub mod pipeline;
 pub mod protocol;
 pub mod queue;

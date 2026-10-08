@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat, Utc};
 use market_contracts::{
     DatasetTimeRangeV1, EntitlementState, MarketDataSourceV1, NumericEncodingV1, UtcTimestamp,
 };
@@ -75,31 +75,90 @@ impl Default for ReplayOptions {
 }
 
 pub async fn synthetic_replay(output: &Path) -> Result<ReplayReport> {
+    synthetic_replay_with_profile(output, SyntheticProfile::FourBars).await
+}
+
+/// Generates a separate four-minute synthetic session whose session and request windows match.
+/// This is only an adapter fixture; it is not an exchange-calendar or provider-backed session.
+pub async fn synthetic_full_session_replay(output: &Path) -> Result<ReplayReport> {
+    synthetic_replay_with_profile(output, SyntheticProfile::FourMinutes).await
+}
+
+/// Generates 390 nonempty synthetic minutes in a synthetic 6.5-hour session.
+pub async fn synthetic_390_minute_session_replay(output: &Path) -> Result<ReplayReport> {
+    synthetic_replay_with_profile(output, SyntheticProfile::ThreeHundredNinetyMinutes).await
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SyntheticProfile {
+    FourBars,
+    FourMinutes,
+    ThreeHundredNinetyMinutes,
+}
+
+async fn synthetic_replay_with_profile(
+    output: &Path,
+    profile: SyntheticProfile,
+) -> Result<ReplayReport> {
     fs::create_dir_all(output)?;
     let input = output.join("synthetic-input.jsonl");
-    write_synthetic_input(&input)?;
+    if profile == SyntheticProfile::ThreeHundredNinetyMinutes {
+        write_synthetic_390_minute_input(&input)?;
+    } else {
+        write_synthetic_input(&input)?;
+    }
+    let (session_id, policy_id, policy_sha256, session_end, dataset_id) = match profile {
+        SyntheticProfile::FourBars => (
+            "synthetic-regular-2026-10-08",
+            "synthetic-session-policy-v1",
+            "a".repeat(64),
+            "2026-10-08T20:00:00Z",
+            "synthetic-2026-10-08-four-bars-parquet-v3",
+        ),
+        SyntheticProfile::FourMinutes => (
+            "synthetic-four-minute-2026-10-08",
+            "synthetic-four-minute-session-policy-v1",
+            "b".repeat(64),
+            "2026-10-08T13:34:00Z",
+            "synthetic-2026-10-08-full-four-minute-session-parquet-v3",
+        ),
+        SyntheticProfile::ThreeHundredNinetyMinutes => (
+            "synthetic-390-minute-2026-10-08",
+            "synthetic-390-minute-session-policy-v1",
+            "c".repeat(64),
+            "2026-10-08T20:00:00Z",
+            "synthetic-2026-10-08-full-390-minute-session-parquet-v2",
+        ),
+    };
+    let session_start = parse_time("2026-10-08T13:30:00Z")?;
+    let session_end = parse_time(session_end)?;
+    let window_end = if profile == SyntheticProfile::FourBars {
+        parse_time("2026-10-08T13:34:00Z")?
+    } else {
+        session_end.clone()
+    };
     let config = ReplaySessionConfig {
         window: SessionWindow {
             trade_date: "2026-10-08".into(),
-            session_id: "synthetic-regular-2026-10-08".into(),
+            session_id: session_id.into(),
             timezone: "America/New_York".into(),
-            policy_id: "synthetic-session-policy-v1".into(),
-            policy_sha256: "a".repeat(64),
-            session_start: parse_time("2026-10-08T13:30:00Z")?,
-            session_end_exclusive: parse_time("2026-10-08T20:00:00Z")?,
-            window_start: parse_time("2026-10-08T13:30:00Z")?,
-            window_end_exclusive: parse_time("2026-10-08T13:34:00Z")?,
+            policy_id: policy_id.into(),
+            policy_sha256,
+            session_start: session_start.clone(),
+            session_end_exclusive: session_end.clone(),
+            window_start: session_start,
+            window_end_exclusive: window_end.clone(),
             expected_symbols: vec!["QQQ".into()],
         },
         mode: CompletionMode::SyntheticEof,
         source_is_paged: false,
         source_pages_exhausted: None,
-        available_at: parse_time("2026-10-08T13:34:00Z")?,
+        available_at: window_end,
     };
     replay_file(
         &input,
         output,
-        "synthetic-2026-10-08-four-bars-v1",
+        dataset_id,
         &config,
         OutputTransport::LocalTest {
             root: output.join("local-test-store"),
@@ -376,6 +435,53 @@ fn write_synthetic_input(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn write_synthetic_390_minute_input(path: &Path) -> Result<()> {
+    let source = MarketDataSourceV1::new(
+        "synthetic",
+        "synthetic",
+        EntitlementState::Unknown,
+        NumericEncodingV1::DecimalToken,
+        None,
+    )
+    .map_err(|_| MarketDataError::Contract)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                MarketDataError::Conflict
+            } else {
+                MarketDataError::Io(error)
+            }
+        })?;
+    let session_start = DateTime::parse_from_rfc3339("2026-10-08T13:30:00Z")
+        .map_err(|_| MarketDataError::Contract)?
+        .with_timezone(&Utc);
+    for minute in 0..390_u64 {
+        let source_time = session_start
+            + ChronoDuration::minutes(
+                i64::try_from(minute).map_err(|_| MarketDataError::InputLimit)?,
+            )
+            + ChronoDuration::seconds(10);
+        let received_time = source_time + ChronoDuration::milliseconds(100);
+        let source_timestamp = source_time.to_rfc3339_opts(SecondsFormat::Millis, true);
+        let received_timestamp = received_time.to_rfc3339_opts(SecondsFormat::Millis, true);
+        let price = format!("600.{minute:03}");
+        let row = market_event(
+            &source,
+            minute + 1,
+            &source_timestamp,
+            &received_timestamp,
+            MarketDataEvent::Trade(&price, "1"),
+        )?;
+        serde_json::to_writer(&mut file, &row)?;
+        file.write_all(b"\n")?;
+    }
+    file.sync_all()?;
+    Ok(())
+}
+
 enum MarketDataEvent<'a> {
     Trade(&'a str, &'a str),
     Quote(&'a str, &'a str),
@@ -613,11 +719,81 @@ mod tests {
         let bars = parquet_store::query_bars(
             &temp
                 .path()
-                .join("staging/synthetic-2026-10-08-four-bars-v1-bars-1m-v1.parquet"),
+                .join("staging/synthetic-2026-10-08-four-bars-parquet-v3-bars-1m-v1.parquet"),
             Some("QQQ"),
         )
         .unwrap();
         assert_eq!(bars[0].quote_events_excluded, 1);
         assert_eq!(bars[0].completion_mode, "synthetic_eof");
+    }
+
+    #[tokio::test]
+    async fn full_session_synthetic_fixture_uses_a_new_identity_and_exact_four_minute_window() {
+        let temp = tempdir().unwrap();
+        let report = synthetic_full_session_replay(temp.path()).await.unwrap();
+        assert_eq!(report.status, "synthetic_or_offline_replay_only");
+        assert_eq!(report.minute_bar_rows, 4);
+
+        let parquet = temp.path().join(
+            "staging/synthetic-2026-10-08-full-four-minute-session-parquet-v3-bars-1m-v1.parquet",
+        );
+        let bars = parquet_store::query_bars(&parquet, Some("QQQ")).unwrap();
+        assert_eq!(bars.len(), 4);
+        for bar in &bars {
+            assert_eq!(bar.session_id, "synthetic-four-minute-2026-10-08");
+            assert_eq!(
+                bar.session_policy_id,
+                "synthetic-four-minute-session-policy-v1"
+            );
+            assert_eq!(bar.session_start_utc, bar.window_start_utc);
+            assert_eq!(bar.session_end_exclusive_utc, bar.window_end_exclusive_utc);
+            assert_eq!(bar.window_expected_minutes, 4);
+            assert_eq!(bar.window_empty_trade_minutes, 0);
+            assert_eq!(bar.completion_mode, "synthetic_eof");
+        }
+
+        let manifest = temp
+            .path()
+            .join("local-test-store/synthetic-2026-10-08-full-four-minute-session-parquet-v3-bars-1m-v1/")
+            .join("synthetic-2026-10-08-full-four-minute-session-parquet-v3-bars-1m-v1.manifest.json");
+        let manifest: market_contracts::DatasetManifestV1 =
+            serde_json::from_slice(&fs::read(manifest).unwrap()).unwrap();
+        assert_eq!(
+            manifest.dataset_id,
+            "synthetic-2026-10-08-full-four-minute-session-parquet-v3-bars-1m-v1"
+        );
+        assert_eq!(manifest.row_count, 4);
+        assert_eq!(manifest.source.provider, "synthetic");
+        assert_eq!(manifest.source.entitlement, EntitlementState::Unknown);
+    }
+
+    #[tokio::test]
+    async fn synthetic_390_minute_fixture_has_one_trade_bar_per_complete_minute() {
+        let temp = tempdir().unwrap();
+        let report = synthetic_390_minute_session_replay(temp.path())
+            .await
+            .unwrap();
+        assert_eq!(report.event_rows, 390);
+        assert_eq!(report.minute_bar_rows, 390);
+        let parquet = temp.path().join(
+            "staging/synthetic-2026-10-08-full-390-minute-session-parquet-v2-bars-1m-v1.parquet",
+        );
+        let bars = parquet_store::query_bars(&parquet, Some("QQQ")).unwrap();
+        assert_eq!(bars.len(), 390);
+        assert!(bars.iter().all(|bar| {
+            bar.completion_mode == "synthetic_eof"
+                && bar.window_expected_minutes == 390
+                && bar.window_empty_trade_minutes == 0
+                && bar.session_start_utc == bar.window_start_utc
+                && bar.session_end_exclusive_utc == bar.window_end_exclusive_utc
+        }));
+        assert_eq!(
+            bars.first().unwrap().bar_start_utc.as_str(),
+            "2026-10-08T13:30:00Z"
+        );
+        assert_eq!(
+            bars.last().unwrap().bar_start_utc.as_str(),
+            "2026-10-08T19:59:00Z"
+        );
     }
 }
