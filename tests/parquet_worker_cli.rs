@@ -130,6 +130,89 @@ async fn production_cli_verifies_and_queries_through_the_isolated_worker() {
 }
 
 #[tokio::test]
+async fn production_cli_generates_and_verifies_an_explicit_past_date_fixture() {
+    let _serial = CLI_SERIAL.get_or_init(Default::default).lock().await;
+    let temp = tempdir().unwrap();
+    let output = temp.path().join("oct-7-session");
+    let output_arg = output.to_str().unwrap();
+    let synthetic = run_cli(&[
+        "synthetic",
+        "--output",
+        output_arg,
+        "--regular-session",
+        "--session-date",
+        "2026-10-07",
+    ]);
+    assert!(
+        synthetic.status.success(),
+        "{}",
+        String::from_utf8_lossy(&synthetic.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&synthetic.stdout).unwrap();
+    assert_eq!(report["event_rows"], 390);
+    assert_eq!(report["minute_bar_rows"], 390);
+    assert_eq!(report["provider"], "synthetic");
+    assert_eq!(report["entitlement"], "unknown");
+    assert_eq!(report["research_readiness"], "UNVERIFIED");
+    assert_eq!(report["google_drive_upload"], "NOTRUN");
+
+    let dataset_id = "synthetic-2026-10-07-full-390-minute-session-parquet-v2-bars-1m-v1";
+    let manifest_path = output
+        .join("local-test-store")
+        .join(dataset_id)
+        .join(format!("{dataset_id}.manifest.json"));
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(manifest_path).unwrap()).unwrap();
+    assert_eq!(manifest["dataset_id"], dataset_id);
+    assert_eq!(manifest["row_count"], "390");
+    assert_eq!(manifest["source"]["provider"], "synthetic");
+    assert_eq!(manifest["source"]["feed"], "synthetic");
+    assert_eq!(manifest["source"]["entitlement"], "unknown");
+
+    let parquet = output.join("staging").join(format!("{dataset_id}.parquet"));
+    let parquet_arg = parquet.to_str().unwrap();
+    let verify = run_cli(&[
+        "verify",
+        "--parquet",
+        parquet_arg,
+        "--schema",
+        "us-equity-trade-bar1m-v1",
+    ]);
+    assert!(
+        verify.status.success(),
+        "{}",
+        String::from_utf8_lossy(&verify.stderr)
+    );
+    let verified: serde_json::Value = serde_json::from_slice(&verify.stdout).unwrap();
+    assert_eq!(verified["decoded_rows"], 390);
+
+    let invalid_output = temp.path().join("invalid-date");
+    let invalid_output_arg = invalid_output.to_str().unwrap();
+    let invalid_date = run_cli(&[
+        "synthetic",
+        "--output",
+        invalid_output_arg,
+        "--regular-session",
+        "--session-date",
+        "2026-10-7",
+    ]);
+    assert!(!invalid_date.status.success());
+    assert!(!invalid_output.exists());
+
+    let missing_profile_output = temp.path().join("missing-profile");
+    let missing_profile_output_arg = missing_profile_output.to_str().unwrap();
+    let missing_profile = run_cli(&[
+        "synthetic",
+        "--output",
+        missing_profile_output_arg,
+        "--session-date",
+        "2026-10-07",
+    ]);
+    assert!(!missing_profile.status.success());
+    assert!(!missing_profile_output.exists());
+}
+
+#[tokio::test]
 async fn production_cli_rejects_a_real_page_header_bomb_without_publishing_query_output() {
     let _serial = CLI_SERIAL.get_or_init(Default::default).lock().await;
     let temp = tempdir().unwrap();

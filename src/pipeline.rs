@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, SecondsFormat, Utc};
 use market_contracts::{
     DatasetTimeRangeV1, EntitlementState, MarketDataSourceV1, NumericEncodingV1, UtcTimestamp,
 };
@@ -75,18 +75,45 @@ impl Default for ReplayOptions {
 }
 
 pub async fn synthetic_replay(output: &Path) -> Result<ReplayReport> {
-    synthetic_replay_with_profile(output, SyntheticProfile::FourBars).await
+    synthetic_replay_with_profile(
+        output,
+        SyntheticProfile::FourBars,
+        default_synthetic_session_date()?,
+    )
+    .await
 }
 
 /// Generates a separate four-minute synthetic session whose session and request windows match.
 /// This is only an adapter fixture; it is not an exchange-calendar or provider-backed session.
 pub async fn synthetic_full_session_replay(output: &Path) -> Result<ReplayReport> {
-    synthetic_replay_with_profile(output, SyntheticProfile::FourMinutes).await
+    synthetic_replay_with_profile(
+        output,
+        SyntheticProfile::FourMinutes,
+        default_synthetic_session_date()?,
+    )
+    .await
 }
 
 /// Generates 390 nonempty synthetic minutes in a synthetic 6.5-hour session.
 pub async fn synthetic_390_minute_session_replay(output: &Path) -> Result<ReplayReport> {
-    synthetic_replay_with_profile(output, SyntheticProfile::ThreeHundredNinetyMinutes).await
+    synthetic_390_minute_session_replay_on(output, default_synthetic_session_date()?).await
+}
+
+/// Generates 390 synthetic minutes on the caller-selected date without exchange-calendar lookup.
+pub async fn synthetic_390_minute_session_replay_on(
+    output: &Path,
+    session_date: NaiveDate,
+) -> Result<ReplayReport> {
+    synthetic_replay_with_profile(
+        output,
+        SyntheticProfile::ThreeHundredNinetyMinutes,
+        session_date,
+    )
+    .await
+}
+
+fn default_synthetic_session_date() -> Result<NaiveDate> {
+    NaiveDate::from_ymd_opt(2026, 10, 8).ok_or(MarketDataError::Contract)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -99,50 +126,55 @@ enum SyntheticProfile {
 async fn synthetic_replay_with_profile(
     output: &Path,
     profile: SyntheticProfile,
+    session_date: NaiveDate,
 ) -> Result<ReplayReport> {
     fs::create_dir_all(output)?;
     let input = output.join("synthetic-input.jsonl");
     if profile == SyntheticProfile::ThreeHundredNinetyMinutes {
-        write_synthetic_390_minute_input(&input)?;
+        write_synthetic_390_minute_input(&input, session_date)?;
     } else {
         write_synthetic_input(&input)?;
     }
-    let (session_id, policy_id, policy_sha256, session_end, dataset_id) = match profile {
+    let trade_date = session_date.format("%Y-%m-%d").to_string();
+    let (session_id, policy_id, policy_sha256, session_end_time, dataset_id) = match profile {
         SyntheticProfile::FourBars => (
-            "synthetic-regular-2026-10-08",
-            "synthetic-session-policy-v1",
+            "synthetic-regular-2026-10-08".to_owned(),
+            "synthetic-session-policy-v1".to_owned(),
             "a".repeat(64),
-            "2026-10-08T20:00:00Z",
-            "synthetic-2026-10-08-four-bars-parquet-v3",
+            (20, 0),
+            "synthetic-2026-10-08-four-bars-parquet-v3".to_owned(),
         ),
         SyntheticProfile::FourMinutes => (
-            "synthetic-four-minute-2026-10-08",
-            "synthetic-four-minute-session-policy-v1",
+            "synthetic-four-minute-2026-10-08".to_owned(),
+            "synthetic-four-minute-session-policy-v1".to_owned(),
             "b".repeat(64),
-            "2026-10-08T13:34:00Z",
-            "synthetic-2026-10-08-full-four-minute-session-parquet-v3",
+            (13, 34),
+            "synthetic-2026-10-08-full-four-minute-session-parquet-v3".to_owned(),
         ),
         SyntheticProfile::ThreeHundredNinetyMinutes => (
-            "synthetic-390-minute-2026-10-08",
-            "synthetic-390-minute-session-policy-v1",
+            format!("synthetic-390-minute-{trade_date}"),
+            "synthetic-390-minute-session-policy-v1".to_owned(),
             "c".repeat(64),
-            "2026-10-08T20:00:00Z",
-            "synthetic-2026-10-08-full-390-minute-session-parquet-v2",
+            (20, 0),
+            format!("synthetic-{trade_date}-full-390-minute-session-parquet-v2"),
         ),
     };
-    let session_start = parse_time("2026-10-08T13:30:00Z")?;
-    let session_end = parse_time(session_end)?;
+    let session_start = parse_time(&format!("{trade_date}T13:30:00Z"))?;
+    let session_end = parse_time(&format!(
+        "{trade_date}T{:02}:{:02}:00Z",
+        session_end_time.0, session_end_time.1
+    ))?;
     let window_end = if profile == SyntheticProfile::FourBars {
-        parse_time("2026-10-08T13:34:00Z")?
+        parse_time(&format!("{trade_date}T13:34:00Z"))?
     } else {
         session_end.clone()
     };
     let config = ReplaySessionConfig {
         window: SessionWindow {
-            trade_date: "2026-10-08".into(),
-            session_id: session_id.into(),
+            trade_date,
+            session_id,
             timezone: "America/New_York".into(),
-            policy_id: policy_id.into(),
+            policy_id,
             policy_sha256,
             session_start: session_start.clone(),
             session_end_exclusive: session_end.clone(),
@@ -158,7 +190,7 @@ async fn synthetic_replay_with_profile(
     replay_file(
         &input,
         output,
-        dataset_id,
+        &dataset_id,
         &config,
         OutputTransport::LocalTest {
             root: output.join("local-test-store"),
@@ -435,7 +467,7 @@ fn write_synthetic_input(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn write_synthetic_390_minute_input(path: &Path) -> Result<()> {
+fn write_synthetic_390_minute_input(path: &Path, session_date: NaiveDate) -> Result<()> {
     let source = MarketDataSourceV1::new(
         "synthetic",
         "synthetic",
@@ -455,9 +487,12 @@ fn write_synthetic_390_minute_input(path: &Path) -> Result<()> {
                 MarketDataError::Io(error)
             }
         })?;
-    let session_start = DateTime::parse_from_rfc3339("2026-10-08T13:30:00Z")
-        .map_err(|_| MarketDataError::Contract)?
-        .with_timezone(&Utc);
+    let session_start: DateTime<Utc> = DateTime::from_naive_utc_and_offset(
+        session_date
+            .and_hms_opt(13, 30, 0)
+            .ok_or(MarketDataError::Contract)?,
+        Utc,
+    );
     for minute in 0..390_u64 {
         let source_time = session_start
             + ChronoDuration::minutes(
@@ -795,5 +830,55 @@ mod tests {
             bars.last().unwrap().bar_start_utc.as_str(),
             "2026-10-08T19:59:00Z"
         );
+    }
+
+    #[tokio::test]
+    async fn explicit_past_date_390_minute_fixture_has_a_new_immutable_identity() {
+        let temp = tempdir().unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 10, 7).unwrap();
+        let report = synthetic_390_minute_session_replay_on(temp.path(), date)
+            .await
+            .unwrap();
+        assert_eq!(report.event_rows, 390);
+        assert_eq!(report.minute_bar_rows, 390);
+        assert_eq!(report.provider, "synthetic");
+        assert_eq!(report.entitlement, "unknown");
+        assert_eq!(report.research_readiness, "UNVERIFIED");
+        assert_eq!(report.google_drive_upload, "NOTRUN");
+
+        let dataset_id = "synthetic-2026-10-07-full-390-minute-session-parquet-v2-bars-1m-v1";
+        let parquet = temp.path().join(format!("staging/{dataset_id}.parquet"));
+        let bars = parquet_store::query_bars(&parquet, Some("QQQ")).unwrap();
+        assert_eq!(bars.len(), 390);
+        assert!(bars.iter().all(|bar| {
+            bar.trade_date == "2026-10-07"
+                && bar.session_id == "synthetic-390-minute-2026-10-07"
+                && bar.available_at_utc.as_str() == "2026-10-07T20:00:00Z"
+                && bar.window_expected_minutes == 390
+                && bar.completion_mode == "synthetic_eof"
+        }));
+        assert_eq!(
+            bars.first().unwrap().bar_start_utc.as_str(),
+            "2026-10-07T13:30:00Z"
+        );
+        assert_eq!(
+            bars.last().unwrap().bar_start_utc.as_str(),
+            "2026-10-07T19:59:00Z"
+        );
+
+        let manifest_path = temp
+            .path()
+            .join("local-test-store")
+            .join(dataset_id)
+            .join(format!("{dataset_id}.manifest.json"));
+        let manifest: market_contracts::DatasetManifestV1 =
+            serde_json::from_slice(&fs::read(manifest_path).unwrap()).unwrap();
+        assert_eq!(manifest.dataset_id, dataset_id);
+        assert_eq!(manifest.row_count, 390);
+        assert_eq!(manifest.source.provider, "synthetic");
+        assert_eq!(manifest.source.feed, "synthetic");
+        assert_eq!(manifest.source.entitlement, EntitlementState::Unknown);
+        assert!(manifest.completion.input_eof);
+        assert_eq!(manifest.completion.source_pages_exhausted, None);
     }
 }

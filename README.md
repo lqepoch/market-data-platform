@@ -68,6 +68,12 @@ cargo +1.98.1 run --offline -- synthetic --regular-session \
 cargo +1.98.1 run --offline -- verify \
   --parquet /tmp/mdp-full-390-minute-session-parquet-v2/staging/synthetic-2026-10-08-full-390-minute-session-parquet-v2-bars-1m-v1.parquet \
   --schema us-equity-trade-bar1m-v1
+cargo +1.98.1 run --offline -- synthetic --regular-session \
+  --session-date 2026-10-07 \
+  --output /tmp/mdp-full-390-minute-session-parquet-v2-20261007
+cargo +1.98.1 run --offline -- verify \
+  --parquet /tmp/mdp-full-390-minute-session-parquet-v2-20261007/staging/synthetic-2026-10-07-full-390-minute-session-parquet-v2-bars-1m-v1.parquet \
+  --schema us-equity-trade-bar1m-v1
 ```
 
 This fixture contains four nonempty minutes in a synthetic session whose UTC interval is
@@ -75,7 +81,13 @@ This fixture contains four nonempty minutes in a synthetic session whose UTC int
 exercise full-window consumers. It is not an exchange-calendar validation, real market session,
 provider history, or research evidence; it remains explicitly synthetic and unauthorized.
 `--regular-session` generates 390 nonempty synthetic minutes over a separate six-and-a-half-hour
-window for training-pipeline plumbing. It has the same synthetic-only and non-evidence status.
+window for training-pipeline plumbing. `--session-date YYYY-MM-DD` is available only with
+`--regular-session`, requires a canonical calendar date, and gives the fixture a new date-scoped
+dataset identity. The generator uses a fixed synthetic UTC interval of `[13:30, 20:00)` for every
+date. It does not consult an exchange calendar, holiday schedule, early close, or historical provider
+API; the date and timestamps only support cross-repository serialization tests. The Oct 7 fixture's
+`available_at` is `2026-10-07T20:00:00Z`, before the current clock, but synthetic/unknown provenance
+still prevents it from serving as causal market evidence, training input, or promotion evidence.
 
 To replay an existing shared-contract JSONL stream, provide a bounded session config and an explicit
 local-test store. The JSONL schema is the flattened Rust/Serde projection from `market-contracts`;

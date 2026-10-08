@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use chrono::NaiveDate;
 use clap::{Parser, ValueEnum};
 use market_data_platform::{
     MarketDataError, Result,
@@ -41,6 +42,9 @@ enum Command {
         /// Use a distinct 390-minute synthetic session; this is not exchange-calendar evidence.
         #[arg(long)]
         regular_session: bool,
+        /// Set the date for the synthetic 390-minute session; does not consult an exchange calendar.
+        #[arg(long, requires = "regular_session", value_parser = parse_synthetic_date)]
+        session_date: Option<NaiveDate>,
     },
     /// Load a bounded shared-contract JSONL file and replay it to the local-test archive.
     ReplayJsonl {
@@ -191,6 +195,15 @@ impl SchemaArg {
     }
 }
 
+fn parse_synthetic_date(value: &str) -> std::result::Result<NaiveDate, String> {
+    let date = NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map_err(|_| "expected a valid YYYY-MM-DD date".to_owned())?;
+    if date.format("%Y-%m-%d").to_string() != value {
+        return Err("date must use canonical YYYY-MM-DD format".to_owned());
+    }
+    Ok(date)
+}
+
 // Parquet decode workers run under a 1 GiB address-space limit; a per-core Tokio thread pool
 // consumes unnecessary virtual address space in these short-lived CLI processes.
 #[tokio::main(flavor = "current_thread")]
@@ -205,9 +218,15 @@ async fn main() -> Result<()> {
             output,
             full_session,
             regular_session,
+            session_date,
         } => {
             let report = if regular_session {
-                pipeline::synthetic_390_minute_session_replay(&output).await?
+                match session_date {
+                    Some(date) => {
+                        pipeline::synthetic_390_minute_session_replay_on(&output, date).await?
+                    }
+                    None => pipeline::synthetic_390_minute_session_replay(&output).await?,
+                }
             } else if full_session {
                 pipeline::synthetic_full_session_replay(&output).await?
             } else {
