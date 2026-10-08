@@ -1,8 +1,10 @@
 """Focused tests for path sanitization and immutable git source parsing."""
 
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +31,32 @@ class GitSourceTests(unittest.TestCase):
                 "git+https://github.com/lqepoch/trading-core?rev=4230418f7fe25f70e3011fed2ba7eb59c7e4d875#"
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             )
+
+
+class SourceTreeTests(unittest.TestCase):
+    def test_untracked_source_files_are_excluded(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            tracked = root / "src" / "archive" / "tracked.rs"
+            untracked = root / "src" / "archive" / "draft.rs"
+            tracked.parent.mkdir(parents=True)
+            tracked.write_text("tracked source\n", encoding="utf-8")
+            untracked.write_text("untracked draft\n", encoding="utf-8")
+            completed = supply_chain.subprocess.CompletedProcess(
+                args=["git", "ls-files", "--cached", "-z"],
+                returncode=0,
+                stdout=b"src/archive/tracked.rs\0",
+                stderr=b"",
+            )
+
+            with (
+                patch.object(supply_chain, "ROOT", root),
+                patch.object(supply_chain, "TREE_GLOBS", ("src/**/*.rs",)),
+                patch.object(supply_chain.subprocess, "run", return_value=completed),
+            ):
+                entries, _ = supply_chain.source_tree()
+
+        self.assertEqual([entry["path"] for entry in entries], ["src/archive/tracked.rs"])
 
 
 class SbomNormalizationTests(unittest.TestCase):

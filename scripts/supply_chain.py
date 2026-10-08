@@ -534,12 +534,31 @@ def render_notice(inventory: list[dict[str, Any]]) -> bytes:
 
 
 def source_tree() -> tuple[list[dict[str, str]], str]:
+    tracked = subprocess.run(
+        ["git", "ls-files", "--cached", "-z"],
+        cwd=ROOT,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if tracked.returncode != 0:
+        details = tracked.stderr.decode("utf-8", errors="replace").strip()
+        raise SupplyChainError(f"cannot enumerate tracked source files: {details}")
+    try:
+        tracked_paths = {
+            ROOT / Path(item.decode("utf-8"))
+            for item in tracked.stdout.split(b"\0")
+            if item
+        }
+    except UnicodeDecodeError as error:
+        raise SupplyChainError("tracked source path is not valid UTF-8") from error
+
     files: set[Path] = set()
     for pattern in TREE_GLOBS:
         files.update(
             path
             for path in ROOT.glob(pattern)
-            if path.is_file() and path.suffix in {".rs", ".py"}
+            if path in tracked_paths and path.is_file() and path.suffix in {".rs", ".py"}
         )
     entries = []
     tree_hash = hashlib.sha256()

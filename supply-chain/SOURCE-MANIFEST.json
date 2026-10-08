@@ -74,7 +74,7 @@
     },
     {
       "path": "docs/SUPPLY_CHAIN.md",
-      "sha256": "d88e78bc43957f2c466763b2a8c508428cfd30c7911cb767df047d46045e02ff"
+      "sha256": "f1cd995f9db43dcb21c4e6284fee9ad889bd61bd97eef5fc6426b6bbe8232188"
     },
     {
       "path": "docs/openapi-v1.yaml",
@@ -86,7 +86,7 @@
     },
     {
       "path": "scripts/supply_chain.py",
-      "sha256": "2f25d56f6d165c7545845a54dc5457bbb1330030a7b382a8c872071bf9db14c9"
+      "sha256": "9e3ffb4b526c676ed7a4b8903b25c1af80c12a18cb6aa2273d4a9db301f1c385"
     },
     {
       "path": "scripts/container_smoke.sh",
@@ -94,7 +94,7 @@
     },
     {
       "path": "tests/test_supply_chain.py",
-      "sha256": "672f37defce7e1d67f8d684580db4e6ce9e517afd8c6bdf67f99d96c7e573eca"
+      "sha256": "2a363162ec994b56cf22bc87a84e92405c82337ed28103a39fbcc12591426b53"
     }
   ],
   "locked_packages": [
@@ -1689,7 +1689,7 @@
     "files": [
       {
         "path": "scripts/supply_chain.py",
-        "sha256": "2f25d56f6d165c7545845a54dc5457bbb1330030a7b382a8c872071bf9db14c9"
+        "sha256": "9e3ffb4b526c676ed7a4b8903b25c1af80c12a18cb6aa2273d4a9db301f1c385"
       },
       {
         "path": "src/aggregate.rs",
@@ -1702,18 +1702,6 @@
       {
         "path": "src/archive/capture_pair.rs",
         "sha256": "ab75d4356773cc2e44a803220cd066d3078b42ff2977101de1840be98154dba0"
-      },
-      {
-        "path": "src/archive/capture_pair_v2.rs",
-        "sha256": "4e84d8601513c99565c337c9882dd6284f7aea0ccc6a239b31ff57e8d0bfb607"
-      },
-      {
-        "path": "src/archive/capture_pair_v2/rollup.rs",
-        "sha256": "fb79403a8ffae98083183c1663f06e5766ad9fce7b0840dcce9cd32b2b7b9f1a"
-      },
-      {
-        "path": "src/archive/capture_pair_v2/tests.rs",
-        "sha256": "ed3e8c785da82562ec1f23bb8f37873ae6d89a4cba95e0451924984b824bb0a0"
       },
       {
         "path": "src/archive/raw_spool.rs",
@@ -1869,10 +1857,10 @@
       },
       {
         "path": "tests/test_supply_chain.py",
-        "sha256": "672f37defce7e1d67f8d684580db4e6ce9e517afd8c6bdf67f99d96c7e573eca"
+        "sha256": "2a363162ec994b56cf22bc87a84e92405c82337ed28103a39fbcc12591426b53"
       }
     ],
-    "sha256": "a4c63a56068f6e9eaebdf754a9a0dd93e6863153c2392e63b01c7e02ee6c3e29"
+    "sha256": "0ea3b85cf5727c7b8a0bdb34ff68251499f208c93de88250ff0953b26c413b56"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
