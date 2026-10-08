@@ -12,7 +12,10 @@ directory descriptor anchors lock and capture operations; lock, capture-director
 directory-sync opens reject symlinks. The lock also rejects hardlinks. Cancellation or ambiguous
 I/O poisons the logical sink; capacity remains owned until blocking writes have exited. Existing
 capture directories are preserved as unknown and never resumed after process restart. The API is
-not wired to a provider socket, CLI capture command, Parquet writer, or upload path.
+not wired to a live provider socket or external upload path. The later optional
+`offline-capture-synthetic` feature composes the factory with the broker-owned fixed fake-wire
+fixture and the LocalTest-only Parquet Pair publisher; it does not accept caller-supplied fixture
+bytes or establish provider authority.
 
 The implementation consumes the two-stage sink contract from broker-connectors commit
 `537550417d2fbe74343115fa2cc9c158660412f8`. That commit adds the raw capture port and has a small

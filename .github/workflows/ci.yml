@@ -42,8 +42,14 @@ jobs:
       - name: Run Clippy
         run: CARGO_BUILD_JOBS=2 cargo +1.98.1 clippy --offline --all-targets -- -D warnings
 
+      - name: Lint opt-in offline fixture path
+        run: CARGO_BUILD_JOBS=2 cargo +1.98.1 clippy --offline --all-targets --features offline-capture-synthetic -- -D warnings
+
       - name: Run Rust tests
         run: CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline
+
+      - name: Run offline fixture CLI integration
+        run: CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline --features offline-capture-synthetic --test offline_capture_cli
 
       - name: Check dependency policy
         run: cargo +1.98.1 deny --all-features check all

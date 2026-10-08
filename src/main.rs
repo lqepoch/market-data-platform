@@ -22,7 +22,10 @@ use market_data_platform::{
         DEFAULT_REMOTE_CACHE_ENTRIES, DEFAULT_REMOTE_CACHE_TTL, DatasetNamespace,
         RemoteArchiveReader, RemoteCacheCleaner, RemoteCacheLimits,
     },
-    schema::{EVENT_SCHEMA_ID, EVENT_SCHEMA_V2_ID, MINUTE_BAR_SCHEMA_ID, RAW_FRAME_SCHEMA_ID},
+    schema::{
+        EVENT_SCHEMA_ID, EVENT_SCHEMA_V2_ID, EVENT_SCHEMA_V3_ID, MINUTE_BAR_SCHEMA_ID,
+        RAW_FRAME_SCHEMA_ID, RAW_FRAME_SCHEMA_V2_ID, RAW_JSON_FRAME_SCHEMA_V2_ID,
+    },
 };
 
 const MAX_SESSION_CONFIG_BYTES: usize = 1024 * 1024;
@@ -78,6 +81,12 @@ enum Command {
         /// Set the date for the synthetic 390-minute session; does not consult an exchange calendar.
         #[arg(long, requires = "regular_session", value_parser = parse_synthetic_date)]
         session_date: Option<NaiveDate>,
+    },
+    /// Capture the fixed offline Alpaca MessagePack fixture through the broker runner and publish LocalTest artifacts.
+    #[cfg(feature = "offline-capture-synthetic")]
+    CaptureSynthetic {
+        #[arg(long)]
+        output: PathBuf,
     },
     /// Load a bounded shared-contract JSONL file and replay it to the local-test archive.
     ReplayJsonl {
@@ -215,7 +224,10 @@ enum Command {
 enum SchemaArg {
     MarketEventsV1,
     MarketEventsV2,
+    MarketEventsV3,
     MarketRawFrameV1,
+    MarketRawFrameV2,
+    MarketRawJsonFrameV2,
     UsEquityTradeBar1mV1,
 }
 
@@ -245,7 +257,10 @@ impl SchemaArg {
         match self {
             Self::MarketEventsV1 => EVENT_SCHEMA_ID,
             Self::MarketEventsV2 => EVENT_SCHEMA_V2_ID,
+            Self::MarketEventsV3 => EVENT_SCHEMA_V3_ID,
             Self::MarketRawFrameV1 => RAW_FRAME_SCHEMA_ID,
+            Self::MarketRawFrameV2 => RAW_FRAME_SCHEMA_V2_ID,
+            Self::MarketRawJsonFrameV2 => RAW_JSON_FRAME_SCHEMA_V2_ID,
             Self::UsEquityTradeBar1mV1 => MINUTE_BAR_SCHEMA_ID,
         }
     }
@@ -302,6 +317,13 @@ async fn run(command: Command) -> Result<()> {
             } else {
                 pipeline::synthetic_replay(&output).await?
             };
+            print_json(&report)
+        }
+        #[cfg(feature = "offline-capture-synthetic")]
+        Command::CaptureSynthetic { output } => {
+            let shutdown_signal = install_shutdown_signal()?;
+            let report =
+                market_data_platform::capture_synthetic::run(output, shutdown_signal).await?;
             print_json(&report)
         }
         Command::ReplayJsonl {

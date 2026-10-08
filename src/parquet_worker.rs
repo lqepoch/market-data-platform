@@ -42,7 +42,10 @@ fn verify_with_cancellation(
 ) -> Result<ParquetVerification> {
     if schema_id != crate::schema::EVENT_SCHEMA_ID
         && schema_id != crate::schema::EVENT_SCHEMA_V2_ID
+        && schema_id != crate::schema::EVENT_SCHEMA_V3_ID
         && schema_id != crate::schema::RAW_FRAME_SCHEMA_ID
+        && schema_id != crate::schema::RAW_FRAME_SCHEMA_V2_ID
+        && schema_id != crate::schema::RAW_JSON_FRAME_SCHEMA_V2_ID
         && schema_id != crate::schema::MINUTE_BAR_SCHEMA_ID
     {
         return Err(MarketDataError::ParquetSchema);

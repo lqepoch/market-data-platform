@@ -1,7 +1,7 @@
 {
   "artifacts": {
-    "supply-chain/NOTICE.txt": "42bdc8c3a5fa0a999efe70a734ac3feb932d8b507fef6fdc32c2b4f6ffef5e46",
-    "supply-chain/market-data-platform.cdx.json": "cfb74e4bc16ac3976b79667d98202644dc65a19e9710a6e009a469ec5628a315"
+    "supply-chain/NOTICE.txt": "0f9015a0d0c8b7f3964f99821ddc13b13abc5d72ce9f94b149415bf6e9b0126c",
+    "supply-chain/market-data-platform.cdx.json": "7ce680c4abc4460e6c0275633035352410fbd7d135e01358c6574564ac669a0e"
   },
   "component": {
     "license": "MIT",
@@ -15,7 +15,7 @@
         "alpaca-stream",
         "broker-ports"
       ],
-      "rev": "537550417d2fbe74343115fa2cc9c158660412f8"
+      "rev": "dc9255b68a0d6380623c14adea8cc977d3504b12"
     },
     {
       "origin": "https://github.com/lqepoch/trading-core",
@@ -24,17 +24,17 @@
         "exact-decimal",
         "market-contracts"
       ],
-      "rev": "0a2eaff08d45e8abc1a0137dab17d5d3ef5553c8"
+      "rev": "23a87d5b5a549e4489c1a2844c4132c43148fe6b"
     }
   ],
   "inputs": [
     {
       "path": "Cargo.toml",
-      "sha256": "a8087ebec520ca283e5e1352ec607e2fefc84a3eebd2f4ed62372cda42a538b0"
+      "sha256": "ab3187dc265990f51f52e5e4bcb865194c1eb10358c022fcfe5ccbefa9d4ab7c"
     },
     {
       "path": "Cargo.lock",
-      "sha256": "4a5ba3b0b0911de11338039352fd6cb855257871fa1620a3568510c379e8cbd2"
+      "sha256": "8401957755550951d934e44c542af72d4f37263312a42eb62eec102983017e44"
     },
     {
       "path": "Dockerfile",
@@ -50,15 +50,23 @@
     },
     {
       "path": "README.md",
-      "sha256": "9b843293d12a1163d61c10f44d8295446058bc5cc9c9abb9dbbab183c8a3b9b5"
+      "sha256": "09e49d939ff2f3322dc784734c564fe7236c94a57a911a5b6451b6ad13c4d8d6"
     },
     {
       "path": "AGENTS.md",
-      "sha256": "42cdf7e121a38f41e9797802423fc9e3f51d47566518455ff40fe0a6baea0155"
+      "sha256": "e79b9250c1f3d9eda8993d64fde48a0e49ab2ac857dc04a1c94620fd9cc3b509"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "b02693e72668977b78f14916b6db0061bdae4aed0d56f074af5ba0abfae646ec"
+    },
+    {
+      "path": "docs/CI.md",
+      "sha256": "5fd640e097029fdbddff5df2f0d42d35763f08f575eb03425806b555068de9c4"
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "sha256": "5d7c840188f317a72e4e3fba62b8e1f3313f653810ce51c6fee9ccc70e3c32bf"
+      "sha256": "84b9882a578ea0262a67224bdf9e80103f72cc81574a831ef5f58b59604731d9"
     },
     {
       "path": "docs/CHG-2026-001-MDP-HTTP-PROVENANCE.md",
@@ -70,7 +78,23 @@
     },
     {
       "path": "docs/CHG-2026-001-MDP-DURABLE-PREDECODE-SPOOL.md",
-      "sha256": "f372a649726138e36377a3be1f2b0acca7280f289c95881f33de48294c972b04"
+      "sha256": "a148881e93255f3335c980e4d0d2b07991989f2ad3ae481801147d88c40b4fd2"
+    },
+    {
+      "path": "docs/policies/mdp-alpaca-offline-fixture-v1.md",
+      "sha256": "2e2ddca10a69f6d72d7e0b84c6b46ac098f4ea61326b3cacc905a0637b78dcfa"
+    },
+    {
+      "path": "docs/policies/mdp-capture-pair-v2.md",
+      "sha256": "6640cf4ba184f7c81613e78df770ffb3346cd60391e4109ed7a20dc623443ace"
+    },
+    {
+      "path": "docs/fixtures/raw-event-pair-input-v2.json",
+      "sha256": "89475945cbadfa8561e89028713c61a788f4a4953004296839c379f278481a6f"
+    },
+    {
+      "path": "docs/fixtures/raw-event-pair-receipt-v2.json",
+      "sha256": "a48d8f46cb5d732174ef848fe075dfebf2e77bf9ea10b0a4c4e7a0421f8a2833"
     },
     {
       "path": "docs/SUPPLY_CHAIN.md",
@@ -82,11 +106,11 @@
     },
     {
       "path": "supply-chain/git-source-pins.json",
-      "sha256": "7563c42901c16b2b3c1cd8e3476ab896a5f30189aa09bf8f42fc176bf6db99ae"
+      "sha256": "5f4b66acfb4c06300620cb42da08767d9e7cd7950f849b6649797a8c8786e624"
     },
     {
       "path": "scripts/supply_chain.py",
-      "sha256": "9e3ffb4b526c676ed7a4b8903b25c1af80c12a18cb6aa2273d4a9db301f1c385"
+      "sha256": "ee24f0def402d6f158060aa9e060a7696988a8256e6d3409d9d4172469c0c78c"
     },
     {
       "path": "scripts/container_smoke.sh",
@@ -116,7 +140,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "alpaca-stream",
-      "source": "git+https://github.com/lqepoch/broker-connectors?rev=537550417d2fbe74343115fa2cc9c158660412f8#537550417d2fbe74343115fa2cc9c158660412f8",
+      "source": "git+https://github.com/lqepoch/broker-connectors?rev=dc9255b68a0d6380623c14adea8cc977d3504b12#dc9255b68a0d6380623c14adea8cc977d3504b12",
       "version": "0.1.0"
     },
     {
@@ -291,7 +315,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "broker-ports",
-      "source": "git+https://github.com/lqepoch/broker-connectors?rev=537550417d2fbe74343115fa2cc9c158660412f8#537550417d2fbe74343115fa2cc9c158660412f8",
+      "source": "git+https://github.com/lqepoch/broker-connectors?rev=dc9255b68a0d6380623c14adea8cc977d3504b12#dc9255b68a0d6380623c14adea8cc977d3504b12",
       "version": "0.1.0"
     },
     {
@@ -473,7 +497,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "domain",
-      "source": "git+https://github.com/lqepoch/trading-core?rev=0a2eaff08d45e8abc1a0137dab17d5d3ef5553c8#0a2eaff08d45e8abc1a0137dab17d5d3ef5553c8",
+      "source": "git+https://github.com/lqepoch/trading-core?rev=23a87d5b5a549e4489c1a2844c4132c43148fe6b#23a87d5b5a549e4489c1a2844c4132c43148fe6b",
       "version": "0.1.0"
     },
     {
@@ -494,7 +518,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "exact-decimal",
-      "source": "git+https://github.com/lqepoch/trading-core?rev=0a2eaff08d45e8abc1a0137dab17d5d3ef5553c8#0a2eaff08d45e8abc1a0137dab17d5d3ef5553c8",
+      "source": "git+https://github.com/lqepoch/trading-core?rev=23a87d5b5a549e4489c1a2844c4132c43148fe6b#23a87d5b5a549e4489c1a2844c4132c43148fe6b",
       "version": "0.1.0"
     },
     {
@@ -781,7 +805,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "market-contracts",
-      "source": "git+https://github.com/lqepoch/trading-core?rev=0a2eaff08d45e8abc1a0137dab17d5d3ef5553c8#0a2eaff08d45e8abc1a0137dab17d5d3ef5553c8",
+      "source": "git+https://github.com/lqepoch/trading-core?rev=23a87d5b5a549e4489c1a2844c4132c43148fe6b#23a87d5b5a549e4489c1a2844c4132c43148fe6b",
       "version": "0.1.0"
     },
     {
@@ -1689,7 +1713,7 @@
     "files": [
       {
         "path": "scripts/supply_chain.py",
-        "sha256": "9e3ffb4b526c676ed7a4b8903b25c1af80c12a18cb6aa2273d4a9db301f1c385"
+        "sha256": "ee24f0def402d6f158060aa9e060a7696988a8256e6d3409d9d4172469c0c78c"
       },
       {
         "path": "src/aggregate.rs",
@@ -1697,27 +1721,51 @@
       },
       {
         "path": "src/archive.rs",
-        "sha256": "096f6bfb60c50325a647a82b61f9b29599e0c1ebe02e35c38757b28ad3ec2f3d"
+        "sha256": "8470d670e5a43e49f115c450915c5246ab1e4fa2afe5a8fbb4d82086fbdc6fcd"
       },
       {
         "path": "src/archive/capture_pair.rs",
         "sha256": "ab75d4356773cc2e44a803220cd066d3078b42ff2977101de1840be98154dba0"
       },
       {
+        "path": "src/archive/capture_pair_v2.rs",
+        "sha256": "5451f460f92db052583ad50684e7557887b81b0ca47298573901e4a196e57849"
+      },
+      {
+        "path": "src/archive/capture_pair_v2/offline_fixture.rs",
+        "sha256": "ffd65dc47671f3718926213ab9bcb16a1d435d2d0c5f9e1400f6cd6cd2d266d3"
+      },
+      {
+        "path": "src/archive/capture_pair_v2/offline_fixture/tests.rs",
+        "sha256": "e761719bfd761f104c825adbfc98c58991105e5f49896ef26162285379904d2c"
+      },
+      {
+        "path": "src/archive/capture_pair_v2/publish.rs",
+        "sha256": "de92724aa996ec1981aa88b1b96f5065164a5c8ac571939e2a0f348105d70f29"
+      },
+      {
+        "path": "src/archive/capture_pair_v2/rollup.rs",
+        "sha256": "b82217ec9cdfee403b233be61018f51ac4cb2ec3827358e222a55cbc0a491569"
+      },
+      {
+        "path": "src/archive/capture_pair_v2/tests.rs",
+        "sha256": "824b58fe57d27504c43c2768e29b87cc9f0042825866f698f5e64259b62ff29c"
+      },
+      {
         "path": "src/archive/raw_spool.rs",
-        "sha256": "8fdb0d0bab850ae84e5927bc295fc949037fa37e93146127b220ff347ac5ff17"
+        "sha256": "b0b4d18562976a3fb8b7880c4e762aa50d6ce6ebb365deb1288531f0c29978ba"
       },
       {
         "path": "src/archive/raw_spool/linux.rs",
-        "sha256": "0766fa3a406e04be2fecb9aecc823d1b2f04dbfc4980e80a81464439b638377d"
+        "sha256": "74c70e79776119eba63c32f672991ab91c94e1038e19bfc9f2bdd88629f62566"
       },
       {
         "path": "src/archive/raw_spool/linux/record.rs",
-        "sha256": "d3ce94ad53b71bb5369d772d829fe7aded7c0395625b10d9654e8f0ca81aa10a"
+        "sha256": "15f226cdd71375b607b3450fad86e98547e5ccdb302bce2c58c43bfe913dbdb6"
       },
       {
         "path": "src/archive/raw_spool_tests.rs",
-        "sha256": "e404f939b8409d3c09f7e43b1db208b28bb9c6a295550b3c25cff5fd516eb76c"
+        "sha256": "023f5f423f7b27edb9f13bdc7626b66f6af1e638eb131475ce7c11163c108209"
       },
       {
         "path": "src/archive/tests.rs",
@@ -1726,6 +1774,10 @@
       {
         "path": "src/cancellation.rs",
         "sha256": "a4e741d1dc5bf6c9ac352e90ced9d51ae085f18dbd60a76e6fb75f26d4b7c4d1"
+      },
+      {
+        "path": "src/capture_synthetic.rs",
+        "sha256": "dbc9af765a4747ee926843b09d51fbef1e463d603db9db84800eaa2c9d8b5b3a"
       },
       {
         "path": "src/config.rs",
@@ -1753,19 +1805,23 @@
       },
       {
         "path": "src/lib.rs",
-        "sha256": "5a64945103622883ac567518127c9f9a2e8bcc12cc39b0281949eb6584429954"
+        "sha256": "c210563fc13df38b37f40d2985a275e2ff16db8a92bb387237faf6f7df307da1"
       },
       {
         "path": "src/main.rs",
-        "sha256": "e6fcdd9b8ea222b372dea33cf66237b76c2f49f1b95b6fe1fff7eba24605452a"
+        "sha256": "190bafa3634a9f0c34d7c728b6d11344e691a798e0f3294bdde16cab0e7e3dcf"
       },
       {
         "path": "src/parquet_store.rs",
-        "sha256": "86eeb7c1784f54608dc33ed603468d57db48ad9b71f06770a3f33812b1859024"
+        "sha256": "76fa40a8a7faf0f8722f75be5e536ae7ff17568d96b2a480e320cba2fe267966"
+      },
+      {
+        "path": "src/parquet_store/events_v3.rs",
+        "sha256": "c671fa224556f19d375b234ee8e2bc22035a248b81a046158e2475dfa248e53f"
       },
       {
         "path": "src/parquet_store/facts.rs",
-        "sha256": "e0942abefbd1f081cba28b038f631b939c83d1258d1d5744860db366027f1d85"
+        "sha256": "ade52b0009fc706e3c7389a9e0023c1c39bbeaaf332f55b22f08219eb52f5368"
       },
       {
         "path": "src/parquet_store/metadata.rs",
@@ -1780,12 +1836,16 @@
         "sha256": "7fff54da2df6174c6b263b33de0aed47c7f4462249baeca86846a9ebb70c08be"
       },
       {
+        "path": "src/parquet_store/raw_frames_v2.rs",
+        "sha256": "0a54579b4d8297c69a1ece77985b6a411856b8d6f956070b0a22ff97726cf613"
+      },
+      {
         "path": "src/parquet_store/rows.rs",
         "sha256": "867a9ed31dcd1ce4755af6cc9a78a912ace30a3c9b34dc14b4d6d5ba8bb0936d"
       },
       {
         "path": "src/parquet_store/tests.rs",
-        "sha256": "78a1b9984872b0e89d77254d7d1e9d3906c59b03d68aaf62df75198f230dffe9"
+        "sha256": "796fc1fd5c43519282b0e4a69edaef461b2b69bb580a22b0f3ec33af59adf971"
       },
       {
         "path": "src/parquet_store/write_helpers.rs",
@@ -1793,7 +1853,7 @@
       },
       {
         "path": "src/parquet_worker.rs",
-        "sha256": "035a4e64d955ae33f27984287a9a789c6a892c44ee5093a7b7cea322e40bf3fb"
+        "sha256": "e7f4abfde6fc40d732c98583ac47ad1c3489c2745a153f43a68c79632e32765b"
       },
       {
         "path": "src/pipeline.rs",
@@ -1829,7 +1889,7 @@
       },
       {
         "path": "src/schema.rs",
-        "sha256": "84eeef00365a11646254bd5f61399d4cc817c5f392adbba0472b3d9b5c4274e4"
+        "sha256": "d10e87034e53856282da2c54d2e192cd29397e3d8d4bb2e0a867e1ffed666f80"
       },
       {
         "path": "src/storage.rs",
@@ -1852,6 +1912,10 @@
         "sha256": "b9f0696ee45300945290a58f70177a8c8baa63290e376896f8aed306b4f33945"
       },
       {
+        "path": "tests/offline_capture_cli.rs",
+        "sha256": "b5ff876a9f2d748ec21e9c5f6151b3275e2edab40865f3cff9dc1ca3350219ff"
+      },
+      {
         "path": "tests/parquet_worker_cli.rs",
         "sha256": "7aa078168c498d90c22a304c3cdd341032aed6ec3a229e3af30a315b508364a7"
       },
@@ -1860,7 +1924,7 @@
         "sha256": "2a363162ec994b56cf22bc87a84e92405c82337ed28103a39fbcc12591426b53"
       }
     ],
-    "sha256": "0ea3b85cf5727c7b8a0bdb34ff68251499f208c93de88250ff0953b26c413b56"
+    "sha256": "4a70d702fdda4c1102a0a383cca55c1253f768251391a6d394b5703a9708717e"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",

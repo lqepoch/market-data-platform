@@ -51,6 +51,8 @@ pub enum TransportKind {
 mod capture_pair;
 pub use capture_pair::{CaptureArtifactReceiptV1, LocalDiagnosticCapturePairReceiptV1};
 
+pub(crate) mod capture_pair_v2;
+
 mod raw_spool;
 pub use raw_spool::{LocalRawFrameSpoolFactory, RawFrameSpoolLimits, RawFrameSpoolRecoverySummary};
 

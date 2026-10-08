@@ -16,6 +16,11 @@ The MDP accepts `MarketEventEnvelopeV1` / control envelopes. It does not infer p
 confirm a WebSocket subscription. `send()` completion is not ACK evidence; only the broker adapter's
 typed ACK is eligible for downstream confirmed state.
 
+The optional `offline-capture-synthetic` feature exposes one fixed fake-wire replay command. It calls
+the broker-owned offline test runner and does not implement a second connector, decoder, credential
+path, or arbitrary fixture loader. Its `FixtureEnd` marker is local test control-plane input, not an
+Alpaca wire message; ordinary EOF, timeout, or cancellation never seals a capture.
+
 ## Ingestion and transform
 
 JSONL input is read one line at a time. Each raw line is checked against the shared 16 KiB frame cap
@@ -57,10 +62,10 @@ allowed-lateness policy, and corresponding recovery tests.
 
 ## Parquet and manifest
 
-Event v1, event v2, raw MessagePack frame v1, and minute-bar Parquet schemas and fingerprints are
-imported from core's trusted schema registry. The MDP maps logical field types to Arrow and compares
-exact field order, names, types, and nullability. It does not hash Arrow's display or serialization
-format. Parquet footer row count must match decoded rows. Readers and exporters stay within
+Event v1/v2/v3, raw MessagePack frame v1/v2, raw JSON frame v2, and minute-bar Parquet schemas and
+fingerprints are imported from core's trusted schema registry. The MDP maps logical field types to
+Arrow and compares exact field order, names, types, and nullability. It does not hash Arrow's display
+or serialization format. Parquet footer row count must match decoded rows. Readers and exporters stay within
 file/row caps.
 New writers place the descriptor and fingerprint under the core-owned metadata key names in both
 Arrow schema metadata and flat footer key/value metadata. Readers allow a legacy V1 file with no
@@ -115,9 +120,12 @@ event/frame provider-feed-entitlement-receive-time identity, projection encoding
 symbol membership, duplicate/missing ordinals, per-frame expected counts, and contiguous frame
 sequence within one generation. The pair publisher accepts only the injected local-test transport;
 raw-only and event-v2-only publication are rejected. Empty symbol unions, frame sequence gaps,
-malformed/provider-error dispositions, or failed event correlation do not produce a pair receipt.
-Control and unknown-message frames can be retained alongside market frames without inventing event
-rows. Each pair uses a caller-created fresh UUIDv4 capture identity, distinct from the adapter's
+malformed/provider-error dispositions, unknown-message frames, or failed event correlation do not
+produce a pair receipt. The pair writer accepts decoded market-data and control-message frames;
+unknown-message, malformed, and provider-error frames remain in the bounded spool/quarantine and
+prevent Pair publication until separately classified. Control frames can be retained alongside
+market frames without inventing event rows. Each pair uses a caller-created fresh UUIDv4 capture identity,
+distinct from the adapter's
 process-local numeric generation. The private receipt binds that capture identity and both local
 object IDs, content hashes, Parquet schema fingerprints, manifest hashes, generation/sequence range,
 and row counts. Its scope is `local_parquet_pair_verified`, and provider
@@ -132,13 +140,16 @@ immutable publication receipt and exact remote readback, then writes the pair re
 both components verify. Capture IDs are bound to the complete input intent, so reuse with changed
 frame bytes, sequence, or event rows fails with a conflict before another object is published.
 
-Pair correlation currently decodes inline and is restricted to MDP-owned files in the configured
-producer staging directory. The stable frame key is the pair's UUIDv4 capture identity plus source
-generation and frame sequence; reuse of that capture identity with different input bytes conflicts
-before publication. Do not route operator-supplied or remote Parquet through this API. A future CLI
-capture-pair command must add pair correlation to the isolated worker protocol first; the ordinary
-CLI `verify` worker currently verifies each object separately and does not claim cross-object
-correlation.
+The existing V1/V2 producer-staging pair path decodes inline and is restricted to MDP-owned files in
+the configured staging directory. The additive V2/V3 capture-pair path reads its WAL through the
+spool factory and only accepts the matching live-process source keys and broker projections. Its
+chunk receipt binds one capture UUID, source generation, canonical generation, contiguous source
+frame sequence, exact payload and finalization digests, and both verified artifact references.
+Rollups are bounded and report source completeness as not asserted. Both paths reject operator-
+supplied or remote Parquet. The optional `capture-synthetic` CLI command uses the pair-specific
+LocalTest readback path for the broker-owned fixed fake-wire fixture; it does not add provider input
+or credentials. The ordinary CLI verify worker still verifies each object separately and does not
+claim cross-object correlation.
 
 ## Durable predecode spool
 
@@ -152,7 +163,10 @@ canonical generation in the predecode record: that identity only exists after th
 Each record has a length prefix and domain-separated SHA-256. The predecode ACK follows `sync_all`
 of the complete frame record; the final ACK follows `sync_all` of the matching finalization record.
 Neither ACK is proof of provider entitlement, stream completeness, Drive publication, or research
-admission.
+admission. The persisted MDP record-v1 numeric-encoding tags are its own table: absent/decimal/
+integer/float64/float32/raw MessagePack/raw JSON are `0/1/2/3/4/5/6`. The broker finalization-
+summary hash uses a separate tag table, where raw JSON is `7`; values in these two hash preimages
+must not be conflated.
 
 The root and capture directories require owner-only `0700` permissions and the WAL and lock file
 require owner-only `0600`. Defaults cap one capture at 8 GiB/65,536 frames, the spool at 32 GiB, and
@@ -164,12 +178,24 @@ preserves old directories unchanged, validates their UUIDv4/RFC-variant names an
 counts their bytes against capacity, and never resumes or repairs them. Overflow, malformed state,
 ambiguous I/O, and sequence gaps fail closed.
 
-The factory is not wired to a provider socket or a CLI capture command. This repository has no live
-capture startup path, external upload path, or Parquet replay reader for this private WAL yet. The
-pair publisher still consumes MDP-owned producer staging files after the broker has decoded and
-projected a frame. Synthetic tests exercise cancellation, ambiguous writes, permissions, reconnect
-identity, and old-spool quarantine; they do not establish SIP/OPRA access, provider completeness,
-or Drive connectivity.
+The factory is wired to one feature-gated, compile-time reviewed fake-wire fixture through the
+broker's existing runner. The runner's receipt binds all four inbound provider MessagePack frames;
+MDP checks its digest against the fixture seal, shuts down and reads back the finalized spool, then
+recomputes the ordered raw-frame and finalization digests before Pair publication. The LocalTest-only
+Pair V2 API writes Core-owned raw-frame v2 and event v3 Parquet objects, verifies object and manifest
+readbacks, and creates the private fixture receipt only after exact cross-object validation. The
+manifest retains protocol identity `alpaca/opra` with unknown entitlement. Its finite-batch source
+kind is `LocalArchive`: that describes the exact local input and verified readback, and grants no
+provider authority. Both dataset IDs and `input_identity` identify the `synthetic-offline-fixture`
+and fixed `alpaca-opra-trade-v1` fixture. The MDP-private receipt separately records
+`SYNTHETIC_REPLAY_FIXTURE`, the exact `FINITE_BATCH_SOURCE_KIND_LOCAL_ARCHIVE` projection, and
+`NOT_ASSERTED`; CLI output says
+`SYNTHETIC_NOT_REAL_OPRA_NOT_LIVE`. The SDK's fixed freshness clock is a fixture cutoff only;
+`received_at_utc` continues to use the actual runner receive time and is not replay-clock time. This
+is a bounded offline software test path, not a live capture startup, provider completeness proof,
+entitlement proof, or external upload path. Synthetic tests exercise cancellation, ambiguous writes,
+permissions, reconnect identity, old-spool quarantine, and the fake-wire-to-local-pair path; they do
+not establish SIP/OPRA access or Drive connectivity.
 
 The optional release benchmark writes and fully reads back 100,000 synthetic trade events using
 Zstandard level 1, Snappy, and no compression. It is used to compare this schema and configuration;
@@ -279,11 +305,14 @@ blocked until the trusted source-admission path supplies separately verified ent
 capture-completeness, and licensing evidence. Readback never upgrades an UNKNOWN or unauthorized
 source. OPRA binary-float projections are eligible only for the Drive `diagnostic` namespace and
 only after explicit authorized-entitlement evidence; they are not source-exact and cannot be read as
-curated research data. Byte-exact raw MessagePack and event-v2 pair storage use additive core
-schemas, and MDP has a separate Linux-only predecode spool sink. The pair publisher remains
-local-test only; no provider capture command is connected to the spool, and no Parquet writer
-consumes its WAL yet. No raw data is uploaded to Google Drive, and a successful local
-hash/sync/readback never promotes unknown or unauthorized provenance.
+curated research data. Byte-exact raw MessagePack/event-v2 storage remains available through the
+original producer path. The additive raw-frame v2/event-v3 path preserves the full source capture
+key separately from canonical generation and is written by the LocalTest-only spool pair publisher.
+It is exercised with the fixed broker-owned synthetic fake-wire fixture, not a live provider capture
+command, and no raw data is uploaded to Google Drive. Core manifests use `LocalArchive` to describe
+the exact local finite payload input and readback; the private MDP receipt carries the separate
+synthetic-fixture classification. A successful local hash/sync/readback never promotes unknown or
+unauthorized provenance.
 
 The repository contains no Alpaca secret and no live feed/upload test. Drive project/root identity and
 available quota remain UNKNOWN; use an operator-provided authorized root and quota snapshot before

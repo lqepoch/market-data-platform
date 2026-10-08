@@ -1,11 +1,12 @@
 use std::{
+    collections::HashMap,
     fs::{self, DirBuilder, File},
     io::{Read, Write},
     mem::MaybeUninit,
     os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, Weak,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -39,6 +40,7 @@ pub(super) struct FactoryInner {
     root_directory: File,
     limits: RawFrameSpoolLimits,
     budget: Mutex<FactoryBudget>,
+    current_sinks: Mutex<HashMap<RawCaptureInstanceId, Weak<SinkInner>>>,
     _lock_file: File,
     pub(super) supervisor: Arc<BlockingWorkerSupervisor>,
     #[cfg(test)]
@@ -53,11 +55,22 @@ struct FactoryBudget {
 
 struct SinkInner {
     capture_id: RawCaptureInstanceId,
+    capture_directory: File,
     provider: String,
     feed: String,
     factory: Arc<FactoryInner>,
     poisoned: Arc<AtomicBool>,
     state: Mutex<SinkState>,
+}
+
+pub(super) struct CaptureReader {
+    records: record::FinalizedCaptureReader,
+    expected_frames: u32,
+    frames_read: u32,
+    pending: Option<super::SpooledRawFrame>,
+    finished: bool,
+    _worker_guard: BlockingWorkerGuard,
+    _worker_permit: BackgroundWorkerPermit,
 }
 
 struct SinkState {
@@ -120,6 +133,7 @@ fn open_impl(
             capture_identities,
             poisoned: false,
         }),
+        current_sinks: Mutex::new(HashMap::new()),
         _lock_file: lock_file,
         supervisor: BlockingWorkerSupervisor::new(),
         #[cfg(test)]
@@ -204,8 +218,20 @@ pub(super) fn create_sink(
     }
 
     drop(budget);
+    let capture_directory = match capture_dir.try_clone() {
+        Ok(directory) => directory,
+        Err(_) => {
+            factory
+                .budget
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .poisoned = true;
+            return Err(RawFrameSinkError::Ambiguous);
+        }
+    };
     let inner = Arc::new(SinkInner {
         capture_id,
+        capture_directory,
         provider: provider.to_owned(),
         feed: feed.to_owned(),
         factory: Arc::clone(factory),
@@ -220,7 +246,135 @@ pub(super) fn create_sink(
             poisoned: false,
         }),
     });
+    match factory.current_sinks.lock() {
+        Ok(mut current_sinks) => {
+            current_sinks.insert(capture_id, Arc::downgrade(&inner));
+        }
+        Err(_) => {
+            factory
+                .budget
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .poisoned = true;
+            return Err(RawFrameSinkError::Poisoned);
+        }
+    }
     Ok(Arc::new(LocalRawFrameSink { inner }))
+}
+
+pub(super) fn open_capture_reader(
+    factory: &Arc<FactoryInner>,
+    capture_instance_id: RawCaptureInstanceId,
+) -> Result<CaptureReader, RawFrameSinkError> {
+    let sink = factory
+        .current_sinks
+        .lock()
+        .map_err(|_| RawFrameSinkError::Poisoned)?
+        .get(&capture_instance_id)
+        .and_then(Weak::upgrade)
+        .ok_or(RawFrameSinkError::Unavailable)?;
+    let worker_guard = factory.supervisor.try_track()?;
+    let worker_permit =
+        BackgroundWorkerPermit::acquire().map_err(|_| RawFrameSinkError::CapacityExceeded)?;
+    let state = sink.state.lock().map_err(|_| RawFrameSinkError::Poisoned)?;
+    if state.poisoned || state.pending.is_some() || state.frames == 0 {
+        return Err(RawFrameSinkError::Poisoned);
+    }
+    let file = File::from(
+        rustix::fs::openat(
+            &sink.capture_directory,
+            FRAME_LOG_NAME,
+            rustix::fs::OFlags::RDONLY
+                | rustix::fs::OFlags::NOFOLLOW
+                | rustix::fs::OFlags::NONBLOCK
+                | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .map_err(|_| RawFrameSinkError::Unavailable)?,
+    );
+    validate_private_file(&file, FILE_MODE)?;
+    let snapshot_bytes = file
+        .metadata()
+        .map_err(|_| RawFrameSinkError::Unavailable)?
+        .len();
+    if snapshot_bytes != state.capture_bytes || snapshot_bytes > factory.limits.max_capture_bytes {
+        return Err(RawFrameSinkError::Ambiguous);
+    }
+    let records = record::FinalizedCaptureReader::new(file, capture_instance_id, snapshot_bytes)?;
+    let expected_frames = state.frames;
+    drop(state);
+    Ok(CaptureReader {
+        records,
+        expected_frames,
+        frames_read: 0,
+        pending: None,
+        finished: false,
+        _worker_guard: worker_guard,
+        _worker_permit: worker_permit,
+    })
+}
+
+impl CaptureReader {
+    pub(super) fn next_chunk(
+        &mut self,
+    ) -> Result<Option<Vec<super::SpooledRawFrame>>, RawFrameSinkError> {
+        if self.finished {
+            return Ok(None);
+        }
+        const MAX_CHUNK_FRAMES: usize = market_contracts::MAX_RAW_CAPTURE_CHUNK_FRAMES_V2;
+        const MAX_CHUNK_BYTES: usize = market_contracts::MAX_RAW_CAPTURE_CHUNK_BYTES_V2;
+        let mut chunk = Vec::with_capacity(MAX_CHUNK_FRAMES.min(16));
+        let mut payload_bytes = 0usize;
+        let mut first_source_generation = None;
+        let mut first_wire_encoding = None;
+
+        loop {
+            let frame = match self.pending.take() {
+                Some(frame) => Some(frame),
+                None => self.records.next_frame()?,
+            };
+            let Some(frame) = frame else {
+                if self.frames_read != self.expected_frames {
+                    return Err(RawFrameSinkError::Ambiguous);
+                }
+                self.finished = true;
+                return if chunk.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(chunk))
+                };
+            };
+            let frame_bytes = frame.capture.payload().as_bytes().len();
+            let source_generation = frame.capture.source_generation();
+            let wire_encoding = frame.capture.wire_encoding();
+            let exceeds_chunk = payload_bytes
+                .checked_add(frame_bytes)
+                .is_none_or(|bytes| bytes > MAX_CHUNK_BYTES);
+            let changes_chunk_identity = first_source_generation
+                .is_some_and(|generation| generation != source_generation)
+                || first_wire_encoding.is_some_and(|encoding| encoding != wire_encoding);
+            if !chunk.is_empty()
+                && (chunk.len() >= MAX_CHUNK_FRAMES || exceeds_chunk || changes_chunk_identity)
+            {
+                self.pending = Some(frame);
+                return Ok(Some(chunk));
+            }
+            if exceeds_chunk {
+                return Err(RawFrameSinkError::CapacityExceeded);
+            }
+            first_source_generation.get_or_insert(source_generation);
+            first_wire_encoding.get_or_insert(wire_encoding);
+            payload_bytes += frame_bytes;
+            self.frames_read = self
+                .frames_read
+                .checked_add(1)
+                .ok_or(RawFrameSinkError::CapacityExceeded)?;
+            if self.frames_read > self.expected_frames {
+                return Err(RawFrameSinkError::Ambiguous);
+            }
+            chunk.push(frame);
+        }
+    }
 }
 
 struct LocalRawFrameSink {

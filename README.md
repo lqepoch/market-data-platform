@@ -8,8 +8,9 @@ objects through a single-writer archive boundary.
 subscription ACKs, feed selection, and connection generations. This repository consumes the
 versioned `market-contracts` DTOs and pins the read-only `broker-ports` / `alpaca-stream` crates;
 it does not create a second Alpaca client. The connector crates are pinned for the upcoming collector
-integration but are not yet wired to a runnable live-capture command. Today the CLI accepts
-shared-contract JSONL and synthetic input. No live SIP/OPRA feed was connected in this change.
+integration and the default CLI accepts shared-contract JSONL and synthetic input. An explicit,
+default-off feature adds one reviewed offline MessagePack fake-wire replay through the existing
+broker runner; it does not connect to a live SIP/OPRA feed.
 
 ## Status and evidence
 
@@ -22,11 +23,28 @@ shared-contract JSONL and synthetic input. No live SIP/OPRA feed was connected i
   reconciliation tests. Replay and publishing use only `local-test`; the read-only service can be
   configured with an operator rclone config. Real rclone execution, OAuth, remote reads/writes,
   project quota discovery, and Drive upload are **NOT RUN**.
-- Core raw MessagePack v1 and correlated event v2 Parquet writers are available for offline local
-  diagnostics. Their pair publisher is local-test only; synthetic inputs stay `synthetic/synthetic`
-  and do not establish Alpaca provenance. The current broker adapter decodes a frame before placing
-  its raw bytes and normalized events on the in-memory ordered channel. MDP does not yet fsync those
-  bytes before broker normalization, and no runnable provider capture command is connected.
+- Core raw MessagePack v1 and correlated event v2 Parquet writers remain available for the
+  producer-staging path. Synthetic inputs stay `synthetic/synthetic` and do not establish
+  Alpaca provenance. The provider adapter is not wired to MDP's durable spool, so no runnable
+  provider capture command currently ensures predecode durability on the live path.
+- The additive Linux-only raw-frame v2/event v3 path exercises the broker's two-stage durable
+  spool using synthetic fake-wire input. Its LocalTest-only pair publisher consumes a finalized
+  current-process spool and matching synthetic broker projections, verifies the shared Core
+  descriptors and exact raw/event artifact readbacks, then writes a bounded private receipt. It
+  preserves synthetic/synthetic and unknown entitlement, and asserts no source completeness,
+  provider capture, or Google Drive publication. See
+  [the capture-pair policy](docs/policies/mdp-capture-pair-v2.md).
+- With the opt-in `offline-capture-synthetic` feature, `capture-synthetic` replays one compile-time
+  reviewed Alpaca MessagePack fixture through the broker-owned connector runner, the MDP durable
+  spool, and the LocalTest raw-frame-v2/event-v3 Pair publisher. It preserves protocol identity as
+  `alpaca/opra` with `unknown` entitlement and writes a separate private receipt binding the fixture
+  hash, runner-received frames, matched spool ACKs, and the verified Pair rollup. Its terminal marker
+  exists only in the offline test control plane; the CLI capture report is `synthetic_replay`, while
+  the Pair manifest uses `LocalArchive` for local finite input/readback, and completeness remains
+  `NOT_ASSERTED`. It does not accept user wire files or credentials, and it
+  does not establish real Alpaca connectivity, OPRA entitlement, provider completeness, or Drive
+  durability. See
+  [the offline fixture policy](docs/policies/mdp-alpaca-offline-fixture-v1.md).
 - SIP/OPRA entitlement and source authorization remain **UNVERIFIED** until trusted operator/provider
   evidence is supplied through the approved source-admission path. Readback proves object bytes, not
   provenance, entitlement, feed completeness, or market-data licensing.
@@ -46,6 +64,8 @@ port and stream crates are pinned to `broker-connectors` revision
 
 ```sh
 cargo +1.98.1 run --offline -- synthetic --output /tmp/mdp-demo
+cargo +1.98.1 run --offline --features offline-capture-synthetic -- capture-synthetic \
+  --output /tmp/mdp-alpaca-offline-fixture
 cargo +1.98.1 run --offline -- verify \
   --parquet /tmp/mdp-demo/staging/synthetic-2026-10-08-four-bars-parquet-v3-events-v1.parquet \
   --schema market-events-v1
@@ -58,13 +78,29 @@ cargo +1.98.1 run --offline -- cleanup-staging \
 
 `synthetic` runs the full local workflow and prints a JSON report. It creates immutable output
 files, so use a fresh `--output` directory for another run. `verify` accepts `market-events-v1`,
-`market-events-v2`, `market-raw-frame-v1`, or `us-equity-trade-bar1m-v1`. The v2 event and raw-frame
-schemas must match their exact core schema fingerprints and physical fields. `query-bars` prints
-rows as JSONL or writes them to a new export file.
+`market-events-v2`, `market-events-v3`, `market-raw-frame-v1`, `market-raw-frame-v2`,
+`market-raw-json-frame-v2`, or `us-equity-trade-bar1m-v1`. Versioned event and raw-frame schemas
+must match their exact core schema fingerprints and physical fields. `query-bars` prints rows as
+JSONL or writes them to a new export file.
 `cleanup-staging` is a dry run unless `--apply` is supplied; it only considers MDP-named temporary
 files, preserves live-PID/locked/unresolved-receipt candidates, and never removes published objects
 or manifests. On platforms without Linux `/proc` process evidence it conservatively preserves all
 PID-owned temporaries.
+
+`capture-synthetic` is available only when explicitly built with
+`--features offline-capture-synthetic`. It accepts no fixture path, URL, or provider credentials,
+requires a fresh Linux output directory, and writes only owner-private LocalTest artifacts. The
+static runner fixture contains four inbound provider MessagePack frames; the runner-received digest
+binds all four, while the durable spool contains only the post-auth subscription ACK and trade frame.
+The local `FixtureEnd` control marker is not an Alpaca wire message or provider watermark. The
+command and its receipts are synthetic plumbing evidence only.
+The Parquet manifests keep `alpaca/opra/unknown` protocol identity but use Core's `LocalArchive`
+finite-batch kind to describe only the local input and verified readback. Dataset IDs and
+`input_identity` carry `synthetic-offline-fixture` plus the fixed fixture ID; the private MDP receipt
+records `SYNTHETIC_REPLAY_FIXTURE` and `NOT_ASSERTED`. CLI output explicitly says
+`SYNTHETIC_NOT_REAL_OPRA_NOT_LIVE`. The SDK's fixed freshness clock is only a fixture cutoff;
+received timestamps remain the runner's actual local receive times. None of these fields asserts
+provider access, entitlement, completeness, or live freshness.
 
 For the cross-repository adapter fixture, use a separate immutable dataset identity:
 
@@ -163,7 +199,8 @@ than the window end and no earlier than any event receive timestamp.
   is valid for control/unknown rows only when the whole capture contains a nonempty symbol union.
   Captures with an empty union, sequence gaps, malformed frames, or provider errors do not receive
   a paired capture receipt. Malformed/error frames may remain in bounded staging for operator
-  quarantine and recovery. This raw MessagePack schema accepts Alpaca OPRA frames or explicitly
+  quarantine and recovery; unknown-message frames likewise remain in the spool/quarantine and are
+  rejected by Pair publication until classified. This raw MessagePack schema accepts Alpaca OPRA frames or explicitly
   synthetic frames; it rejects SIP JSON and indicative-feed relabeling, which require their own
   wire-format contract.
 - `ArchivePublisher::publish_local_diagnostic_capture_pair` verifies raw frame hashes, canonical
@@ -184,10 +221,12 @@ than the window end and no earlier than any event receive timestamp.
 - MDP implements a Linux-only owner-private `LocalRawFrameSpoolFactory` for the broker's two-stage
   persist-before-decode/finalization ACK contract. It syncs exact source bytes before each ACK,
   poisons ambiguous or cancelled subscriptions, tracks blocking writes through explicit shutdown,
-  and preserves prior-process spool directories as unknown without resuming them. The spool is not
-  yet wired to a provider capture command or a Parquet writer; the existing pair API still consumes
-  producer staging files after decode. No real OPRA capture, Google Drive write, or provider
-  watermark was exercised.
+  and preserves prior-process spool directories as unknown without resuming them. A separate
+  local-only Pair V2 API consumes a finalized current-process spool plus matching post-decode
+  projections, writes shared raw-frame v2/event v3 objects, and verifies the object and manifest
+  readbacks before creating a private pair receipt. The existing producer-staging pair API remains
+  available. Neither path is connected to a live provider startup command. No real OPRA capture,
+  Google Drive write, or provider watermark was exercised.
 - Collection/archive queues: 256 events and 64 pending submissions in the replay path; at most 32
   combined dedicated collection and archive writer threads per process; tracked provider/feed
   cursors: 64; durable gap ledger: 64 MiB.
