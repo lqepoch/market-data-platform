@@ -32,6 +32,17 @@ those belong to `broker-connectors`.
   counts are canonical decimal strings while CLI JSON retains numbers. HTTP must not imply
   DatasetManifestV2 completion evidence. LocalTest HTTP is diagnostic-only and explicitly
   synthetic/unknown. Keep browser reads behind a trusted BFF; never expose cache or rclone config.
+- `archive::LocalRawFrameSpoolFactory` implements the broker's two-stage raw-frame sink on Linux.
+  Persist exact payload bytes and the full source-local identity before predecode ACK, then persist
+  the matching finalization summary before final ACK. Cancellation, ambiguous I/O, sequence gaps,
+  and shutdown poison the logical sink; old process directories remain unknown and are never resumed.
+  Keep owner-only `0700` directories and single-link `0600` files and the fixed
+  capture/total/frame/identity limits. Open the root, lock, capture directories, and frame logs
+  relative to verified directory descriptors with no-follow flags; reject lock symlinks and
+  hardlinks before using them. After cancelling and joining subscription tasks, call factory
+  `shutdown()`; it closes
+  admission and waits for all tracked blocking file operations. This local WAL is not a provider
+  connection, Parquet pair receipt, Drive upload, entitlement verifier, or completeness proof.
 - The HTTP service accepts only short-lived HS256 `market:read` delegations for the independent
   `lqepoch-market-data` audience. `mdp-terminal` is bound to
   `eqoboard-openterminal`/`MDP_TERMINAL_JWT_SECRET`; `mdp-research` is bound to

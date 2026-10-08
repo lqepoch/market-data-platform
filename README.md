@@ -181,12 +181,13 @@ than the window end and no earlier than any event receive timestamp.
   correlation decodes inline and accepts only MDP-owned producer files in its configured staging
   directory; arbitrary Parquet must use the CLI worker boundary. A future capture CLI must add
   cross-object correlation to the worker before exposing such an entrypoint.
-- The broker's current MessagePack path decodes/analyzes the application frame before queueing its
-  raw bytes and projected events. The MDP pair API publishes the raw object before the event object
-  only after both have been decoded/projected and written to local staging; it does not provide
-  persist-before-normalize. A durable broker-side raw sink and acknowledgement before decoding are
-  still required for that guarantee. No real OPRA capture, Google Drive write, or provider watermark
-  was exercised.
+- MDP implements a Linux-only owner-private `LocalRawFrameSpoolFactory` for the broker's two-stage
+  persist-before-decode/finalization ACK contract. It syncs exact source bytes before each ACK,
+  poisons ambiguous or cancelled subscriptions, tracks blocking writes through explicit shutdown,
+  and preserves prior-process spool directories as unknown without resuming them. The spool is not
+  yet wired to a provider capture command or a Parquet writer; the existing pair API still consumes
+  producer staging files after decode. No real OPRA capture, Google Drive write, or provider
+  watermark was exercised.
 - Collection/archive queues: 256 events and 64 pending submissions in the replay path; at most 32
   combined dedicated collection and archive writer threads per process; tracked provider/feed
   cursors: 64; durable gap ledger: 64 MiB.
@@ -197,6 +198,11 @@ than the window end and no earlier than any event receive timestamp.
   replay, staging reserves peak room for two output objects, one object readback, three manifest
   buffers, and receipt overhead. Parquet writers stop at the configured object-byte cap and remove
   failed temporary output.
+- Local predecode spool defaults to 8 GiB per logical subscription, 32 GiB total, 65,536 frames per
+  capture identity, and 1,024 identities. It requires owner-only directories/files and never resumes
+  a prior-process capture; old spool bytes remain unknown and consume the configured capacity. The
+  parent directory must exist before `LocalRawFrameSpoolFactory::open`; the factory creates only its
+  final private root directory.
 - Parquet writer uses Zstandard level 1, row groups of at most 10,000 rows, and 1 MiB data/dictionary
   page targets. Reader preflight rejects more than 1,024 row groups, a row group over 32 MiB of
   footer-advertised uncompressed column bytes, or more than 512 MiB total; column and cumulative

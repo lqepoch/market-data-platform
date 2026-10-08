@@ -51,6 +51,9 @@ pub enum TransportKind {
 mod capture_pair;
 pub use capture_pair::{CaptureArtifactReceiptV1, LocalDiagnosticCapturePairReceiptV1};
 
+mod raw_spool;
+pub use raw_spool::{LocalRawFrameSpoolFactory, RawFrameSpoolLimits, RawFrameSpoolRecoverySummary};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PublicationPurpose {
@@ -1187,3 +1190,7 @@ impl ArchiveWriterQueue {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "archive/raw_spool_tests.rs"]
+mod raw_spool_tests;

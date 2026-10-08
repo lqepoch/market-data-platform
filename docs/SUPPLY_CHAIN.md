@@ -57,7 +57,10 @@ python3 scripts/supply_chain.py --check
 `SOURCE-MANIFEST.json` records the exact locked package inventory and checksums, direct git source
 revisions, hashes of policy/input files (including the runtime-only `Dockerfile`, HTTP OpenAPI
 contract, offline container-smoke script, and change-specific provenance record), tool versions,
-generated artifact hashes, and a deterministic first-party source-tree hash. The tree hash is SHA-256 over path-sorted entries encoded as
+generated artifact hashes, and a deterministic first-party source-tree hash over Git-tracked Rust and
+Python sources in the configured source-tree paths. Untracked work-in-progress files are excluded;
+files intended for a release must be tracked before generating the artifacts. The tree hash is
+SHA-256 over path-sorted entries encoded as
 `u32be(path UTF-8 length) || path UTF-8 || raw SHA-256(file contents)`. The source manifest does not
 hash itself, sign the build, establish CI identity, attest a release, or prove that dependencies are
 safe beyond the checks recorded here. SBOM generation and local tests do not connect to Alpaca or

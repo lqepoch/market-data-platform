@@ -140,12 +140,36 @@ capture-pair command must add pair correlation to the isolated worker protocol f
 CLI `verify` worker currently verifies each object separately and does not claim cross-object
 correlation.
 
-This storage step does not guarantee raw persistence before normalization. The current pinned broker
-adapter decodes/analyzes an inbound frame, then places the raw-frame record and normalized events on
-an ordered bounded in-memory channel. MDP can publish the raw object before the event object after it
-consumes that channel, but the raw bytes have already passed through the decoder. A durable
-broker-side raw sink and acknowledgement before decoding are still required for a persist-before-
-normalize guarantee. No provider socket or real Drive is connected by this local API.
+## Durable predecode spool
+
+MDP now provides a Linux-only `LocalRawFrameSpoolFactory` implementation of the broker's two-stage
+`RawFrameSink` port. Each logical subscription receives a new UUIDv4; the same sink retains that
+identity across reconnects, while source-local generation increases and frame sequence restarts at
+one. The append-only private WAL stores exact payload bytes, receive timestamp, wire encoding,
+provider/feed/entitlement classification, the full source key `(capture UUID, source generation,
+frame sequence, payload SHA-256)`, and a bounded decode finalization summary. It does not store
+canonical generation in the predecode record: that identity only exists after the broker projection.
+Each record has a length prefix and domain-separated SHA-256. The predecode ACK follows `sync_all`
+of the complete frame record; the final ACK follows `sync_all` of the matching finalization record.
+Neither ACK is proof of provider entitlement, stream completeness, Drive publication, or research
+admission.
+
+The root and capture directories require owner-only `0700` permissions and the WAL and lock file
+require owner-only `0600`. Defaults cap one capture at 8 GiB/65,536 frames, the spool at 32 GiB, and
+the process at 1,024 capture identities. The process-wide background-worker budget also bounds
+concurrent spool writes. Cancelling a pending request poisons its sink; any possibly written but
+unacknowledged record remains unknown. Factory `shutdown()` closes admission and waits for tracked
+blocking file work to exit, so callers must first cancel and join the subscription tasks. Startup
+preserves old directories unchanged, validates their UUIDv4/RFC-variant names and fixed log layout,
+counts their bytes against capacity, and never resumes or repairs them. Overflow, malformed state,
+ambiguous I/O, and sequence gaps fail closed.
+
+The factory is not wired to a provider socket or a CLI capture command. This repository has no live
+capture startup path, external upload path, or Parquet replay reader for this private WAL yet. The
+pair publisher still consumes MDP-owned producer staging files after the broker has decoded and
+projected a frame. Synthetic tests exercise cancellation, ambiguous writes, permissions, reconnect
+identity, and old-spool quarantine; they do not establish SIP/OPRA access, provider completeness,
+or Drive connectivity.
 
 The optional release benchmark writes and fully reads back 100,000 synthetic trade events using
 Zstandard level 1, Snappy, and no compression. It is used to compare this schema and configuration;
@@ -255,11 +279,11 @@ blocked until the trusted source-admission path supplies separately verified ent
 capture-completeness, and licensing evidence. Readback never upgrades an UNKNOWN or unauthorized
 source. OPRA binary-float projections are eligible only for the Drive `diagnostic` namespace and
 only after explicit authorized-entitlement evidence; they are not source-exact and cannot be read as
-curated research data. Byte-exact raw MessagePack and event-v2 pair storage now use the additive core
-schemas, but the MDP pair publisher is local-test only and no provider capture command is connected.
-The broker adapter currently decodes before the MDP receives raw bytes, so persist-before-normalize
-remains unavailable. No raw data is uploaded to Google Drive, and a successful hash/readback never
-promotes unknown or unauthorized provenance.
+curated research data. Byte-exact raw MessagePack and event-v2 pair storage use additive core
+schemas, and MDP has a separate Linux-only predecode spool sink. The pair publisher remains
+local-test only; no provider capture command is connected to the spool, and no Parquet writer
+consumes its WAL yet. No raw data is uploaded to Google Drive, and a successful local
+hash/sync/readback never promotes unknown or unauthorized provenance.
 
 The repository contains no Alpaca secret and no live feed/upload test. Drive project/root identity and
 available quota remain UNKNOWN; use an operator-provided authorized root and quota snapshot before

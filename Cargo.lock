@@ -28,7 +28,7 @@ dependencies = [
 [[package]]
 name = "alpaca-stream"
 version = "0.1.0"
-source = "git+https://github.com/lqepoch/broker-connectors?rev=70a8f89378be29a700111c3c6759ae31614efeb5#70a8f89378be29a700111c3c6759ae31614efeb5"
+source = "git+https://github.com/lqepoch/broker-connectors?rev=537550417d2fbe74343115fa2cc9c158660412f8#537550417d2fbe74343115fa2cc9c158660412f8"
 dependencies = [
  "broker-ports",
  "chrono",
@@ -316,8 +316,9 @@ dependencies = [
 [[package]]
 name = "broker-ports"
 version = "0.1.0"
-source = "git+https://github.com/lqepoch/broker-connectors?rev=70a8f89378be29a700111c3c6759ae31614efeb5#70a8f89378be29a700111c3c6759ae31614efeb5"
+source = "git+https://github.com/lqepoch/broker-connectors?rev=537550417d2fbe74343115fa2cc9c158660412f8#537550417d2fbe74343115fa2cc9c158660412f8"
 dependencies = [
+ "domain",
  "market-contracts",
  "sha2",
  "tokio",
