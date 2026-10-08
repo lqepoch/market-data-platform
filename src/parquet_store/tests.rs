@@ -282,7 +282,10 @@ fn write_verify_and_query_share_semantic_bar_validation() {
             .find(|entry| entry.key == key)
             .and_then(|entry| entry.value.as_ref())
             .unwrap();
-        assert_eq!(arrow_value, footer_value);
+        assert!(
+            arrow_value == footer_value,
+            "Arrow schema metadata must match footer metadata"
+        );
     }
 
     let mut bad_decimal = valid_bar();
@@ -621,10 +624,11 @@ fn benchmark_100k_synthetic_trade_events() {
         let elapsed = started.elapsed();
         assert_eq!(verification.footer_rows, 100_000);
         assert_eq!(verification.decoded_rows, 100_000);
+        let output_size_bytes = std::fs::metadata(&path).unwrap().len();
         println!(
             "codec={label} rows={} bytes={} write_plus_readback_ms={} rows_per_second={:.0}",
-            verification.decoded_rows,
-            verification.size_bytes,
+            messages.len(),
+            output_size_bytes,
             elapsed.as_millis(),
             100_000_f64 / elapsed.as_secs_f64(),
         );

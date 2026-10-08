@@ -308,7 +308,7 @@ fn manifest_abort_after_create_is_reconciled_and_unknown_manifest_is_not_reuploa
     let retry = publisher.publish(&request);
     assert!(
         matches!(retry, Err(MarketDataError::UnknownOutcome)),
-        "retry without the observed manifest must remain unknown: {retry:?}"
+        "retry without the observed manifest must remain unknown"
     );
     assert_eq!(transport.upload_count(), 2);
 }

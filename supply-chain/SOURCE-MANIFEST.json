@@ -1478,7 +1478,7 @@
       },
       {
         "path": "src/archive/tests.rs",
-        "sha256": "bdbc5cac843a7527c784b9c1d9c07673f3dcdb5ef504a5e91c975405a0942073"
+        "sha256": "3de5dccca2bfef0d13d70deda7ebfe49c6c4aa91860e8ee72191c384f15e74fe"
       },
       {
         "path": "src/config.rs",
@@ -1522,7 +1522,7 @@
       },
       {
         "path": "src/parquet_store/tests.rs",
-        "sha256": "99979cccb02a004f6387cf5031dd1f713bb972a4b7b80b372f811ea0e189cee8"
+        "sha256": "78a1b9984872b0e89d77254d7d1e9d3906c59b03d68aaf62df75198f230dffe9"
       },
       {
         "path": "src/parquet_store/write_helpers.rs",
@@ -1597,7 +1597,7 @@
         "sha256": "672f37defce7e1d67f8d684580db4e6ce9e517afd8c6bdf67f99d96c7e573eca"
       }
     ],
-    "sha256": "04880d0a5cc988c6791b91c434e79b8858e0555bfb08aeccf6ad79e184ee3939"
+    "sha256": "647d5102962a8833a8de25b97fc0feb262852ead376aadc0e2daa90073f2403d"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
