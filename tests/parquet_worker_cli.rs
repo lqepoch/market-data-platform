@@ -2,6 +2,8 @@
 
 #[path = "common/parquet_page_bomb.rs"]
 mod page_bomb_fixture;
+#[path = "common/parquet_required_null.rs"]
+mod required_null_fixture;
 
 use std::{
     io::Read,
@@ -352,4 +354,59 @@ async fn production_cli_rejects_a_real_page_header_bomb_without_publishing_query
     ]);
     assert!(!query.status.success());
     assert!(!export.exists());
+}
+
+#[tokio::test]
+async fn production_cli_rejects_null_definition_levels_for_a_required_field() {
+    let _serial = CLI_SERIAL.get_or_init(Default::default).lock().await;
+    let temp = tempdir().unwrap();
+    let malformed = temp.path().join("required-symbol-with-null-level.parquet");
+    required_null_fixture::write_required_schema_with_null_definition_level(&malformed);
+
+    let verify = run_cli(&[
+        "verify",
+        "--parquet",
+        malformed.to_str().unwrap(),
+        "--schema",
+        "us-equity-trade-bar1m-v1",
+    ]);
+    assert!(
+        !verify.status.success(),
+        "verify accepted malformed Parquet; stdout={} stderr={}",
+        String::from_utf8_lossy(&verify.stdout),
+        String::from_utf8_lossy(&verify.stderr)
+    );
+    assert!(!String::from_utf8_lossy(&verify.stdout).contains("\"decoded_rows\""));
+
+    let export = temp.path().join("must-not-be-published.jsonl");
+    let query = run_cli(&[
+        "query-bars",
+        "--parquet",
+        malformed.to_str().unwrap(),
+        "--symbol",
+        "QQQ",
+        "--export-jsonl",
+        export.to_str().unwrap(),
+    ]);
+    assert!(
+        !query.status.success(),
+        "query accepted malformed Parquet; stdout={} stderr={}",
+        String::from_utf8_lossy(&query.stdout),
+        String::from_utf8_lossy(&query.stderr)
+    );
+    assert!(!String::from_utf8_lossy(&query.stdout).contains("\"exported_rows\""));
+    assert!(!export.exists());
+
+    for entry in std::fs::read_dir(temp.path()).unwrap() {
+        let name = entry.unwrap().file_name();
+        let name = name.to_string_lossy();
+        assert!(
+            !name.ends_with(".manifest.json"),
+            "unexpected manifest: {name}"
+        );
+        assert!(
+            !name.ends_with(".receipt.json"),
+            "unexpected receipt: {name}"
+        );
+    }
 }

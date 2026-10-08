@@ -46,7 +46,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "178c0a2c033fbca2cbdeedbc7b2b526f6bfcfe69d68d4905bb9f9aa0b2c41a9a"
+      "sha256": "acb97ed31adb268eb51d914ebc8f1418a8736767490d350edc0fbb9bfa266c5a"
     },
     {
       "path": "AGENTS.md",
@@ -54,7 +54,7 @@
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "sha256": "11d611492d8e065edbd33d5eeb6f3bc555a230f697b4d8c4432c8a7a79bc7211"
+      "sha256": "41ffee5a442b54a41fbbb4683250517f15c4f995d401886a8db613d89b1f3c31"
     },
     {
       "path": "docs/SUPPLY_CHAIN.md",
@@ -1585,15 +1585,19 @@
         "sha256": "c69448c7053f540d5c35cd2c5815fcfaefc7b895d90ca5ea11a021feffb54774"
       },
       {
+        "path": "tests/common/parquet_required_null.rs",
+        "sha256": "5f14302a6f70e1da1b9c65f5b27f457dbce753999c1af06f5814e004c8a8c677"
+      },
+      {
         "path": "tests/parquet_worker_cli.rs",
-        "sha256": "2726e9a9ab6dae82a342525886a6ada81d857a55d477f4f4c266f552caca2522"
+        "sha256": "c5528cd3dcf5e20f3f568b63f8760c388d7e1790f95ba3269d8302e999498e43"
       },
       {
         "path": "tests/test_supply_chain.py",
         "sha256": "672f37defce7e1d67f8d684580db4e6ce9e517afd8c6bdf67f99d96c7e573eca"
       }
     ],
-    "sha256": "0d23defb8a027b8186945083e7a75f34c23a7c9ab309307e3ba8da46d57de95a"
+    "sha256": "a21d8097918997eb1e91a4046fd26aa0a539da3ad57dcd372a672cd6c09bed45"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",

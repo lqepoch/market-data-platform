@@ -77,9 +77,13 @@ supervisor kills and reaps failed/timed-out workers. A decode error cannot creat
 receipt or return rows. Other operating systems fail closed with `Unsupported` instead of decoding
 inline. This is process containment, not a per-page validator or an absolute guarantee against
 every allocation pattern within the capped worker. The CLI uses Tokio's current-thread runtime so
-short-lived workers do not reserve a per-core thread pool inside the address-space cap. A malformed
-page that encodes null levels for required fields does not yet have a dedicated file-level fault
-fixture and remains unverified.
+short-lived workers do not reserve a per-core thread pool inside the address-space cap. A file-level
+fixture writes a nullable `symbol` column with an actual null definition level, then rewrites only
+the footer and Arrow schema hint to declare that column required. The page-data prefix is asserted
+byte-identical, and the resulting file still matches the trusted logical schema and fingerprint.
+Production CLI `verify` and `query-bars` both reject it through the isolated worker; the test
+confirms that no decoded report, query export, manifest, or receipt is published. This covers null
+definition levels for a required field, not every malformed Parquet encoding.
 
 The low-level `parquet_store` in-process reader functions are limited to MDP-owned output and
 trusted local fixtures. The `parquet_worker` launcher resolves `current_exe` and is CLI-owned, not a
