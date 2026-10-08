@@ -13,6 +13,54 @@ struct CountingTransport {
     lookups: Arc<AtomicUsize>,
 }
 
+#[derive(Clone)]
+struct CancelAfterManifestTransport {
+    inner: LocalTestTransport,
+}
+
+impl ObjectTransport for CancelAfterManifestTransport {
+    fn lookup(&self, dataset_id: &str, object_name: &str) -> Result<Option<RemoteObject>> {
+        self.inner.lookup(dataset_id, object_name)
+    }
+
+    fn upload_immutable(
+        &self,
+        local_file: &Path,
+        dataset_id: &str,
+        object_name: &str,
+    ) -> Result<()> {
+        self.inner
+            .upload_immutable(local_file, dataset_id, object_name)
+    }
+
+    fn download_with_limit(
+        &self,
+        dataset_id: &str,
+        object_name: &str,
+        destination: &Path,
+        max_bytes: u64,
+    ) -> Result<()> {
+        self.inner
+            .download_with_limit(dataset_id, object_name, destination, max_bytes)
+    }
+
+    fn download_with_limit_cancellable(
+        &self,
+        dataset_id: &str,
+        object_name: &str,
+        destination: &Path,
+        max_bytes: u64,
+        cancellation: &crate::cancellation::CancellationToken,
+    ) -> Result<()> {
+        self.inner
+            .download_with_limit(dataset_id, object_name, destination, max_bytes)?;
+        if object_name.ends_with(".manifest.json") {
+            cancellation.cancel();
+        }
+        Ok(())
+    }
+}
+
 impl ObjectTransport for CountingTransport {
     fn lookup(&self, dataset_id: &str, object_name: &str) -> Result<Option<RemoteObject>> {
         self.lookups.fetch_add(1, Ordering::Relaxed);
@@ -105,6 +153,44 @@ async fn remote_query_hash_verifies_then_reuses_only_fresh_cache() {
         .unwrap();
     assert!(!refreshed.cache_hit);
     assert_eq!(downloads.load(Ordering::Relaxed), 4);
+}
+
+#[tokio::test]
+async fn cancelled_manifest_download_leaves_no_partial_cache_or_success_receipt() {
+    let temp = tempfile::tempdir().unwrap();
+    let remote_root = seed_synthetic_archive(&temp.path().join("remote")).await;
+    let reader = RemoteArchiveReader::with_clock(
+        Arc::new(CancelAfterManifestTransport {
+            inner: LocalTestTransport::new(remote_root).unwrap(),
+        }),
+        TransportKind::LocalTest,
+        temp.path().join("cache"),
+        RemoteCacheLimits::default(),
+        Arc::new(|| 1_000),
+    )
+    .unwrap();
+    let cancellation = crate::cancellation::CancellationToken::new();
+    let dataset_id = "synthetic-2026-10-08-four-bars-parquet-v3-bars-1m-v1";
+
+    assert!(matches!(
+        reader.query_bars_cancellable(
+            DatasetNamespace::Diagnostic,
+            dataset_id,
+            None,
+            &cancellation
+        ),
+        Err(MarketDataError::Storage(
+            crate::error::StorageFailure::Cancelled
+        ))
+    ));
+
+    let cache_root = temp.path().join("cache");
+    assert!(!cache_root.join("diagnostic").join(dataset_id).exists());
+    assert_eq!(
+        fs::read_dir(cache_root.join(".partial")).unwrap().count(),
+        0
+    );
+    assert!(!cache_root.join(CACHE_RECEIPT_NAME).exists());
 }
 
 #[test]

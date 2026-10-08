@@ -9,8 +9,9 @@ use std::{path::Path, process::Command, time::Duration};
 use crate::{
     MarketDataError, Result,
     aggregate::TradeMinuteBarV1,
+    cancellation::CancellationToken,
     parquet_store::ParquetVerification,
-    storage::{MAX_DECODE_WORKER_OUTPUT_BYTES, run_decode_worker},
+    storage::{MAX_DECODE_WORKER_OUTPUT_BYTES, run_decode_worker, run_decode_worker_cancellable},
 };
 
 const WORKER_WALL_TIMEOUT: Duration = Duration::from_secs(120);
@@ -20,6 +21,24 @@ pub fn verify(
     parquet: &Path,
     schema_id: &str,
     max_object_bytes: u64,
+) -> Result<ParquetVerification> {
+    verify_with_cancellation(parquet, schema_id, max_object_bytes, None)
+}
+
+pub fn verify_cancellable(
+    parquet: &Path,
+    schema_id: &str,
+    max_object_bytes: u64,
+    cancellation: CancellationToken,
+) -> Result<ParquetVerification> {
+    verify_with_cancellation(parquet, schema_id, max_object_bytes, Some(cancellation))
+}
+
+fn verify_with_cancellation(
+    parquet: &Path,
+    schema_id: &str,
+    max_object_bytes: u64,
+    cancellation: Option<CancellationToken>,
 ) -> Result<ParquetVerification> {
     if schema_id != crate::schema::EVENT_SCHEMA_ID
         && schema_id != crate::schema::EVENT_SCHEMA_V2_ID
@@ -44,8 +63,20 @@ pub fn verify(
         .arg(schema_id)
         .arg("--max-object-bytes")
         .arg(max_object_bytes.to_string());
-    let output = run_decode_worker(command, 64 * 1024, WORKER_WALL_TIMEOUT)?;
-    serde_json::from_slice(&output).map_err(MarketDataError::from)
+    let output = match cancellation {
+        Some(token) => {
+            run_decode_worker_cancellable(command, 64 * 1024, WORKER_WALL_TIMEOUT, token)?
+        }
+        None => run_decode_worker(command, 64 * 1024, WORKER_WALL_TIMEOUT)?,
+    };
+    #[cfg(test)]
+    let output = output
+        .split(|byte| *byte == b'\n')
+        .find(|line| line.first() == Some(&b'{'))
+        .ok_or(MarketDataError::Parquet)?;
+    #[cfg(not(test))]
+    let output = &output;
+    serde_json::from_slice(output).map_err(MarketDataError::from)
 }
 
 /// Query bars from the MDP CLI in a worker; IPC bytes and row results remain bounded.
@@ -54,6 +85,32 @@ pub fn query_bars(
     symbol: Option<&str>,
     max_rows: usize,
     max_result_bytes: u64,
+) -> Result<Vec<TradeMinuteBarV1>> {
+    query_bars_with_cancellation(parquet, symbol, max_rows, max_result_bytes, None)
+}
+
+pub fn query_bars_cancellable(
+    parquet: &Path,
+    symbol: Option<&str>,
+    max_rows: usize,
+    max_result_bytes: u64,
+    cancellation: CancellationToken,
+) -> Result<Vec<TradeMinuteBarV1>> {
+    query_bars_with_cancellation(
+        parquet,
+        symbol,
+        max_rows,
+        max_result_bytes,
+        Some(cancellation),
+    )
+}
+
+fn query_bars_with_cancellation(
+    parquet: &Path,
+    symbol: Option<&str>,
+    max_rows: usize,
+    max_result_bytes: u64,
+    cancellation: Option<CancellationToken>,
 ) -> Result<Vec<TradeMinuteBarV1>> {
     let output_limit =
         usize::try_from(max_result_bytes).map_err(|_| MarketDataError::InputLimit)?;
@@ -81,10 +138,18 @@ pub fn query_bars(
     if let Some(symbol) = symbol {
         command.arg("--symbol").arg(symbol);
     }
-    let output = run_decode_worker(command, output_limit, WORKER_WALL_TIMEOUT)?;
-    output
+    let output = match cancellation {
+        Some(token) => {
+            run_decode_worker_cancellable(command, output_limit, WORKER_WALL_TIMEOUT, token)?
+        }
+        None => run_decode_worker(command, output_limit, WORKER_WALL_TIMEOUT)?,
+    };
+    let lines = output
         .split(|byte| *byte == b'\n')
-        .filter(|line| !line.is_empty())
+        .filter(|line| !line.is_empty());
+    #[cfg(test)]
+    let lines = lines.filter(|line| line.first() == Some(&b'{'));
+    lines
         .map(|line| serde_json::from_slice(line).map_err(MarketDataError::from))
         .collect()
 }
@@ -93,6 +158,7 @@ fn worker_command() -> Result<Command> {
     let mut command = Command::new(std::env::current_exe()?);
     #[cfg(test)]
     command
+        .arg("--quiet")
         .arg("--exact")
         .arg("parquet_worker::tests::worker_entrypoint")
         .arg("--nocapture");
@@ -195,6 +261,9 @@ mod tests {
             }
             _ => panic!("unknown test worker action"),
         }
+        // The harness writes a trailing `test ... ok` line to stdout after this function returns,
+        // which would corrupt the worker's bounded JSON/JSONL IPC payload.
+        std::process::exit(0);
     }
 }
 

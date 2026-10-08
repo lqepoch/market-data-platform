@@ -10,12 +10,16 @@ use std::{
 
 use serde::Deserialize;
 
-use crate::{MarketDataError, Result, config::DriveConfig, error::StorageFailure};
+use crate::{
+    MarketDataError, Result, cancellation::CancellationToken, config::DriveConfig,
+    error::StorageFailure,
+};
 
 mod process;
 pub(crate) use process::MAX_DECODE_WORKER_OUTPUT_BYTES;
 use process::{
-    CommandOutput, run_bounded_command, run_bounded_decode_worker, run_bounded_download,
+    CommandOutput, run_bounded_command, run_bounded_command_cancellable, run_bounded_decode_worker,
+    run_bounded_decode_worker_cancellable, run_bounded_download, run_bounded_download_cancellable,
 };
 
 pub(crate) fn run_decode_worker(
@@ -24,6 +28,15 @@ pub(crate) fn run_decode_worker(
     operation_timeout: std::time::Duration,
 ) -> Result<Vec<u8>> {
     run_bounded_decode_worker(command, output_cap, operation_timeout)
+}
+
+pub(crate) fn run_decode_worker_cancellable(
+    command: Command,
+    output_cap: usize,
+    operation_timeout: std::time::Duration,
+    cancellation: CancellationToken,
+) -> Result<Vec<u8>> {
+    run_bounded_decode_worker_cancellable(command, output_cap, operation_timeout, cancellation)
 }
 
 pub const MAX_RCLONE_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
@@ -51,6 +64,15 @@ impl fmt::Debug for RemoteObject {
 
 pub trait ObjectTransport: Send + Sync {
     fn lookup(&self, dataset_id: &str, object_name: &str) -> Result<Option<RemoteObject>>;
+    fn lookup_cancellable(
+        &self,
+        dataset_id: &str,
+        object_name: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Option<RemoteObject>> {
+        ensure_not_cancelled(cancellation)?;
+        self.lookup(dataset_id, object_name)
+    }
     fn upload_immutable(
         &self,
         local_file: &Path,
@@ -64,6 +86,17 @@ pub trait ObjectTransport: Send + Sync {
         destination: &Path,
         max_bytes: u64,
     ) -> Result<()>;
+    fn download_with_limit_cancellable(
+        &self,
+        dataset_id: &str,
+        object_name: &str,
+        destination: &Path,
+        max_bytes: u64,
+        cancellation: &CancellationToken,
+    ) -> Result<()> {
+        ensure_not_cancelled(cancellation)?;
+        self.download_with_limit(dataset_id, object_name, destination, max_bytes)
+    }
 }
 
 #[derive(Clone)]
@@ -141,6 +174,18 @@ impl ObjectTransport for LocalTestTransport {
         let source = self.object_path(dataset_id, object_name)?;
         copy_new_file_limited(&source, destination, max_bytes)
     }
+
+    fn download_with_limit_cancellable(
+        &self,
+        dataset_id: &str,
+        object_name: &str,
+        destination: &Path,
+        max_bytes: u64,
+        cancellation: &CancellationToken,
+    ) -> Result<()> {
+        let source = self.object_path(dataset_id, object_name)?;
+        copy_new_file_limited_cancellable(&source, destination, max_bytes, Some(cancellation))
+    }
 }
 
 #[derive(Clone)]
@@ -171,21 +216,40 @@ impl RcloneDriveTransport {
     }
 
     fn run(&self, operation: &str, args: &[String], output_cap: usize) -> Result<Vec<u8>> {
-        let output = self.run_raw(operation, args, output_cap)?;
+        self.run_with_cancel(operation, args, output_cap, None)
+    }
+
+    fn run_with_cancel(
+        &self,
+        operation: &str,
+        args: &[String],
+        output_cap: usize,
+        cancellation: Option<&CancellationToken>,
+    ) -> Result<Vec<u8>> {
+        let output = self.run_raw_with_cancel(operation, args, output_cap, cancellation)?;
         if output.status_code != 0 {
             return Err(MarketDataError::Storage(StorageFailure::CommandFailed));
         }
         Ok(output.stdout)
     }
 
-    fn run_raw(
+    fn run_raw_with_cancel(
         &self,
         operation: &str,
         args: &[String],
         output_cap: usize,
+        cancellation: Option<&CancellationToken>,
     ) -> Result<CommandOutput> {
         let command = self.command(operation, args);
-        run_bounded_command(command, output_cap, self.config.operation_timeout)
+        match cancellation {
+            Some(token) => run_bounded_command_cancellable(
+                command,
+                output_cap,
+                self.config.operation_timeout,
+                token.clone(),
+            ),
+            None => run_bounded_command(command, output_cap, self.config.operation_timeout),
+        }
     }
 
     fn object_arg(&self, dataset_id: &str, object_name: &str) -> Result<String> {
@@ -216,8 +280,74 @@ struct RcloneItem {
 
 impl ObjectTransport for RcloneDriveTransport {
     fn lookup(&self, dataset_id: &str, object_name: &str) -> Result<Option<RemoteObject>> {
+        self.lookup_with_cancel(dataset_id, object_name, None)
+    }
+
+    fn lookup_cancellable(
+        &self,
+        dataset_id: &str,
+        object_name: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<Option<RemoteObject>> {
+        self.lookup_with_cancel(dataset_id, object_name, Some(cancellation))
+    }
+
+    fn upload_immutable(
+        &self,
+        local_file: &Path,
+        dataset_id: &str,
+        object_name: &str,
+    ) -> Result<()> {
+        let destination = self.object_arg(dataset_id, object_name)?;
+        let args = vec![
+            "--immutable".to_owned(),
+            local_file.to_string_lossy().into_owned(),
+            destination,
+        ];
+        self.run("copyto", &args, 64 * 1024)?;
+        Ok(())
+    }
+
+    fn download_with_limit(
+        &self,
+        dataset_id: &str,
+        object_name: &str,
+        destination: &Path,
+        max_bytes: u64,
+    ) -> Result<()> {
+        self.download_with_cancel(dataset_id, object_name, destination, max_bytes, None)
+    }
+
+    fn download_with_limit_cancellable(
+        &self,
+        dataset_id: &str,
+        object_name: &str,
+        destination: &Path,
+        max_bytes: u64,
+        cancellation: &CancellationToken,
+    ) -> Result<()> {
+        self.download_with_cancel(
+            dataset_id,
+            object_name,
+            destination,
+            max_bytes,
+            Some(cancellation),
+        )
+    }
+}
+
+impl RcloneDriveTransport {
+    fn lookup_with_cancel(
+        &self,
+        dataset_id: &str,
+        object_name: &str,
+        cancellation: Option<&CancellationToken>,
+    ) -> Result<Option<RemoteObject>> {
         if !safe_object_name(object_name) {
             return Err(MarketDataError::InvalidInput);
+        }
+        if let Some(token) = cancellation {
+            ensure_not_cancelled(token)?;
         }
         let folder = self.remote_dataset_path(dataset_id)?;
         let args = vec![
@@ -226,7 +356,8 @@ impl ObjectTransport for RcloneDriveTransport {
             "--no-mimetype".to_owned(),
             folder,
         ];
-        let output = self.run_raw("lsjson", &args, MAX_RCLONE_OUTPUT_BYTES)?;
+        let output =
+            self.run_raw_with_cancel("lsjson", &args, MAX_RCLONE_OUTPUT_BYTES, cancellation)?;
         if output.status_code == 3 {
             // Official rclone exit code 3 is directory-not-found. All other failures remain
             // ambiguous and cannot be treated as absence (especially auth/quota failures).
@@ -264,28 +395,13 @@ impl ObjectTransport for RcloneDriveTransport {
         }))
     }
 
-    fn upload_immutable(
-        &self,
-        local_file: &Path,
-        dataset_id: &str,
-        object_name: &str,
-    ) -> Result<()> {
-        let destination = self.object_arg(dataset_id, object_name)?;
-        let args = vec![
-            "--immutable".to_owned(),
-            local_file.to_string_lossy().into_owned(),
-            destination,
-        ];
-        self.run("copyto", &args, 64 * 1024)?;
-        Ok(())
-    }
-
-    fn download_with_limit(
+    fn download_with_cancel(
         &self,
         dataset_id: &str,
         object_name: &str,
         destination: &Path,
         max_bytes: u64,
+        cancellation: Option<&CancellationToken>,
     ) -> Result<()> {
         if max_bytes == 0 {
             return Err(MarketDataError::InvalidInput);
@@ -293,12 +409,21 @@ impl ObjectTransport for RcloneDriveTransport {
         let source = self.object_arg(dataset_id, object_name)?;
         let args = vec![source];
         let command = self.command("cat", &args);
-        run_bounded_download(
-            command,
-            destination,
-            max_bytes,
-            self.config.operation_timeout,
-        )
+        match cancellation {
+            Some(token) => run_bounded_download_cancellable(
+                command,
+                destination,
+                max_bytes,
+                self.config.operation_timeout,
+                token.clone(),
+            ),
+            None => run_bounded_download(
+                command,
+                destination,
+                max_bytes,
+                self.config.operation_timeout,
+            ),
+        }
     }
 }
 
@@ -327,6 +452,18 @@ impl RcloneDriveTransport {
 }
 
 fn copy_new_file_limited(source: &Path, destination: &Path, max_bytes: u64) -> Result<()> {
+    copy_new_file_limited_cancellable(source, destination, max_bytes, None)
+}
+
+fn copy_new_file_limited_cancellable(
+    source: &Path,
+    destination: &Path,
+    max_bytes: u64,
+    cancellation: Option<&CancellationToken>,
+) -> Result<()> {
+    if let Some(token) = cancellation {
+        ensure_not_cancelled(token)?;
+    }
     if max_bytes == 0 {
         return Err(MarketDataError::InvalidInput);
     }
@@ -351,6 +488,9 @@ fn copy_new_file_limited(source: &Path, destination: &Path, max_bytes: u64) -> R
     let mut copied = 0_u64;
     let mut buffer = [0_u8; 64 * 1024];
     loop {
+        if let Some(token) = cancellation {
+            ensure_not_cancelled(token)?;
+        }
         let count = source.read(&mut buffer)?;
         if count == 0 {
             break;
@@ -366,6 +506,14 @@ fn copy_new_file_limited(source: &Path, destination: &Path, max_bytes: u64) -> R
     target.sync_all()?;
     cleanup.0 = None;
     Ok(())
+}
+
+fn ensure_not_cancelled(cancellation: &CancellationToken) -> Result<()> {
+    if cancellation.is_cancelled() {
+        Err(MarketDataError::Storage(StorageFailure::Cancelled))
+    } else {
+        Ok(())
+    }
 }
 
 struct RemoveFileOnDrop(Option<PathBuf>);

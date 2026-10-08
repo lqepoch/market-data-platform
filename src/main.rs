@@ -1,6 +1,8 @@
 use std::{
     io::Read,
+    net::SocketAddr,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use chrono::NaiveDate;
@@ -11,6 +13,7 @@ use market_data_platform::{
         ArchiveLimits, ArchivePublisher, DEFAULT_MAX_MANIFEST_BYTES, DEFAULT_MAX_OBJECT_BYTES,
         DEFAULT_MAX_STAGING_BYTES, DEFAULT_UPLOAD_QUEUE_CAPACITY,
     },
+    http_api::{self, AuthConfig},
     parquet_store, parquet_worker,
     pipeline::{self, OutputTransport, ReplayOptions, ReplaySessionConfig},
     remote_query::{
@@ -157,6 +160,25 @@ enum Command {
         #[arg(long)]
         apply: bool,
     },
+    /// Start the authenticated read-only V1 HTTP API.
+    Serve {
+        #[arg(long, default_value = http_api::DEFAULT_BIND)]
+        bind: SocketAddr,
+        #[arg(
+            long,
+            conflicts_with = "rclone_config",
+            required_unless_present = "rclone_config"
+        )]
+        local_test_root: Option<PathBuf>,
+        #[arg(
+            long,
+            conflicts_with = "local_test_root",
+            required_unless_present = "local_test_root"
+        )]
+        rclone_config: Option<PathBuf>,
+        #[arg(long)]
+        cache_dir: PathBuf,
+    },
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -208,16 +230,30 @@ fn parse_synthetic_date(value: &str) -> std::result::Result<NaiveDate, String> {
     Ok(date)
 }
 
-// Parquet decode workers run under a 1 GiB address-space limit; a per-core Tokio thread pool
-// consumes unnecessary virtual address space in these short-lived CLI processes.
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
+// Parquet worker entrypoints retain a current-thread runtime to stay below their 1 GiB address
+// space cap. The HTTP service has a separate, explicitly bounded two-thread runtime.
+fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_target(false)
         .init();
 
-    match Args::parse().command {
+    let command = Args::parse().command;
+    let runtime = if matches!(&command, Command::Serve { .. }) {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()?
+    } else {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+    };
+    runtime.block_on(run(command))
+}
+
+async fn run(command: Command) -> Result<()> {
+    match command {
         Command::Synthetic {
             output,
             full_session,
@@ -418,6 +454,39 @@ async fn main() -> Result<()> {
         } => {
             let report = ArchivePublisher::cleanup_staging(&state_dir, &staging_dir, apply)?;
             print_json(&report)
+        }
+        Command::Serve {
+            bind,
+            local_test_root,
+            rclone_config,
+            cache_dir,
+        } => {
+            let auth = AuthConfig::from_environment()?;
+            if !bind.ip().is_loopback() && auth.is_none() {
+                return Err(MarketDataError::InvalidInput);
+            }
+            let limits = RemoteCacheLimits {
+                max_query_rows: http_api::HTTP_MAX_QUERY_ROWS,
+                max_query_result_bytes: http_api::HTTP_MAX_QUERY_RESULT_BYTES,
+                ..RemoteCacheLimits::default()
+            };
+            let reader = match (local_test_root, rclone_config) {
+                (Some(root), None) => RemoteArchiveReader::local_test_isolated(
+                    market_data_platform::storage::LocalTestTransport::new(root)?,
+                    cache_dir,
+                    limits,
+                )?,
+                (None, Some(config_path)) => RemoteArchiveReader::rclone_drive(
+                    pipeline::drive_config_from_env(config_path)?,
+                    cache_dir,
+                    limits,
+                )?,
+                _ => return Err(MarketDataError::InvalidInput),
+            };
+            http_api::serve(bind, Arc::new(reader), auth, async {
+                let _ = tokio::signal::ctrl_c().await;
+            })
+            .await
         }
     }
 }
