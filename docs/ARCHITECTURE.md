@@ -77,14 +77,26 @@ output, one rclone retry, and `--immutable`. A separate total wall-clock deadlin
 child; rclone's `--timeout` remains an idle timeout. The supervisor uses the same process-wide
 worker permit. It does not use the Google Drive SDK or implement OAuth.
 Subprocess stderr and private config identifiers are never logged. Current public CLI paths only
-select local-test storage; the rclone adapter has not been run against a real account.
+select local-test storage for writes; the rclone adapter has not been run against a real account.
+The explicit operator-only `remote-query-bars` command uses the same argv-only rclone adapter for
+read-only access. It reads the existing shared manifest bytes without adding self-hash fields,
+observes the current manifest/object IDs, then verifies downloaded object SHA-256, size, registered
+schema, footer, and decoded facts before query/export. Its private mode-0700 cache receipt stores
+observed IDs/hashes/times; a cache hit requires an unexpired TTL and unchanged remote identity
+metadata, and rechecks local hashes and row semantics. Curated and diagnostic datasets use
+separate remote folders. Misses hold a cross-process cache-budget lock through bounded streaming
+downloads and verification; each download is capped at the observed remote size and inherits the
+rclone total operation deadline. Expired entries are not automatically evicted yet, so cache
+capacity exhaustion fails closed and requires operator-managed cache clearing. Browser access
+remains behind an authenticated BFF.
 
 `cleanup-staging` defaults to report-only. Applying it considers only recognized MDP temp filename
 patterns whose owner PID is no longer live, whose per-dataset publication lock can be acquired, and
-whose receipt is absent or committed. Unknown or unresolved receipts are preserved. Published
-Parquet, manifests, receipts, lock files, and unrecognized files are not cleanup targets. The staging
-and state directories must be trusted operator-owned paths; metadata-check/open races are outside
-the threat model. Non-Linux systems without equivalent process evidence preserve all PID-owned temps.
+whose receipt is absent or whose committed receipt matches a validated local manifest. Mismatched,
+malformed, or unresolved receipts are preserved. Published Parquet, manifests, receipts, lock files,
+and unrecognized files are not yet cleanup targets. The staging and state directories must be trusted
+operator-owned paths; metadata-check/open races are outside the threat model. Non-Linux systems
+without equivalent process evidence preserve all PID-owned temps.
 
 ## Source admission and publication
 
@@ -94,7 +106,10 @@ numeric-encoding gate. These data fields are assertions consumed by the archive 
 cryptographic proof that an operator/provider actually granted entitlement. Production use remains
 blocked until the trusted source-admission path supplies separately verified entitlement, feed,
 capture-completeness, and licensing evidence. Readback never upgrades an UNKNOWN or unauthorized
-source.
+source. OPRA binary-float projections are eligible only for the Drive `diagnostic` namespace and
+only after explicit authorized-entitlement evidence; they are not source-exact and cannot be read as
+curated research data. Byte-exact raw OPRA frames require the separate bounded sidecar contract and
+remain unavailable until that broker adapter lands.
 
 The repository contains no Alpaca secret and no live feed/upload test. Drive project/root identity and
 available quota remain UNKNOWN; use an operator-provided authorized root and quota snapshot before

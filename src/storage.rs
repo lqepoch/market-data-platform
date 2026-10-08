@@ -3,7 +3,7 @@
 use std::{
     fmt,
     fs::{self, File, OpenOptions},
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     sync::mpsc::{self, RecvTimeoutError},
@@ -49,7 +49,13 @@ pub trait ObjectTransport: Send + Sync {
         dataset_id: &str,
         object_name: &str,
     ) -> Result<()>;
-    fn download(&self, dataset_id: &str, object_name: &str, destination: &Path) -> Result<()>;
+    fn download_with_limit(
+        &self,
+        dataset_id: &str,
+        object_name: &str,
+        destination: &Path,
+        max_bytes: u64,
+    ) -> Result<()>;
 }
 
 #[derive(Clone)]
@@ -117,9 +123,15 @@ impl ObjectTransport for LocalTestTransport {
         Ok(())
     }
 
-    fn download(&self, dataset_id: &str, object_name: &str, destination: &Path) -> Result<()> {
+    fn download_with_limit(
+        &self,
+        dataset_id: &str,
+        object_name: &str,
+        destination: &Path,
+        max_bytes: u64,
+    ) -> Result<()> {
         let source = self.object_path(dataset_id, object_name)?;
-        copy_new_file(&source, destination)
+        copy_new_file_limited(&source, destination, max_bytes)
     }
 }
 
@@ -164,27 +176,7 @@ impl RcloneDriveTransport {
         args: &[String],
         output_cap: usize,
     ) -> Result<CommandOutput> {
-        let mut command = Command::new("rclone");
-        command
-            .arg("--config")
-            .arg(&self.config.rclone_config)
-            .arg("--drive-root-folder-id")
-            .arg(&self.config.root_folder_id)
-            .arg("--retries")
-            .arg("1")
-            .arg("--low-level-retries")
-            .arg("1")
-            .arg("--contimeout")
-            .arg(RCLONE_CONNECT_TIMEOUT)
-            .arg("--timeout")
-            .arg(RCLONE_TIMEOUT)
-            .arg("--log-level")
-            .arg("ERROR")
-            .arg(operation)
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+        let command = self.command(operation, args);
         run_bounded_command(command, output_cap, self.config.operation_timeout)
     }
 
@@ -424,35 +416,279 @@ impl ObjectTransport for RcloneDriveTransport {
         Ok(())
     }
 
-    fn download(&self, dataset_id: &str, object_name: &str, destination: &Path) -> Result<()> {
-        let source = self.object_arg(dataset_id, object_name)?;
-        if destination.exists() {
-            return Err(MarketDataError::Conflict);
+    fn download_with_limit(
+        &self,
+        dataset_id: &str,
+        object_name: &str,
+        destination: &Path,
+        max_bytes: u64,
+    ) -> Result<()> {
+        if max_bytes == 0 {
+            return Err(MarketDataError::InvalidInput);
         }
-        let args = vec![source, destination.to_string_lossy().into_owned()];
-        self.run("copyto", &args, 64 * 1024)?;
-        Ok(())
+        let source = self.object_arg(dataset_id, object_name)?;
+        let args = vec![source];
+        let command = self.command("cat", &args);
+        run_bounded_download(
+            command,
+            destination,
+            max_bytes,
+            self.config.operation_timeout,
+        )
     }
 }
 
-fn copy_new_file(source: &Path, destination: &Path) -> Result<()> {
-    if destination.exists() {
-        return Err(MarketDataError::Conflict);
+impl RcloneDriveTransport {
+    fn command(&self, operation: &str, args: &[String]) -> Command {
+        let mut command = Command::new("rclone");
+        command
+            .arg("--config")
+            .arg(&self.config.rclone_config)
+            .arg("--drive-root-folder-id")
+            .arg(&self.config.root_folder_id)
+            .arg("--retries")
+            .arg("1")
+            .arg("--low-level-retries")
+            .arg("1")
+            .arg("--contimeout")
+            .arg(RCLONE_CONNECT_TIMEOUT)
+            .arg("--timeout")
+            .arg(RCLONE_TIMEOUT)
+            .arg("--log-level")
+            .arg("ERROR")
+            .arg(operation)
+            .args(args);
+        command
+    }
+}
+
+fn copy_new_file_limited(source: &Path, destination: &Path, max_bytes: u64) -> Result<()> {
+    if max_bytes == 0 {
+        return Err(MarketDataError::InvalidInput);
+    }
+    match fs::symlink_metadata(destination) {
+        Ok(_) => return Err(MarketDataError::Conflict),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(MarketDataError::Io(error)),
+    }
+    let metadata = fs::symlink_metadata(source)?;
+    if !metadata.file_type().is_file() || metadata.len() > max_bytes {
+        return Err(MarketDataError::InputLimit);
     }
     let mut source = File::open(source)?;
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent)?;
     }
-    let mut destination_file = OpenOptions::new()
+    let mut target = OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(destination)?;
-    std::io::copy(&mut source, &mut destination_file)?;
-    destination_file.sync_all()?;
+    let mut cleanup = RemoveFileOnDrop(Some(destination.to_path_buf()));
+    let mut copied = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = source.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        copied = copied
+            .checked_add(u64::try_from(count).unwrap_or(u64::MAX))
+            .ok_or(MarketDataError::InputLimit)?;
+        if copied > max_bytes {
+            return Err(MarketDataError::InputLimit);
+        }
+        target.write_all(&buffer[..count])?;
+    }
+    target.sync_all()?;
+    cleanup.0 = None;
     Ok(())
 }
 
-fn safe_component(value: &str) -> bool {
+struct RemoveFileOnDrop(Option<PathBuf>);
+
+impl Drop for RemoveFileOnDrop {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take() {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+fn run_bounded_download(
+    mut command: Command,
+    destination: &Path,
+    output_cap: u64,
+    operation_timeout: Duration,
+) -> Result<()> {
+    if output_cap == 0 {
+        return Err(MarketDataError::InvalidInput);
+    }
+    match fs::symlink_metadata(destination) {
+        Ok(_) => return Err(MarketDataError::Conflict),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(MarketDataError::Io(error)),
+    }
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut target = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(destination)?;
+    let mut cleanup = RemoveFileOnDrop(Some(destination.to_path_buf()));
+    let supervisor_permit = BackgroundWorkerPermit::acquire()?;
+    let started_at = Instant::now();
+    let deadline = started_at
+        .checked_add(operation_timeout)
+        .ok_or(MarketDataError::InvalidInput)?;
+    let (child_sender, child_receiver) = mpsc::sync_channel::<Child>(1);
+    let (cancel_sender, cancel_receiver) = mpsc::sync_channel::<()>(1);
+    let (exit_sender, exit_receiver) = mpsc::sync_channel::<SupervisedExit>(1);
+    let supervisor = thread::Builder::new()
+        .name("mdp-rclone-download-supervisor".to_owned())
+        .spawn(move || {
+            let _supervisor_permit = supervisor_permit;
+            let Ok(mut child) = child_receiver.recv() else {
+                return;
+            };
+            loop {
+                if cancel_receiver.try_recv().is_ok() {
+                    let _ = child.kill();
+                    let status = child.wait();
+                    let outcome = if status.is_ok() {
+                        SupervisedExit::Cancelled
+                    } else {
+                        SupervisedExit::Failed
+                    };
+                    let _ = exit_sender.send(outcome);
+                    return;
+                }
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let status = child.wait();
+                    let outcome = if status.is_ok() {
+                        SupervisedExit::TimedOut
+                    } else {
+                        SupervisedExit::Failed
+                    };
+                    let _ = exit_sender.send(outcome);
+                    return;
+                }
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        let _ = exit_sender.send(SupervisedExit::Exited(status));
+                        return;
+                    }
+                    Ok(None) => thread::sleep(Duration::from_millis(5)),
+                    Err(_) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        let _ = exit_sender.send(SupervisedExit::Failed);
+                        return;
+                    }
+                }
+            }
+        })
+        .map_err(|_| MarketDataError::Storage(StorageFailure::Spawn))?;
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(_) => {
+            drop(child_sender);
+            let _ = supervisor.join();
+            return Err(MarketDataError::Storage(StorageFailure::Spawn));
+        }
+    };
+    let Some(mut stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        drop(child_sender);
+        let _ = supervisor.join();
+        return Err(MarketDataError::Storage(StorageFailure::CommandFailed));
+    };
+    if let Err(error) = child_sender.send(child) {
+        let mut child = error.0;
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = supervisor.join();
+        return Err(MarketDataError::Storage(StorageFailure::Spawn));
+    }
+
+    let mut received = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut over_limit = false;
+    let mut output_error = None;
+    loop {
+        match stdout.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(count) => {
+                let Some(next) = received.checked_add(count as u64) else {
+                    over_limit = true;
+                    let _ = cancel_sender.try_send(());
+                    break;
+                };
+                if next > output_cap {
+                    over_limit = true;
+                    let _ = cancel_sender.try_send(());
+                    break;
+                }
+                if let Err(error) = target.write_all(&buffer[..count]) {
+                    output_error = Some(error);
+                    let _ = cancel_sender.try_send(());
+                    break;
+                }
+                received = next;
+            }
+            Err(error) => {
+                output_error = Some(error);
+                let _ = cancel_sender.try_send(());
+                break;
+            }
+        }
+    }
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    let outcome = match exit_receiver.recv_timeout(remaining) {
+        Ok(outcome) => outcome,
+        Err(RecvTimeoutError::Timeout) => {
+            let _ = cancel_sender.try_send(());
+            let _ = supervisor.join();
+            return Err(MarketDataError::Storage(StorageFailure::Timeout));
+        }
+        Err(RecvTimeoutError::Disconnected) => {
+            let _ = supervisor.join();
+            return Err(MarketDataError::Storage(StorageFailure::CommandFailed));
+        }
+    };
+    supervisor
+        .join()
+        .map_err(|_| MarketDataError::Storage(StorageFailure::CommandFailed))?;
+    if matches!(outcome, SupervisedExit::TimedOut) {
+        return Err(MarketDataError::Storage(StorageFailure::Timeout));
+    }
+    if over_limit {
+        return Err(MarketDataError::InputLimit);
+    }
+    if let Some(error) = output_error {
+        return Err(MarketDataError::Io(error));
+    }
+    let SupervisedExit::Exited(status) = outcome else {
+        return Err(MarketDataError::Storage(StorageFailure::CommandFailed));
+    };
+    if !status.success() {
+        return Err(MarketDataError::Storage(StorageFailure::CommandFailed));
+    }
+    if received == 0 {
+        return Err(MarketDataError::Storage(StorageFailure::ReadbackFailed));
+    }
+    target.sync_all()?;
+    cleanup.0 = None;
+    Ok(())
+}
+
+pub(crate) fn safe_component(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
         && !value.contains("..")
@@ -461,8 +697,23 @@ fn safe_component(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
 }
 
-fn safe_object_name(value: &str) -> bool {
+pub(crate) fn safe_object_name(value: &str) -> bool {
     safe_component(value) && !value.starts_with('.') && !value.ends_with('.')
+}
+
+pub(crate) fn namespaced_dataset_id(namespace: &str, dataset_id: &str) -> Result<String> {
+    if !matches!(namespace, "curated" | "diagnostic")
+        || !safe_component(dataset_id)
+        || dataset_id.starts_with('.')
+        || dataset_id.ends_with('.')
+    {
+        return Err(MarketDataError::InvalidInput);
+    }
+    let key = format!("{namespace}-{dataset_id}");
+    if !safe_component(&key) {
+        return Err(MarketDataError::InvalidInput);
+    }
+    Ok(key)
 }
 
 #[cfg(test)]
@@ -494,5 +745,39 @@ mod tests {
             Err(MarketDataError::Storage(StorageFailure::MalformedListing))
         ));
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn download_cap_kills_child_and_removes_partial_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let destination = temp.path().join("partial.bin");
+        let started = Instant::now();
+        let result = run_bounded_download(
+            Command::new("yes"),
+            &destination,
+            128,
+            Duration::from_secs(2),
+        );
+        assert!(matches!(result, Err(MarketDataError::InputLimit)));
+        assert!(!destination.exists());
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn local_transport_rejects_oversized_download_without_partial_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let transport = LocalTestTransport::new(temp.path().join("remote")).unwrap();
+        let source = temp.path().join("source.bin");
+        fs::write(&source, b"too large").unwrap();
+        transport
+            .upload_immutable(&source, "dataset-v1", "object.bin")
+            .unwrap();
+        let destination = temp.path().join("download.bin");
+        assert!(matches!(
+            transport.download_with_limit("dataset-v1", "object.bin", &destination, 4),
+            Err(MarketDataError::InputLimit)
+        ));
+        assert!(!destination.exists());
     }
 }

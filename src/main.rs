@@ -12,6 +12,11 @@ use market_data_platform::{
     },
     parquet_store,
     pipeline::{self, OutputTransport, ReplayOptions, ReplaySessionConfig},
+    remote_query::{
+        DEFAULT_MAX_EXPORT_BYTES, DEFAULT_MAX_QUERY_RESULT_BYTES, DEFAULT_REMOTE_CACHE_BYTES,
+        DEFAULT_REMOTE_CACHE_ENTRIES, DEFAULT_REMOTE_CACHE_TTL, DatasetNamespace,
+        RemoteArchiveReader, RemoteCacheLimits,
+    },
     schema::{EVENT_SCHEMA_ID, MINUTE_BAR_SCHEMA_ID},
 };
 
@@ -68,6 +73,35 @@ enum Command {
         #[arg(long)]
         export_jsonl: Option<PathBuf>,
     },
+    /// Read a manifest and Parquet object from rclone, verify them, then query/export locally.
+    RemoteQueryBars {
+        #[arg(long)]
+        dataset_id: String,
+        #[arg(long, value_enum)]
+        namespace: NamespaceArg,
+        #[arg(long)]
+        rclone_config: PathBuf,
+        #[arg(long)]
+        cache_dir: PathBuf,
+        #[arg(long)]
+        symbol: Option<String>,
+        #[arg(long)]
+        export_jsonl: Option<PathBuf>,
+        #[arg(long, default_value_t = DEFAULT_MAX_OBJECT_BYTES)]
+        max_object_bytes: u64,
+        #[arg(long, default_value_t = DEFAULT_MAX_MANIFEST_BYTES)]
+        max_manifest_bytes: u64,
+        #[arg(long, default_value_t = DEFAULT_REMOTE_CACHE_BYTES)]
+        max_cache_bytes: u64,
+        #[arg(long, default_value_t = DEFAULT_REMOTE_CACHE_ENTRIES)]
+        max_cache_entries: usize,
+        #[arg(long, default_value_t = DEFAULT_REMOTE_CACHE_TTL.as_secs())]
+        cache_ttl_secs: u64,
+        #[arg(long, default_value_t = DEFAULT_MAX_QUERY_RESULT_BYTES)]
+        max_query_bytes: u64,
+        #[arg(long, default_value_t = DEFAULT_MAX_EXPORT_BYTES)]
+        max_export_bytes: u64,
+    },
     /// Report orphaned MDP temporary files; deletion requires the explicit --apply flag.
     CleanupStaging {
         #[arg(long)]
@@ -83,6 +117,21 @@ enum Command {
 enum SchemaArg {
     MarketEventsV1,
     UsEquityTradeBar1mV1,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum NamespaceArg {
+    Curated,
+    Diagnostic,
+}
+
+impl NamespaceArg {
+    const fn namespace(self) -> DatasetNamespace {
+        match self {
+            Self::Curated => DatasetNamespace::Curated,
+            Self::Diagnostic => DatasetNamespace::Diagnostic,
+        }
+    }
 }
 
 impl SchemaArg {
@@ -161,6 +210,54 @@ async fn main() -> Result<()> {
                 Ok(())
             }
         }
+        Command::RemoteQueryBars {
+            dataset_id,
+            namespace,
+            rclone_config,
+            cache_dir,
+            symbol,
+            export_jsonl,
+            max_object_bytes,
+            max_manifest_bytes,
+            max_cache_bytes,
+            max_cache_entries,
+            cache_ttl_secs,
+            max_query_bytes,
+            max_export_bytes,
+        } => {
+            let config = pipeline::drive_config_from_env(rclone_config)?;
+            let reader = RemoteArchiveReader::rclone_drive(
+                config,
+                cache_dir,
+                RemoteCacheLimits {
+                    max_object_bytes,
+                    max_manifest_bytes,
+                    max_total_cache_bytes: max_cache_bytes,
+                    max_entries: max_cache_entries,
+                    ttl: std::time::Duration::from_secs(cache_ttl_secs),
+                    max_query_result_bytes: max_query_bytes,
+                    max_export_bytes,
+                    ..RemoteCacheLimits::default()
+                },
+            )?;
+            let namespace = namespace.namespace();
+            if let Some(destination) = export_jsonl {
+                let summary = reader.export_bars_jsonl(
+                    namespace,
+                    &dataset_id,
+                    symbol.as_deref(),
+                    &destination,
+                )?;
+                print_json(&summary)
+            } else {
+                let (rows, summary) =
+                    reader.query_bars(namespace, &dataset_id, symbol.as_deref())?;
+                print_json(&RemoteQueryOutput {
+                    summary: &summary,
+                    rows: &rows,
+                })
+            }
+        }
         Command::CleanupStaging {
             state_dir,
             staging_dir,
@@ -170,6 +267,12 @@ async fn main() -> Result<()> {
             print_json(&report)
         }
     }
+}
+
+#[derive(serde::Serialize)]
+struct RemoteQueryOutput<'a> {
+    summary: &'a market_data_platform::remote_query::RemoteQuerySummary,
+    rows: &'a [market_data_platform::aggregate::TradeMinuteBarV1],
 }
 
 fn read_session_config(path: &Path) -> Result<ReplaySessionConfig> {

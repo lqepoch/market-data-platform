@@ -388,8 +388,28 @@ pub fn verify_with_limit(
 }
 
 pub fn query_bars(path: &Path, symbol_filter: Option<&str>) -> Result<Vec<TradeMinuteBarV1>> {
+    query_bars_with_limits(
+        path,
+        symbol_filter,
+        crate::aggregate::MAX_AGGREGATION_OUTPUT_ROWS as usize,
+        crate::remote_query::DEFAULT_MAX_QUERY_RESULT_BYTES,
+    )
+}
+
+pub fn query_bars_with_limits(
+    path: &Path,
+    symbol_filter: Option<&str>,
+    max_rows: usize,
+    max_result_bytes: u64,
+) -> Result<Vec<TradeMinuteBarV1>> {
     if fs::metadata(path)?.len() > crate::archive::DEFAULT_MAX_OBJECT_BYTES {
         return Err(MarketDataError::InputLimit);
+    }
+    if max_rows == 0
+        || max_rows > crate::aggregate::MAX_AGGREGATION_OUTPUT_ROWS as usize
+        || max_result_bytes == 0
+    {
+        return Err(MarketDataError::InvalidInput);
     }
     let file = File::open(path)?;
     let builder =
@@ -400,18 +420,25 @@ pub fn query_bars(path: &Path, symbol_filter: Option<&str>) -> Result<Vec<TradeM
     {
         return Err(MarketDataError::InputLimit);
     }
-    let mut reader = builder.build().map_err(|_| MarketDataError::Parquet)?;
+    let mut reader = builder
+        .with_batch_size(1024)
+        .build()
+        .map_err(|_| MarketDataError::Parquet)?;
     let mut rows = Vec::new();
+    let mut estimated_bytes = 0_u64;
     for batch in &mut reader {
         let batch = batch.map_err(|_| MarketDataError::Parquet)?;
         for row in decode_bar_batch(&batch)? {
             if symbol_filter.is_none_or(|filter| filter == row.symbol) {
+                estimated_bytes = estimated_bytes
+                    .checked_add(estimated_bar_row_bytes(&row)?)
+                    .ok_or(MarketDataError::InputLimit)?;
+                if estimated_bytes > max_result_bytes || rows.len() >= max_rows {
+                    return Err(MarketDataError::InputLimit);
+                }
                 rows.push(row);
             }
         }
-    }
-    if rows.len() > crate::aggregate::MAX_AGGREGATION_OUTPUT_ROWS as usize {
-        return Err(MarketDataError::InputLimit);
     }
     let mut facts = DatasetFacts::default();
     // Validate whole-dataset coverage independently of any symbol query filter.
@@ -427,6 +454,36 @@ pub fn query_bars(path: &Path, symbol_filter: Option<&str>) -> Result<Vec<TradeM
     }
     let _ = facts.finish()?;
     Ok(rows)
+}
+
+fn estimated_bar_row_bytes(row: &TradeMinuteBarV1) -> Result<u64> {
+    let string_bytes = [
+        row.source_provider.as_str(),
+        row.source_feed.as_str(),
+        row.source_entitlement.as_str(),
+        row.source_numeric_encoding.as_str(),
+        row.symbol.as_str(),
+        row.trade_date.as_str(),
+        row.session_id.as_str(),
+        row.session_timezone.as_str(),
+        row.session_policy_id.as_str(),
+        row.session_policy_sha256.as_str(),
+        row.open.as_str(),
+        row.high.as_str(),
+        row.low.as_str(),
+        row.close.as_str(),
+        row.volume.as_str(),
+        row.completion_mode.as_str(),
+        row.nbbo_input_status.as_str(),
+    ]
+    .into_iter()
+    .try_fold(0_u64, |sum, value| {
+        sum.checked_add(u64::try_from(value.len()).map_err(|_| MarketDataError::InputLimit)?)
+            .ok_or(MarketDataError::InputLimit)
+    })?;
+    string_bytes
+        .checked_add(512)
+        .ok_or(MarketDataError::InputLimit)
 }
 
 pub fn export_bars_jsonl(

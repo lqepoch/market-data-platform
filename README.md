@@ -120,6 +120,19 @@ window end and no earlier than any event receive timestamp.
   default 1800 seconds, maximum 7200). This supervisor deadline is independent of rclone's 60-second
   idle timeout; timeout kills and reaps the child. The subprocess supervisor also consumes the
   process-wide background-worker permit.
+- The operator-only `remote-query-bars` CLI is read-only. It fetches exact manifest bytes, observes
+  current remote IDs and sizes, streams downloads into private temporary cache files under the
+  observed-size cap, then verifies SHA-256, trusted schema fingerprint, footer rows, and decoded
+  dataset facts before query/export. Concurrent cache misses share a cross-process budget lock held
+  through download and verification. A private mode-0700 local cache receipt stores observed IDs,
+  hashes, and timestamps without changing the shared manifest. Defaults are 32 GiB total cache,
+  64 entries, 15-minute freshness TTL, 256 MiB decoded query result, and 1 GiB JSONL export.
+  Expired cache entries are not automatically evicted yet, so an exhausted cache fails closed until
+  the operator-managed cache is cleared. Namespace is mandatory: `curated` requires authorized Alpaca
+  SIP/OPRA with exact numeric tokens; `diagnostic` preserves its explicit unqualified purpose.
+  Drive object folders are separated as `curated-<dataset-id>` and `diagnostic-<dataset-id>`.
+  Browsers cannot read rclone configuration or access Drive directly; UI query must use an
+  authenticated BFF.
 - Each immutable manifest describes one Parquet object. SHA-256 is calculated locally and confirmed
   by downloading and hashing the complete remote object before manifest publication. Drive MD5 is
   advisory only. UNKNOWN outcomes are reconciled from a durable receipt and remote readback; a
@@ -146,6 +159,18 @@ CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline
 Tests use synthetic contracts, local files, and injected fake storage failures. They do not prove
 Alpaca entitlement, live feed behavior, rclone authentication, Google Drive connectivity, quota, or
 production publication authorization.
+
+For an explicitly operator-invoked remote query, configure `MDP_DRIVE_REMOTE`,
+`MDP_DRIVE_ROOT_FOLDER_ID`, and `MDP_DRIVE_DATASET_PREFIX`, then run:
+
+```sh
+mdp remote-query-bars --namespace diagnostic --dataset-id DATASET_ID \
+  --rclone-config /secure/operator/rclone.conf --cache-dir /secure/mdp-cache \
+  --export-jsonl ./bars.jsonl
+```
+
+The command does not print the remote name, folder ID, or config path. Do not run it in public CI or
+expose its rclone configuration to a browser process.
 
 ## License
 

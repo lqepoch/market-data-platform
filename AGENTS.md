@@ -17,6 +17,16 @@ those belong to `broker-connectors`.
 - External archive writes require separately reviewed source-admission evidence. Local-test objects
   are diagnostic only and must keep `local-test:` identities. Never run real OAuth or upload from
   tests or public CI.
+- Remote query is an operator-only, read-only CLI path. Require an explicit curated/diagnostic
+  namespace, verify remote IDs and exact manifest bytes, then verify downloaded SHA-256, size,
+  trusted schema fingerprint, footer, and row facts before serving or exporting. Store observations
+  only in the private bounded cache receipt; do not add self-hash fields to the shared core
+  manifest. A cache hit still rechecks current remote IDs/size/MD5 metadata and local SHA/schema/facts.
+  Serialize all cache misses with one cross-process budget lock, hold it through downloads and
+  verification, and enforce the observed-size cap while streaming bytes to disk. Expired entries
+  must not be treated as fresh; until safe receipt-verified eviction exists, capacity exhaustion is
+  a fail-closed operator action.
+  Never expose rclone configuration to a browser; future UI reads must use an authenticated BFF.
 - Use argument arrays for subprocesses. Do not log rclone arguments, config paths, remote names,
   root IDs, tokens, or raw provider/subprocess errors.
 - Every rclone operation must have a total wall-clock deadline separate from its idle timeout,

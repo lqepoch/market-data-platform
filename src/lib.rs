@@ -8,6 +8,7 @@ pub mod parquet_store;
 pub mod pipeline;
 pub mod protocol;
 pub mod queue;
+pub mod remote_query;
 pub mod schema;
 pub mod storage;
 

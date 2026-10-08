@@ -28,7 +28,10 @@ use crate::{
     parquet_store::{self, ParquetVerification},
     queue::BackgroundWorkerPermit,
     schema::{EVENT_SCHEMA_ID, MINUTE_BAR_SCHEMA_ID},
-    storage::{LocalTestTransport, ObjectTransport, RcloneDriveTransport, RemoteObject},
+    storage::{
+        LocalTestTransport, ObjectTransport, RcloneDriveTransport, RemoteObject,
+        namespaced_dataset_id,
+    },
 };
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -50,6 +53,15 @@ pub enum TransportKind {
 pub enum PublicationPurpose {
     Curated,
     Diagnostic,
+}
+
+impl PublicationPurpose {
+    const fn namespace(self) -> &'static str {
+        match self {
+            Self::Curated => "curated",
+            Self::Diagnostic => "diagnostic",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -215,6 +227,12 @@ impl ArchivePublisher {
 
     pub(crate) fn publish(&self, request: &ArchiveRequest) -> Result<DatasetManifestV1> {
         validate_request(request, self.transport_kind)?;
+        let remote_dataset_id = match self.transport_kind {
+            TransportKind::LocalTest => request.dataset_id.clone(),
+            TransportKind::RcloneGoogleDrive => {
+                namespaced_dataset_id(request.purpose.namespace(), &request.dataset_id)?
+            }
+        };
         let lock_path = self.state_path(&request.dataset_id, "lock")?;
         let lock_file = OpenOptions::new()
             .read(true)
@@ -292,7 +310,7 @@ impl ArchivePublisher {
 
         let remote_object = match self
             .transport
-            .lookup(&request.dataset_id, &request.object_name)
+            .lookup(&remote_dataset_id, &request.object_name)
         {
             Ok(Some(object)) => object,
             Ok(None) if fresh_receipt => {
@@ -301,7 +319,7 @@ impl ArchivePublisher {
                 self.persist_receipt(&receipt_path, &receipt)?;
                 match self.transport.upload_immutable(
                     &request.parquet_path,
-                    &request.dataset_id,
+                    &remote_dataset_id,
                     &request.object_name,
                 ) {
                     Ok(()) => {}
@@ -313,7 +331,7 @@ impl ArchivePublisher {
                 }
                 match self
                     .transport
-                    .lookup(&request.dataset_id, &request.object_name)
+                    .lookup(&remote_dataset_id, &request.object_name)
                 {
                     Ok(Some(object)) => object,
                     Ok(None) | Err(_) => {
@@ -326,7 +344,7 @@ impl ArchivePublisher {
             Ok(None) => return Err(MarketDataError::UnknownOutcome),
             Err(_) => return Err(MarketDataError::UnknownOutcome),
         };
-        self.verify_remote_object(request, &local, &remote_object)?;
+        self.verify_remote_object(request, &remote_dataset_id, &local, &remote_object)?;
         if !matches!(
             receipt.phase,
             ReceiptPhase::ManifestInFlight | ReceiptPhase::ManifestUnknown
@@ -349,7 +367,7 @@ impl ArchivePublisher {
         let manifest_sha = sha256_bytes(&manifest_bytes);
         let manifest_local_path =
             self.write_temp_bytes(&request.dataset_id, "manifest", &manifest_bytes)?;
-        let remote_manifest = match self.transport.lookup(&request.dataset_id, &manifest_name) {
+        let remote_manifest = match self.transport.lookup(&remote_dataset_id, &manifest_name) {
             Ok(Some(object)) => Some(object),
             Ok(None) if matches!(receipt.phase, ReceiptPhase::ObjectVerified) => None,
             Ok(None) => return Err(MarketDataError::UnknownOutcome),
@@ -357,7 +375,7 @@ impl ArchivePublisher {
         };
         if let Some(remote_manifest) = remote_manifest {
             self.verify_remote_bytes(
-                &request.dataset_id,
+                &remote_dataset_id,
                 &manifest_name,
                 &remote_manifest,
                 &manifest_sha,
@@ -369,7 +387,7 @@ impl ArchivePublisher {
             self.persist_receipt(&receipt_path, &receipt)?;
             match self.transport.upload_immutable(
                 &manifest_local_path,
-                &request.dataset_id,
+                &remote_dataset_id,
                 &manifest_name,
             ) {
                 Ok(()) => {}
@@ -379,7 +397,7 @@ impl ArchivePublisher {
                     return Err(MarketDataError::UnknownOutcome);
                 }
             }
-            let found = match self.transport.lookup(&request.dataset_id, &manifest_name) {
+            let found = match self.transport.lookup(&remote_dataset_id, &manifest_name) {
                 Ok(Some(object)) => object,
                 Ok(None) | Err(_) => {
                     receipt.phase = ReceiptPhase::ManifestUnknown;
@@ -388,7 +406,7 @@ impl ArchivePublisher {
                 }
             };
             self.verify_remote_bytes(
-                &request.dataset_id,
+                &remote_dataset_id,
                 &manifest_name,
                 &found,
                 &manifest_sha,
@@ -406,6 +424,7 @@ impl ArchivePublisher {
     fn verify_remote_object(
         &self,
         request: &ArchiveRequest,
+        remote_dataset_id: &str,
         local: &FileHash,
         remote: &RemoteObject,
     ) -> Result<()> {
@@ -413,10 +432,12 @@ impl ArchivePublisher {
             return Err(MarketDataError::Conflict);
         }
         let downloaded = self.temp_path(&request.dataset_id, "readback")?;
-        match self
-            .transport
-            .download(&request.dataset_id, &request.object_name, &downloaded)
-        {
+        match self.transport.download_with_limit(
+            remote_dataset_id,
+            &request.object_name,
+            &downloaded,
+            local.size_bytes,
+        ) {
             Ok(()) => {}
             Err(_) => return Err(MarketDataError::UnknownOutcome),
         }
@@ -442,10 +463,12 @@ impl ArchivePublisher {
             return Err(MarketDataError::Conflict);
         }
         let downloaded = self.temp_path(dataset_id, "manifest-readback")?;
-        match self
-            .transport
-            .download(dataset_id, object_name, &downloaded)
-        {
+        match self.transport.download_with_limit(
+            dataset_id,
+            object_name,
+            &downloaded,
+            expected_size,
+        ) {
             Ok(()) => {}
             Err(_) => return Err(MarketDataError::UnknownOutcome),
         }
@@ -996,6 +1019,21 @@ fn validate_request(request: &ArchiveRequest, transport: TransportKind) -> Resul
                 || !matches!(request.source.feed.as_str(), "sip" | "opra")
                 || request.source.entitlement != market_contracts::EntitlementState::Authorized
                 || !exact_numeric
+            {
+                return Err(MarketDataError::PublicationNotAuthorized);
+            }
+        }
+        (TransportKind::RcloneGoogleDrive, PublicationPurpose::Diagnostic) => {
+            let binary_projection = matches!(
+                request.source.numeric_encoding,
+                market_contracts::NumericEncodingV1::BinaryFloat32ShortestDecimal
+                    | market_contracts::NumericEncodingV1::BinaryFloat64ShortestDecimal
+            );
+            if request.schema_id != EVENT_SCHEMA_ID
+                || request.source.provider != "alpaca"
+                || request.source.feed != "opra"
+                || request.source.entitlement != market_contracts::EntitlementState::Authorized
+                || !binary_projection
             {
                 return Err(MarketDataError::PublicationNotAuthorized);
             }

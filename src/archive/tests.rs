@@ -82,7 +82,13 @@ impl ObjectTransport for FakeTransport {
         Ok(())
     }
 
-    fn download(&self, dataset_id: &str, object_name: &str, destination: &Path) -> Result<()> {
+    fn download_with_limit(
+        &self,
+        dataset_id: &str,
+        object_name: &str,
+        destination: &Path,
+        max_bytes: u64,
+    ) -> Result<()> {
         let mut bytes = self
             .state
             .lock()
@@ -91,6 +97,9 @@ impl ObjectTransport for FakeTransport {
             .get(&(dataset_id.to_owned(), object_name.to_owned()))
             .cloned()
             .ok_or(MarketDataError::UnknownOutcome)?;
+        if bytes.len() as u64 > max_bytes {
+            return Err(MarketDataError::InputLimit);
+        }
         if self.state.lock().unwrap().corrupt_download.as_deref() == Some(object_name)
             && let Some(last) = bytes.last_mut()
         {
@@ -306,6 +315,41 @@ fn drive_publication_requires_verified_entitled_exact_feed() {
     let temp = tempdir().unwrap();
     let (_, _, mut request) = fixture(temp.path());
     request.purpose = PublicationPurpose::Curated;
+    assert!(validate_request(&request, TransportKind::RcloneGoogleDrive).is_err());
+}
+
+#[test]
+fn drive_opra_binary_projection_is_diagnostic_only_and_paths_are_namespaced() {
+    let temp = tempdir().unwrap();
+    let (_, _, mut request) = fixture(temp.path());
+    request.purpose = PublicationPurpose::Diagnostic;
+    request.schema_id = EVENT_SCHEMA_ID.into();
+    request.source = MarketDataSourceV1::new(
+        "alpaca",
+        "opra",
+        EntitlementState::Authorized,
+        NumericEncodingV1::BinaryFloat64ShortestDecimal,
+        None,
+    )
+    .unwrap();
+    assert!(validate_request(&request, TransportKind::RcloneGoogleDrive).is_ok());
+    assert_eq!(
+        namespaced_dataset_id("curated", "qqq-week-1").unwrap(),
+        "curated-qqq-week-1"
+    );
+    assert_eq!(
+        namespaced_dataset_id("diagnostic", "qqq-week-1").unwrap(),
+        "diagnostic-qqq-week-1"
+    );
+
+    request.source = MarketDataSourceV1::new(
+        "alpaca",
+        "opra",
+        EntitlementState::Unknown,
+        NumericEncodingV1::BinaryFloat64ShortestDecimal,
+        None,
+    )
+    .unwrap();
     assert!(validate_request(&request, TransportKind::RcloneGoogleDrive).is_err());
 }
 
