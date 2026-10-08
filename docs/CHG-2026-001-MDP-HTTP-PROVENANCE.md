@@ -1,10 +1,11 @@
 # CHG-2026-001 MDP HTTP slice provenance
 
 This service slice was started from frozen predecessor commit
-`3844d2bf2868dbfc6e2363e76dbaad8cff067345`. At worktree creation, `origin/main` was the MDP
-initialization commit `f1a2a54c0596ee8a44f4a295a982188eb2a562f3`; this slice is therefore stacked on
-the predecessor work and must be integrated after the predecessor, or rebased onto its final
-reviewed head, before a PR can target `main`.
+`3844d2bf2868dbfc6e2363e76dbaad8cff067345`, when `origin/main` was the MDP initialization commit
+`f1a2a54c0596ee8a44f4a295a982188eb2a562f3`. After the predecessor PR merged, the HTTP commits were
+semantically rebased onto reviewed `origin/main` `b5c4596377a0f54d5b2fe49ccf1e250b3c496e5d`.
+The rebase preserves the predecessor's source-metadata logging fixes, public CI governance and
+null-definition validation work.
 
 The implementation pins jsonwebtoken 10.3.0 with only the AWS-LC backend and restricts token
 validation to HS256. Its service endpoint reuses the existing V1 bar rows and summary facts, with an
