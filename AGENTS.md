@@ -17,6 +17,12 @@ those belong to `broker-connectors`.
 - External archive writes require separately reviewed source-admission evidence. Local-test objects
   are diagnostic only and must keep `local-test:` identities. Never run real OAuth or upload from
   tests or public CI.
+- Public PR checks must not use stored repository, organization, provider, or rclone credentials.
+  Ordinary verification may use only the ephemeral read-only GitHub token needed to check out source;
+  CodeQL may also use its narrowly scoped token to upload SARIF. Never connect to provider feeds,
+  invoke real OAuth or rclone configuration, query or publish remote archives, or upload data/test
+  artifacts. Pin third-party Actions to full commit SHAs and grant each workflow only its required
+  token permissions. Reuse `docs/CI.md` commands instead of duplicating validation logic.
 - Remote query is an operator-only, read-only CLI path. Require an explicit curated/diagnostic
   namespace, verify remote IDs and exact manifest bytes, then verify downloaded SHA-256, size,
   trusted schema fingerprint, footer, and row facts before serving or exporting. Store observations
