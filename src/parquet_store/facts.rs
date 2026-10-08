@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{rows::source_from_bar, *};
 use market_contracts::{NumericEncodingV1, RawFrameStorageRecordV1};
@@ -12,6 +12,7 @@ pub(super) struct DatasetFacts {
     source_timestamp_missing_rows: u64,
     bar_window: Option<BarWindowIdentity>,
     bar_keys: BTreeSet<(String, i64)>,
+    bar_empty_trade_minutes: BTreeMap<String, u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -158,6 +159,16 @@ impl DatasetFacts {
             return Err(MarketDataError::Contract);
         }
         self.bar_window.get_or_insert(identity);
+        match self.bar_empty_trade_minutes.get(&row.symbol) {
+            Some(empty_minutes) if *empty_minutes != row.window_empty_trade_minutes => {
+                return Err(MarketDataError::Contract);
+            }
+            Some(_) => {}
+            None => {
+                self.bar_empty_trade_minutes
+                    .insert(row.symbol.clone(), row.window_empty_trade_minutes);
+            }
+        }
         let bar_start_ns = timestamp_to_ns(row.bar_start_utc.as_str())?;
         if !self.bar_keys.insert((row.symbol.clone(), bar_start_ns)) {
             return Err(MarketDataError::Contract);
@@ -169,24 +180,31 @@ impl DatasetFacts {
         let Some(identity) = &self.bar_window else {
             return Ok(());
         };
-        let start_ns = timestamp_to_ns(&identity.window_start)?;
         let mut expected_rows = 0_u64;
-        for symbol in &self.symbols {
-            for offset in 0..identity.expected_minutes {
-                let offset_ns = i64::try_from(offset)
-                    .map_err(|_| MarketDataError::InputLimit)?
-                    .checked_mul(60_000_000_000)
-                    .ok_or(MarketDataError::InputLimit)?;
-                let bar_start_ns = start_ns
-                    .checked_add(offset_ns)
-                    .ok_or(MarketDataError::InputLimit)?;
-                if !self.bar_keys.contains(&(symbol.clone(), bar_start_ns)) {
-                    return Err(MarketDataError::IncompleteWindow);
-                }
-                expected_rows = expected_rows
-                    .checked_add(1)
-                    .ok_or(MarketDataError::InputLimit)?;
+        let mut observed_by_symbol = BTreeMap::<&str, u64>::new();
+        for (symbol, _) in &self.bar_keys {
+            let observed = observed_by_symbol.entry(symbol.as_str()).or_default();
+            *observed = observed.checked_add(1).ok_or(MarketDataError::InputLimit)?;
+        }
+        for (symbol, empty_minutes) in &self.bar_empty_trade_minutes {
+            if *empty_minutes >= identity.expected_minutes {
+                return Err(MarketDataError::IncompleteWindow);
             }
+            let required_rows = identity
+                .expected_minutes
+                .checked_sub(*empty_minutes)
+                .ok_or(MarketDataError::IncompleteWindow)?;
+            if observed_by_symbol.get(symbol.as_str()).copied() != Some(required_rows) {
+                return Err(MarketDataError::IncompleteWindow);
+            }
+            expected_rows = expected_rows
+                .checked_add(required_rows)
+                .ok_or(MarketDataError::InputLimit)?;
+        }
+        if observed_by_symbol.len() != self.bar_empty_trade_minutes.len()
+            || self.bar_empty_trade_minutes.len() != self.symbols.len()
+        {
+            return Err(MarketDataError::IncompleteWindow);
         }
         if expected_rows != self.bar_keys.len() as u64 {
             return Err(MarketDataError::IncompleteWindow);
@@ -218,5 +236,138 @@ impl DatasetFacts {
             time_range,
             self.source_timestamp_missing_rows,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use market_contracts::UtcTimestamp;
+    use tempfile::tempdir;
+
+    use crate::{
+        MarketDataError,
+        aggregate::TradeMinuteBarV1,
+        parquet_store::{query_bars, rows::validate_bar_row, write_bars},
+    };
+
+    fn bar(symbol: &str, minute: u8, empty_trade_minutes: u64) -> TradeMinuteBarV1 {
+        let (bar_start, bar_end, source_time) = match minute {
+            0 => (
+                "2026-10-08T13:30:00Z",
+                "2026-10-08T13:31:00Z",
+                "2026-10-08T13:30:15Z",
+            ),
+            1 => (
+                "2026-10-08T13:31:00Z",
+                "2026-10-08T13:32:00Z",
+                "2026-10-08T13:31:15Z",
+            ),
+            _ => panic!("fixture minute out of range"),
+        };
+        let source_start = UtcTimestamp::parse(source_time).unwrap();
+        let source_end = UtcTimestamp::parse(match minute {
+            0 => "2026-10-08T13:30:15.000000001Z",
+            1 => "2026-10-08T13:31:15.000000001Z",
+            _ => unreachable!(),
+        })
+        .unwrap();
+        TradeMinuteBarV1 {
+            schema_version: 1,
+            source_provider: "synthetic".into(),
+            source_feed: "synthetic".into(),
+            source_entitlement: "unknown".into(),
+            source_numeric_encoding: "decimal_token".into(),
+            symbol: symbol.to_owned(),
+            bar_start_utc: UtcTimestamp::parse(bar_start).unwrap(),
+            bar_end_exclusive_utc: UtcTimestamp::parse(bar_end).unwrap(),
+            available_at_utc: UtcTimestamp::parse("2026-10-08T13:32:00Z").unwrap(),
+            trade_date: "2026-10-08".into(),
+            session_id: "synthetic-session".into(),
+            session_timezone: "America/New_York".into(),
+            session_policy_id: "synthetic-policy-v1".into(),
+            session_policy_sha256: "a".repeat(64),
+            session_start_utc: UtcTimestamp::parse("2026-10-08T13:30:00Z").unwrap(),
+            session_end_exclusive_utc: UtcTimestamp::parse("2026-10-08T20:00:00Z").unwrap(),
+            window_start_utc: UtcTimestamp::parse("2026-10-08T13:30:00Z").unwrap(),
+            window_end_exclusive_utc: UtcTimestamp::parse("2026-10-08T13:32:00Z").unwrap(),
+            open: "10".into(),
+            high: "10".into(),
+            low: "10".into(),
+            close: "10".into(),
+            volume: "1".into(),
+            trade_count: 1,
+            quote_events_excluded: 0,
+            source_timestamp_missing_rows: 0,
+            sequence_gap_count: 0,
+            late_event_count: 0,
+            window_expected_minutes: 2,
+            window_empty_trade_minutes: empty_trade_minutes,
+            source_start_utc: source_start,
+            source_end_exclusive_utc: source_end,
+            window_input_eof: true,
+            source_pages_exhausted: None,
+            completion_mode: "synthetic_eof".into(),
+            nbbo_input_status: "excluded".into(),
+        }
+    }
+
+    #[test]
+    fn sparse_verified_bar_window_roundtrips_when_empty_minutes_are_declared() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("sparse.parquet");
+        let sparse = bar("QQQ", 0, 1);
+        assert!(validate_bar_row(&sparse).is_ok());
+        let verification = write_bars(&path, std::slice::from_ref(&sparse)).unwrap();
+        assert_eq!(verification.footer_rows, 1);
+
+        let rows = query_bars(&path, None).unwrap();
+        assert_eq!(rows, [sparse]);
+        assert_eq!(rows[0].window_expected_minutes, 2);
+        assert_eq!(rows[0].window_empty_trade_minutes, 1);
+    }
+
+    #[test]
+    fn reader_rejects_undeclared_missing_bars_and_empty_counts_equal_to_window() {
+        let undeclared = bar("QQQ", 0, 0);
+        assert!(validate_bar_row(&undeclared).is_ok());
+        let mut facts = DatasetFacts::default();
+        facts.observe_bar(&undeclared).unwrap();
+        assert!(matches!(
+            facts.finish(),
+            Err(MarketDataError::IncompleteWindow)
+        ));
+
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("undeclared-gap.parquet");
+        assert!(matches!(
+            write_bars(&path, &[undeclared]),
+            Err(MarketDataError::IncompleteWindow)
+        ));
+        assert!(!path.exists());
+
+        let all_empty_but_row = bar("QQQ", 0, 2);
+        assert!(validate_bar_row(&all_empty_but_row).is_err());
+    }
+
+    #[test]
+    fn window_empty_count_is_coherent_per_symbol_but_can_differ_between_symbols() {
+        let mut facts = DatasetFacts::default();
+        let qqq_sparse = bar("QQQ", 0, 1);
+        let spy_first = bar("SPY", 0, 0);
+        let spy_second = bar("SPY", 1, 0);
+        for row in [&qqq_sparse, &spy_first, &spy_second] {
+            facts.observe_bar(row).unwrap();
+        }
+        assert!(facts.finish().is_ok());
+
+        let mut inconsistent = DatasetFacts::default();
+        let first = bar("QQQ", 0, 1);
+        let second = bar("QQQ", 1, 0);
+        inconsistent.observe_bar(&first).unwrap();
+        assert!(matches!(
+            inconsistent.observe_bar(&second),
+            Err(MarketDataError::Contract)
+        ));
     }
 }

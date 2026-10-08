@@ -50,7 +50,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "6a76626263a363735eb1485d4b584459b1b534f4f0c013d6365f704e49af8556"
+      "sha256": "7f54a399d0b7496eb8465139cfa0b2dce444872c323abd3db214c79e4373a68f"
     },
     {
       "path": "AGENTS.md",
@@ -58,11 +58,15 @@
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "sha256": "b2df0046e9adcba2cc9634b2a0789c17e9351db69d5ef19a72a895d4ac64f2fc"
+      "sha256": "6932e02789aef9474fc8639ef68b57c81b9802b87310e9d1b639a4bda245f90a"
     },
     {
       "path": "docs/CHG-2026-001-MDP-HTTP-PROVENANCE.md",
       "sha256": "7a03454553e281c395319cc896b34f665a095f49e2652788da87b655df83b550"
+    },
+    {
+      "path": "docs/CHG-2026-001-MDP-EMPTY-TRADE-MINUTES.md",
+      "sha256": "83e9c228ff317b3eb868120a566e973e8d7ec32e4fc4ba2aad603ea9783a1512"
     },
     {
       "path": "docs/SUPPLY_CHAIN.md",
@@ -70,7 +74,7 @@
     },
     {
       "path": "docs/openapi-v1.yaml",
-      "sha256": "8745d63dde7b3f255b695c4582989f0db74acd588d8174eec6280721b5eb856c"
+      "sha256": "21877ce3daafe60da97581eb30838592ed6f80886b015742497759b8e305fef9"
     },
     {
       "path": "supply-chain/git-source-pins.json",
@@ -78,7 +82,7 @@
     },
     {
       "path": "scripts/supply_chain.py",
-      "sha256": "9ba3254d8fa38c885ae1eb57b98f4a92b5dc3b7bd7fe3a6bd121aa9c9cb83fbe"
+      "sha256": "61ec4484ea37973db9e706e5f8c627d701a81e21b1458ce7963c74165975a022"
     },
     {
       "path": "scripts/container_smoke.sh",
@@ -1681,11 +1685,11 @@
     "files": [
       {
         "path": "scripts/supply_chain.py",
-        "sha256": "9ba3254d8fa38c885ae1eb57b98f4a92b5dc3b7bd7fe3a6bd121aa9c9cb83fbe"
+        "sha256": "61ec4484ea37973db9e706e5f8c627d701a81e21b1458ce7963c74165975a022"
       },
       {
         "path": "src/aggregate.rs",
-        "sha256": "e0088811b690331a17500d60a1fb07de5a7cdb01692d0d672ec5cfd1dc73561d"
+        "sha256": "22f292311d910d25014c8183479915a8aa8916fe5e96466b1bae14e895f5a912"
       },
       {
         "path": "src/archive.rs",
@@ -1737,11 +1741,11 @@
       },
       {
         "path": "src/parquet_store.rs",
-        "sha256": "6b0896c4ba0e4986e53b4d12439834f2c79dbc04ede791e33c857d232a26f6b8"
+        "sha256": "86eeb7c1784f54608dc33ed603468d57db48ad9b71f06770a3f33812b1859024"
       },
       {
         "path": "src/parquet_store/facts.rs",
-        "sha256": "1d8f69aabc20019e76bf7d44854e2c6af7736972b94300f8ef89f259b9b50f35"
+        "sha256": "e0942abefbd1f081cba28b038f631b939c83d1258d1d5744860db366027f1d85"
       },
       {
         "path": "src/parquet_store/metadata.rs",
@@ -1757,7 +1761,7 @@
       },
       {
         "path": "src/parquet_store/rows.rs",
-        "sha256": "74101d4029f373cff0d2d6cf6aa40534e14acbd02101d4426660abb0b22bda3c"
+        "sha256": "867a9ed31dcd1ce4755af6cc9a78a912ace30a3c9b34dc14b4d6d5ba8bb0936d"
       },
       {
         "path": "src/parquet_store/tests.rs",
@@ -1836,7 +1840,7 @@
         "sha256": "672f37defce7e1d67f8d684580db4e6ce9e517afd8c6bdf67f99d96c7e573eca"
       }
     ],
-    "sha256": "19619b46b8412f96a885ad88b3ce463a0826ba0158945c8b1a992133910b189b"
+    "sha256": "9e98b3c3f6de98f598005d8b8f41f2f1e5973efc84f09267b36f5e870451cb53"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",

@@ -334,6 +334,11 @@ pub fn write_bars_with_limit(
     for bar in bars {
         validate_bar_row(bar)?;
     }
+    let mut facts = DatasetFacts::default();
+    for bar in bars {
+        facts.observe_bar(bar)?;
+    }
+    facts.finish()?;
     let schema = Arc::new(arrow_schema(MINUTE_BAR_SCHEMA_ID)?);
     validate_arrow_schema(MINUTE_BAR_SCHEMA_ID, &schema)?;
     let mut columns: Vec<ArrayRef> = Vec::with_capacity(schema.fields().len());

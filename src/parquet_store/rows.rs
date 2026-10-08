@@ -289,7 +289,6 @@ pub(super) fn validate_bar_row(row: &TradeMinuteBarV1) -> Result<()> {
         || row.source_timestamp_missing_rows != 0
         || row.sequence_gap_count != 0
         || row.late_event_count != 0
-        || row.window_empty_trade_minutes != 0
         || row.trade_count == 0
         || !NaiveDate::parse_from_str(&row.trade_date, "%Y-%m-%d")
             .is_ok_and(|date| date.to_string() == row.trade_date)
@@ -329,6 +328,7 @@ pub(super) fn validate_bar_row(row: &TradeMinuteBarV1) -> Result<()> {
         || expected_minutes == 0
         || expected_minutes > 390
         || row.window_expected_minutes != expected_minutes
+        || row.window_empty_trade_minutes >= expected_minutes
         || bar_start % 60_000_000_000 != 0
         || bar_start < window_start
         || bar_end
