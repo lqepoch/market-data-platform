@@ -40,8 +40,11 @@ const CACHE_DIR_ENTRY_LIMIT: usize = 100_000;
 static CACHE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 mod cache_fs;
+mod cleanup;
 mod export;
 use cache_fs::*;
+pub use cleanup::{RemoteCacheCleaner, RemoteCacheCleanupReport};
+use cleanup::{read_cache_receipt, verify_cache_contents};
 use export::write_bars_jsonl_bounded;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -163,6 +166,7 @@ struct VerifiedCache {
     parquet: ParquetVerification,
     content_sha256: String,
     cache_hit: bool,
+    _dataset_lock: Option<File>,
 }
 
 struct TempDirectoryCleanup(Option<PathBuf>);
@@ -368,12 +372,16 @@ impl RemoteArchiveReader {
                 .checked_sub(existing.verified_at_unix_seconds)
                 .ok_or(MarketDataError::UnknownOutcome)?;
             if age < self.limits.ttl.as_secs() {
-                let verified =
-                    self.verify_cache_contents(dataset_id, &cache_dir, &existing, namespace)?;
-                return Ok(VerifiedCache {
-                    cache_hit: true,
-                    ..verified
-                });
+                let mut verified = verify_cache_contents(
+                    dataset_id,
+                    &cache_dir,
+                    &existing,
+                    namespace,
+                    &self.limits,
+                )?;
+                verified.cache_hit = true;
+                verified._dataset_lock = Some(lock_file);
+                return Ok(verified);
             }
         }
 
@@ -485,11 +493,11 @@ impl RemoteArchiveReader {
             File::open(&namespace_dir)?.sync_all()?;
             cleanup.0 = None;
         }
-        let verified = self.verify_cache_contents(dataset_id, &cache_dir, &receipt, namespace)?;
-        Ok(VerifiedCache {
-            cache_hit: false,
-            ..verified
-        })
+        let mut verified =
+            verify_cache_contents(dataset_id, &cache_dir, &receipt, namespace, &self.limits)?;
+        verified.cache_hit = false;
+        verified._dataset_lock = Some(lock_file);
+        Ok(verified)
     }
 
     fn check_cache_budget(
@@ -538,24 +546,7 @@ impl RemoteArchiveReader {
         namespace: DatasetNamespace,
         dataset_id: &str,
     ) -> Result<RemoteCacheReceiptV1> {
-        let path = cache_dir.join(CACHE_RECEIPT_NAME);
-        let bytes = read_bounded(&path, MAX_CACHE_RECEIPT_BYTES)?;
-        let receipt: RemoteCacheReceiptV1 =
-            serde_json::from_slice(&bytes).map_err(|_| MarketDataError::UnknownOutcome)?;
-        if receipt.version != 1
-            || receipt.namespace != namespace
-            || receipt.dataset_id != dataset_id
-            || !valid_external_id(&receipt.manifest_remote_id)
-            || !valid_external_id(&receipt.object_remote_id)
-            || !valid_sha256(&receipt.manifest_sha256)
-            || !valid_sha256(&receipt.object_sha256)
-            || !valid_sha256(&receipt.parquet_schema_sha256)
-            || receipt.manifest_remote_size_bytes == 0
-            || receipt.object_remote_size_bytes == 0
-        {
-            return Err(MarketDataError::UnknownOutcome);
-        }
-        Ok(receipt)
+        read_cache_receipt(cache_dir, namespace, dataset_id)
     }
 
     fn read_verified_cache(
@@ -577,59 +568,6 @@ impl RemoteArchiveReader {
             return Err(MarketDataError::Conflict);
         }
         Ok(receipt)
-    }
-
-    fn verify_cache_contents(
-        &self,
-        dataset_id: &str,
-        cache_dir: &Path,
-        receipt: &RemoteCacheReceiptV1,
-        namespace: DatasetNamespace,
-    ) -> Result<VerifiedCache> {
-        let manifest_path = cache_dir.join(CACHE_MANIFEST_NAME);
-        let manifest_bytes = read_bounded(&manifest_path, self.limits.max_manifest_bytes)?;
-        if sha256(&manifest_bytes) != receipt.manifest_sha256
-            || manifest_bytes.len() as u64 != receipt.manifest_remote_size_bytes
-        {
-            return Err(MarketDataError::Conflict);
-        }
-        let manifest: DatasetManifestV1 =
-            serde_json::from_slice(&manifest_bytes).map_err(|_| MarketDataError::Contract)?;
-        let object_name = format!("{dataset_id}.parquet");
-        if manifest.dataset_id != dataset_id
-            || manifest.object.object_name != object_name
-            || !safe_object_name(&manifest.object.object_name)
-            || manifest.object.object_id.as_deref() != Some(&receipt.object_remote_id)
-        {
-            return Err(MarketDataError::Conflict);
-        }
-        manifest.validate().map_err(|_| MarketDataError::Contract)?;
-        validate_namespace(namespace, &manifest)?;
-        let object_path = cache_dir.join(object_name);
-        let object_hash = hash_file(&object_path, self.limits.max_object_bytes)?;
-        if object_hash.size_bytes != receipt.object_remote_size_bytes
-            || object_hash.content_sha256 != receipt.object_sha256
-            || object_hash.content_sha256 != manifest.object.content_sha256
-        {
-            return Err(MarketDataError::Conflict);
-        }
-        let schema_id = schema_id_for_hash(&manifest.object.parquet_schema_sha256)?;
-        let parquet = parquet_store::verify_with_limit(
-            &object_path,
-            schema_id,
-            self.limits.max_object_bytes,
-        )?;
-        validate_manifest_facts(&manifest, &parquet)?;
-        if receipt.parquet_schema_sha256 != parquet.schema_sha256 {
-            return Err(MarketDataError::ParquetSchema);
-        }
-        Ok(VerifiedCache {
-            path: object_path,
-            manifest,
-            parquet,
-            content_sha256: object_hash.content_sha256,
-            cache_hit: false,
-        })
     }
 }
 

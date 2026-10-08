@@ -128,8 +128,11 @@ window end and no earlier than any event receive timestamp.
   through download and verification. A private mode-0700 local cache receipt stores observed IDs,
   hashes, and timestamps without changing the shared manifest. Defaults are 32 GiB total cache,
   64 entries, 15-minute freshness TTL, 256 MiB decoded query result, and 1 GiB JSONL export.
-  Expired cache entries are not automatically evicted yet, so an exhausted cache fails closed until
-  the operator-managed cache is cleared. Namespace is mandatory: `curated` requires authorized Alpaca
+  Expired cache entries are not evicted during queries. The local `cleanup-remote-cache` command
+  reports candidates by default; `--apply` removes only expired entries with the exact MDP cache
+  layout, a valid private receipt, and reverified manifest, SHA-256, Parquet schema, footer, and row
+  facts. It skips active dataset locks and preserves unknown, malformed, or incomplete directories.
+  It needs no rclone configuration and does not contact Drive. Namespace is mandatory: `curated` requires authorized Alpaca
   SIP/OPRA with exact numeric tokens; `diagnostic` preserves its explicit unqualified purpose.
   Drive object folders are separated as `curated-<dataset-id>` and `diagnostic-<dataset-id>`.
   Browsers cannot read rclone configuration or access Drive directly; UI query must use an
@@ -172,6 +175,17 @@ mdp remote-query-bars --namespace diagnostic --dataset-id DATASET_ID \
 
 The command does not print the remote name, folder ID, or config path. Do not run it in public CI or
 expose its rclone configuration to a browser process.
+
+For local cache maintenance, first inspect the report and then explicitly apply it if the listed
+entries are expected:
+
+```sh
+mdp cleanup-remote-cache --cache-dir /secure/mdp-cache
+mdp cleanup-remote-cache --cache-dir /secure/mdp-cache --apply
+```
+
+The cleaner scans at most the configured cache-entry bound, shares the per-dataset and global cache
+budget locks with readers, and leaves staging, active, unknown, and unverified files untouched.
 
 ## License
 

@@ -15,7 +15,7 @@ use market_data_platform::{
     remote_query::{
         DEFAULT_MAX_EXPORT_BYTES, DEFAULT_MAX_QUERY_RESULT_BYTES, DEFAULT_REMOTE_CACHE_BYTES,
         DEFAULT_REMOTE_CACHE_ENTRIES, DEFAULT_REMOTE_CACHE_TTL, DatasetNamespace,
-        RemoteArchiveReader, RemoteCacheLimits,
+        RemoteArchiveReader, RemoteCacheCleaner, RemoteCacheLimits,
     },
     schema::{EVENT_SCHEMA_ID, MINUTE_BAR_SCHEMA_ID},
 };
@@ -101,6 +101,21 @@ enum Command {
         max_query_bytes: u64,
         #[arg(long, default_value_t = DEFAULT_MAX_EXPORT_BYTES)]
         max_export_bytes: u64,
+    },
+    /// Report expired verified cache entries; deletion requires the explicit --apply flag.
+    CleanupRemoteCache {
+        #[arg(long)]
+        cache_dir: PathBuf,
+        #[arg(long)]
+        apply: bool,
+        #[arg(long, default_value_t = DEFAULT_REMOTE_CACHE_TTL.as_secs())]
+        cache_ttl_secs: u64,
+        #[arg(long, default_value_t = DEFAULT_MAX_OBJECT_BYTES)]
+        max_object_bytes: u64,
+        #[arg(long, default_value_t = DEFAULT_MAX_MANIFEST_BYTES)]
+        max_manifest_bytes: u64,
+        #[arg(long, default_value_t = DEFAULT_REMOTE_CACHE_ENTRIES)]
+        max_cache_entries: usize,
     },
     /// Report orphaned MDP temporary files; deletion requires the explicit --apply flag.
     CleanupStaging {
@@ -257,6 +272,26 @@ async fn main() -> Result<()> {
                     rows: &rows,
                 })
             }
+        }
+        Command::CleanupRemoteCache {
+            cache_dir,
+            apply,
+            cache_ttl_secs,
+            max_object_bytes,
+            max_manifest_bytes,
+            max_cache_entries,
+        } => {
+            let cleaner = RemoteCacheCleaner::new(
+                cache_dir,
+                RemoteCacheLimits {
+                    max_object_bytes,
+                    max_manifest_bytes,
+                    max_entries: max_cache_entries,
+                    ttl: std::time::Duration::from_secs(cache_ttl_secs),
+                    ..RemoteCacheLimits::default()
+                },
+            )?;
+            print_json(&cleaner.cleanup_expired(apply)?)
         }
         Command::CleanupStaging {
             state_dir,

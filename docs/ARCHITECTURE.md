@@ -88,9 +88,13 @@ observed IDs/hashes/times; a cache hit requires an unexpired TTL and unchanged r
 metadata, and rechecks local hashes and row semantics. Curated and diagnostic datasets use
 separate remote folders. Misses hold a cross-process cache-budget lock through bounded streaming
 downloads and verification; each download is capped at the observed remote size and inherits the
-rclone total operation deadline. Expired entries are not automatically evicted yet, so cache
-capacity exhaustion fails closed and requires operator-managed cache clearing. Browser access
-remains behind an authenticated BFF.
+rclone total operation deadline. Queries never evict expired entries. The local
+`cleanup-remote-cache` command defaults to report-only; `--apply` removes an expired entry only when
+the private receipt, exact cache layout, manifest bytes, SHA-256, trusted Parquet schema/footer, and
+decoded row facts all verify. It holds the per-dataset lock and global cache-budget lock, skips active
+datasets, and preserves unknown, malformed, incomplete, or unverified directories. This command
+does not load rclone configuration or contact Drive. Browser access remains behind an authenticated
+BFF.
 
 `cleanup-staging` defaults to report-only. Applying it considers only recognized MDP temp filename
 patterns whose owner PID is no longer live, whose per-dataset publication lock can be acquired, and

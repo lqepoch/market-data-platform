@@ -24,8 +24,10 @@ those belong to `broker-connectors`.
   manifest. A cache hit still rechecks current remote IDs/size/MD5 metadata and local SHA/schema/facts.
   Serialize all cache misses with one cross-process budget lock, hold it through downloads and
   verification, and enforce the observed-size cap while streaming bytes to disk. Expired entries
-  must not be treated as fresh; until safe receipt-verified eviction exists, capacity exhaustion is
-  a fail-closed operator action.
+  must not be treated as fresh or automatically evicted during queries. The local cleanup command
+  defaults to report-only and may delete only expired entries whose receipt, exact layout, SHA-256,
+  schema, footer, and row facts reverify while holding both dataset and global budget locks. Active,
+  unknown, malformed, or incomplete entries must be preserved.
   Never expose rclone configuration to a browser; future UI reads must use an authenticated BFF.
 - Use argument arrays for subprocesses. Do not log rclone arguments, config paths, remote names,
   root IDs, tokens, or raw provider/subprocess errors.
