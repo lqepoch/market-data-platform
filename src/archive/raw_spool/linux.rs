@@ -1,7 +1,8 @@
 use std::{
-    fs::{self, DirBuilder, File, OpenOptions},
+    fs::{self, DirBuilder, File},
     io::{Read, Write},
-    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
+    mem::MaybeUninit,
+    os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -35,7 +36,7 @@ mod record;
 use record::{encode_finalization_record, encode_predecode_record};
 
 pub(super) struct FactoryInner {
-    root: PathBuf,
+    root_directory: File,
     limits: RawFrameSpoolLimits,
     budget: Mutex<FactoryBudget>,
     _lock_file: File,
@@ -101,17 +102,18 @@ fn open_impl(
 
     let root = normalize_root(root)?;
     create_or_validate_root(&root)?;
-    let lock_file = open_lock_file(&root)?;
+    let root_directory = open_root_directory(&root)?;
+    let lock_file = open_lock_file(&root_directory)?;
     lock_file
         .try_lock_exclusive()
         .map_err(|_| RawFrameSinkError::Unavailable)?;
-    let (capture_identities, total_bytes) = scan_existing_captures(&root, limits)?;
+    let (capture_identities, total_bytes) = scan_existing_captures(&root_directory, limits)?;
     let recovery = RawFrameSpoolRecoverySummary {
         preserved_capture_directories: capture_identities,
         preserved_bytes: total_bytes,
     };
     let inner = Arc::new(FactoryInner {
-        root,
+        root_directory,
         limits,
         budget: Mutex::new(FactoryBudget {
             total_bytes,
@@ -159,23 +161,25 @@ pub(super) fn create_sink(
     // factory stays poisoned and cannot undercount a possible orphan directory.
     budget.total_bytes = next_total;
     budget.capture_identities += 1;
-    let capture_id = match create_capture_directory(factory) {
-        Ok(capture_id) => capture_id,
+    let (capture_id, capture_dir) = match create_capture_directory(factory) {
+        Ok(capture) => capture,
         Err(error) => {
             budget.poisoned = true;
             return Err(error);
         }
     };
-    let capture_dir = factory.root.join(capture_dir_name(capture_id));
-    let log_path = capture_dir.join(FRAME_LOG_NAME);
-    let mut file = match OpenOptions::new()
-        .write(true)
-        .append(true)
-        .create_new(true)
-        .mode(FILE_MODE)
-        .open(&log_path)
-    {
-        Ok(file) => file,
+    let mut file = match rustix::fs::openat(
+        &capture_dir,
+        FRAME_LOG_NAME,
+        rustix::fs::OFlags::WRONLY
+            | rustix::fs::OFlags::APPEND
+            | rustix::fs::OFlags::CREATE
+            | rustix::fs::OFlags::EXCL
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::from_raw_mode(FILE_MODE),
+    ) {
+        Ok(file) => File::from(file),
         Err(_) => {
             budget.poisoned = true;
             return Err(RawFrameSinkError::Ambiguous);
@@ -183,8 +187,8 @@ pub(super) fn create_sink(
     };
     if file.write_all(FRAME_LOG_MAGIC).is_err()
         || file.sync_all().is_err()
-        || sync_directory(&capture_dir).is_err()
-        || sync_directory(&factory.root).is_err()
+        || capture_dir.sync_all().is_err()
+        || factory.root_directory.sync_all().is_err()
     {
         budget.poisoned = true;
         return Err(RawFrameSinkError::Ambiguous);
@@ -589,18 +593,39 @@ fn create_or_validate_root(root: &Path) -> Result<(), RawFrameSinkError> {
     }
 }
 
-fn open_lock_file(root: &Path) -> Result<File, RawFrameSinkError> {
-    let path = root.join(LOCK_FILE_NAME);
-    let mut options = OpenOptions::new();
-    options
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .mode(FILE_MODE);
-    let file = options
-        .open(path)
+fn open_root_directory(root: &Path) -> Result<File, RawFrameSinkError> {
+    let directory = File::from(
+        rustix::fs::open(
+            root,
+            rustix::fs::OFlags::RDONLY
+                | rustix::fs::OFlags::DIRECTORY
+                | rustix::fs::OFlags::NOFOLLOW
+                | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .map_err(|_| RawFrameSinkError::Unavailable)?,
+    );
+    let metadata = directory
+        .metadata()
         .map_err(|_| RawFrameSinkError::Unavailable)?;
+    validate_private_directory_metadata(&metadata, ROOT_MODE)?;
+    Ok(directory)
+}
+
+fn open_lock_file(root_directory: &File) -> Result<File, RawFrameSinkError> {
+    let file = File::from(
+        rustix::fs::openat(
+            root_directory,
+            LOCK_FILE_NAME,
+            rustix::fs::OFlags::RDWR
+                | rustix::fs::OFlags::CREATE
+                | rustix::fs::OFlags::NOFOLLOW
+                | rustix::fs::OFlags::NONBLOCK
+                | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::from_raw_mode(FILE_MODE),
+        )
+        .map_err(|_| RawFrameSinkError::Unavailable)?,
+    );
     validate_private_file(&file, FILE_MODE)?;
     if file
         .metadata()
@@ -610,31 +635,43 @@ fn open_lock_file(root: &Path) -> Result<File, RawFrameSinkError> {
     {
         return Err(RawFrameSinkError::Unavailable);
     }
-    sync_directory(root).map_err(|_| RawFrameSinkError::Unavailable)?;
+    root_directory
+        .sync_all()
+        .map_err(|_| RawFrameSinkError::Unavailable)?;
     Ok(file)
 }
 
 fn scan_existing_captures(
-    root: &Path,
+    root_directory: &File,
     limits: RawFrameSpoolLimits,
 ) -> Result<(u32, u64), RawFrameSinkError> {
     let mut identities = 0u32;
     let mut total_bytes = 0u64;
-    for entry in fs::read_dir(root).map_err(|_| RawFrameSinkError::Unavailable)? {
-        let entry = entry.map_err(|_| RawFrameSinkError::Unavailable)?;
-        let name = entry.file_name();
-        if name == LOCK_FILE_NAME {
+    let mut root_buffer = [MaybeUninit::uninit(); 8192];
+    let mut entries = rustix::fs::RawDir::new(root_directory, &mut root_buffer);
+    while let Some(name_bytes) = next_directory_entry_name(&mut entries)? {
+        if name_bytes == LOCK_FILE_NAME.as_bytes() {
             continue;
         }
-        let Some(name) = name.to_str() else {
-            return Err(RawFrameSinkError::Unavailable);
-        };
+        let name = std::str::from_utf8(&name_bytes).map_err(|_| RawFrameSinkError::Unavailable)?;
         if !valid_capture_dir_name(name) {
             return Err(RawFrameSinkError::Unavailable);
         }
-        let path = entry.path();
-        let dir_metadata =
-            fs::symlink_metadata(&path).map_err(|_| RawFrameSinkError::Unavailable)?;
+        let capture_directory = File::from(
+            rustix::fs::openat(
+                root_directory,
+                name,
+                rustix::fs::OFlags::RDONLY
+                    | rustix::fs::OFlags::DIRECTORY
+                    | rustix::fs::OFlags::NOFOLLOW
+                    | rustix::fs::OFlags::CLOEXEC,
+                rustix::fs::Mode::empty(),
+            )
+            .map_err(|_| RawFrameSinkError::Unavailable)?,
+        );
+        let dir_metadata = capture_directory
+            .metadata()
+            .map_err(|_| RawFrameSinkError::Unavailable)?;
         validate_private_directory_metadata(&dir_metadata, ROOT_MODE)?;
         identities = identities
             .checked_add(1)
@@ -642,26 +679,34 @@ fn scan_existing_captures(
         if identities > limits.max_capture_identities || identities > HARD_MAX_CAPTURE_IDENTITIES {
             return Err(RawFrameSinkError::CapacityExceeded);
         }
-        let mut children = fs::read_dir(&path).map_err(|_| RawFrameSinkError::Unavailable)?;
-        let Some(log_entry) = children.next() else {
+        let mut child_buffer = [MaybeUninit::uninit(); 2048];
+        let mut children = rustix::fs::RawDir::new(&capture_directory, &mut child_buffer);
+        let Some(log_name_bytes) = next_directory_entry_name(&mut children)? else {
             // A process may have stopped after creating the capture directory.
             // Keep the empty identity as unknown; never reuse it.
             continue;
         };
-        let log_entry = log_entry.map_err(|_| RawFrameSinkError::Unavailable)?;
-        if log_entry.file_name() != FRAME_LOG_NAME {
+        if log_name_bytes != FRAME_LOG_NAME.as_bytes() {
             return Err(RawFrameSinkError::Unavailable);
         }
-        if children
-            .next()
-            .transpose()
-            .map_err(|_| RawFrameSinkError::Unavailable)?
-            .is_some()
-        {
+        if next_directory_entry_name(&mut children)?.is_some() {
             return Err(RawFrameSinkError::Unavailable);
         }
-        let log_metadata =
-            fs::symlink_metadata(log_entry.path()).map_err(|_| RawFrameSinkError::Unavailable)?;
+        let log_file = File::from(
+            rustix::fs::openat(
+                &capture_directory,
+                FRAME_LOG_NAME,
+                rustix::fs::OFlags::RDONLY
+                    | rustix::fs::OFlags::NOFOLLOW
+                    | rustix::fs::OFlags::NONBLOCK
+                    | rustix::fs::OFlags::CLOEXEC,
+                rustix::fs::Mode::empty(),
+            )
+            .map_err(|_| RawFrameSinkError::Unavailable)?,
+        );
+        let log_metadata = log_file
+            .metadata()
+            .map_err(|_| RawFrameSinkError::Unavailable)?;
         validate_private_file_metadata(&log_metadata, FILE_MODE)?;
         if log_metadata.len() > limits.max_capture_bytes {
             return Err(RawFrameSinkError::CapacityExceeded);
@@ -678,7 +723,7 @@ fn scan_existing_captures(
 
 fn create_capture_directory(
     factory: &FactoryInner,
-) -> Result<RawCaptureInstanceId, RawFrameSinkError> {
+) -> Result<(RawCaptureInstanceId, File), RawFrameSinkError> {
     for _ in 0..8 {
         let mut bytes = [0u8; 16];
         File::open("/dev/urandom")
@@ -688,21 +733,34 @@ fn create_capture_directory(
         bytes[8] = (bytes[8] & 0x3f) | 0x80;
         let capture_id =
             RawCaptureInstanceId::new(bytes).map_err(|_| RawFrameSinkError::Unavailable)?;
-        let path = factory.root.join(capture_dir_name(capture_id));
-        match fs::symlink_metadata(&path) {
-            Ok(_) => continue,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => return Err(RawFrameSinkError::Unavailable),
+        let name = capture_dir_name(capture_id);
+        match rustix::fs::mkdirat(
+            &factory.root_directory,
+            name.as_str(),
+            rustix::fs::Mode::from_raw_mode(ROOT_MODE),
+        ) {
+            Ok(()) => {}
+            Err(error) if error == rustix::io::Errno::EXIST => continue,
+            Err(_) => return Err(RawFrameSinkError::Ambiguous),
         }
-        let mut builder = DirBuilder::new();
-        builder.mode(ROOT_MODE);
-        builder
-            .create(&path)
+        let capture_directory = File::from(
+            rustix::fs::openat(
+                &factory.root_directory,
+                name.as_str(),
+                rustix::fs::OFlags::RDONLY
+                    | rustix::fs::OFlags::DIRECTORY
+                    | rustix::fs::OFlags::NOFOLLOW
+                    | rustix::fs::OFlags::CLOEXEC,
+                rustix::fs::Mode::empty(),
+            )
+            .map_err(|_| RawFrameSinkError::Ambiguous)?,
+        );
+        let metadata = capture_directory
+            .metadata()
             .map_err(|_| RawFrameSinkError::Ambiguous)?;
-        let metadata = fs::symlink_metadata(&path).map_err(|_| RawFrameSinkError::Ambiguous)?;
         validate_private_directory_metadata(&metadata, ROOT_MODE)
             .map_err(|_| RawFrameSinkError::Ambiguous)?;
-        return Ok(capture_id);
+        return Ok((capture_id, capture_directory));
     }
     Err(RawFrameSinkError::Unavailable)
 }
@@ -736,6 +794,22 @@ fn valid_source_field(value: &str) -> bool {
         && !value.chars().any(char::is_control)
 }
 
+fn next_directory_entry_name(
+    directory: &mut rustix::fs::RawDir<'_, &File>,
+) -> Result<Option<Vec<u8>>, RawFrameSinkError> {
+    loop {
+        let Some(entry) = directory.next() else {
+            return Ok(None);
+        };
+        let entry = entry.map_err(|_| RawFrameSinkError::Unavailable)?;
+        let name = entry.file_name().to_bytes();
+        if name == b"." || name == b".." {
+            continue;
+        }
+        return Ok(Some(name.to_vec()));
+    }
+}
+
 fn validate_private_directory_metadata(
     metadata: &fs::Metadata,
     expected_mode: u32,
@@ -763,6 +837,7 @@ fn validate_private_file_metadata(
     if !metadata.file_type().is_file()
         || metadata.uid() != rustix::process::geteuid().as_raw()
         || metadata.permissions().mode() & 0o7777 != expected_mode
+        || metadata.nlink() != 1
     {
         return Err(RawFrameSinkError::Unavailable);
     }
@@ -770,5 +845,13 @@ fn validate_private_file_metadata(
 }
 
 fn sync_directory(path: &Path) -> std::io::Result<()> {
-    File::open(path)?.sync_all()
+    let directory = rustix::fs::open(
+        path,
+        rustix::fs::OFlags::RDONLY
+            | rustix::fs::OFlags::DIRECTORY
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    )?;
+    File::from(directory).sync_all()
 }

@@ -30,7 +30,7 @@
   "inputs": [
     {
       "path": "Cargo.toml",
-      "sha256": "fb66a6628e821a11aa7068cb348489760374e66cb94d8741006cb0d19573407a"
+      "sha256": "a8087ebec520ca283e5e1352ec607e2fefc84a3eebd2f4ed62372cda42a538b0"
     },
     {
       "path": "Cargo.lock",
@@ -54,7 +54,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "e60e23bd5bb1f70db46c78c613509d3649e5b7d60df65a6e441105d69ba9671f"
+      "sha256": "42cdf7e121a38f41e9797802423fc9e3f51d47566518455ff40fe0a6baea0155"
     },
     {
       "path": "docs/ARCHITECTURE.md",
@@ -70,7 +70,7 @@
     },
     {
       "path": "docs/CHG-2026-001-MDP-DURABLE-PREDECODE-SPOOL.md",
-      "sha256": "2ac3e2c0c78a27c98972586df50fa078a21de0dc6365cddd0f77cf7d59f3226d"
+      "sha256": "f372a649726138e36377a3be1f2b0acca7280f289c95881f33de48294c972b04"
     },
     {
       "path": "docs/SUPPLY_CHAIN.md",
@@ -1721,15 +1721,15 @@
       },
       {
         "path": "src/archive/raw_spool/linux.rs",
-        "sha256": "df64b7cb1c4d6327fcc932c4ebe711ecbe8217918daa63f47a8b76a8c9223c9c"
+        "sha256": "0766fa3a406e04be2fecb9aecc823d1b2f04dbfc4980e80a81464439b638377d"
       },
       {
         "path": "src/archive/raw_spool/linux/record.rs",
-        "sha256": "a1be5f3a0eecfdc3b5f6e7fbd6cd665bdd29fb0ff9319ee62b96d605c1fb0476"
+        "sha256": "d3ce94ad53b71bb5369d772d829fe7aded7c0395625b10d9654e8f0ca81aa10a"
       },
       {
         "path": "src/archive/raw_spool_tests.rs",
-        "sha256": "db3e6e7a5660c7c71a1263b9654a785dd5422ff8004d8d8d9a84c635cf10cde0"
+        "sha256": "e404f939b8409d3c09f7e43b1db208b28bb9c6a295550b3c25cff5fd516eb76c"
       },
       {
         "path": "src/archive/tests.rs",
@@ -1872,7 +1872,7 @@
         "sha256": "672f37defce7e1d67f8d684580db4e6ce9e517afd8c6bdf67f99d96c7e573eca"
       }
     ],
-    "sha256": "deda1908d83c4863bda16fec1ff901a7a574b70c3087ae5e9b80d75bdcdfef6e"
+    "sha256": "a4c63a56068f6e9eaebdf754a9a0dd93e6863153c2392e63b01c7e02ee6c3e29"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",

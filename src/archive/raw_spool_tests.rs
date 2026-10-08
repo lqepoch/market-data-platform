@@ -138,7 +138,7 @@ async fn local_spool_capacity_failure_returns_no_predecode_ack() {
     );
     assert_eq!(
         sink.finalize_after_decode(
-            &&broker_ports::RawFrameCaptureAck::for_capture(&capture),
+            &broker_ports::RawFrameCaptureAck::for_capture(&capture),
             &control_summary()
         )
         .await,
@@ -223,6 +223,53 @@ fn local_spool_rejects_nonempty_lock_metadata() {
         LocalRawFrameSpoolFactory::open(&root, RawFrameSpoolLimits::default()),
         Err(RawFrameSinkError::Unavailable)
     ));
+}
+
+#[test]
+fn local_spool_rejects_symlink_lock_without_touching_target() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("raw-spool");
+    fs::create_dir(&root).unwrap();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+    let target = temp.path().join("external-lock-target");
+    fs::write(&target, b"").unwrap();
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+    let before = fs::metadata(&target).unwrap();
+    let before_modified = before.modified().unwrap();
+    let lock_path = root.join(".raw-spool.lock");
+    std::os::unix::fs::symlink(&target, &lock_path).unwrap();
+
+    assert!(matches!(
+        LocalRawFrameSpoolFactory::open(&root, RawFrameSpoolLimits::default()),
+        Err(RawFrameSinkError::Unavailable)
+    ));
+    let after = fs::metadata(&target).unwrap();
+    assert_eq!(fs::read(&target).unwrap(), b"");
+    assert_eq!(after.modified().unwrap(), before_modified);
+    assert_eq!(after.len(), before.len());
+}
+
+#[test]
+fn local_spool_rejects_hardlinked_lock_without_touching_target() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("raw-spool");
+    fs::create_dir(&root).unwrap();
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+    let target = temp.path().join("external-lock-target");
+    fs::write(&target, b"").unwrap();
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+    let before = fs::metadata(&target).unwrap();
+    let before_modified = before.modified().unwrap();
+    fs::hard_link(&target, root.join(".raw-spool.lock")).unwrap();
+
+    assert!(matches!(
+        LocalRawFrameSpoolFactory::open(&root, RawFrameSpoolLimits::default()),
+        Err(RawFrameSinkError::Unavailable)
+    ));
+    let after = fs::metadata(&target).unwrap();
+    assert_eq!(fs::read(&target).unwrap(), b"");
+    assert_eq!(after.modified().unwrap(), before_modified);
+    assert_eq!(after.len(), before.len());
 }
 
 #[test]

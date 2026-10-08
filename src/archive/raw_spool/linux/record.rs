@@ -109,31 +109,6 @@ fn frame_record(mut body: Vec<u8>) -> Result<Vec<u8>, RawFrameSinkError> {
     Ok(record)
 }
 
-#[cfg(test)]
-mod tests {
-    use sha2::{Digest, Sha256};
-
-    use super::{RECORD_HASH_DOMAIN, frame_record};
-
-    #[test]
-    fn record_length_and_domain_separated_hash_cover_the_framing_prefix() {
-        let record = frame_record(vec![1, 7, 9, 11]).expect("small test record is bounded");
-        let declared_len = u32::from_be_bytes(
-            record[..4]
-                .try_into()
-                .expect("record includes the fixed prefix"),
-        ) as usize;
-        assert_eq!(declared_len, record.len() - 4);
-
-        let hash_start = record.len() - 32;
-        let mut hasher = Sha256::new();
-        hasher.update(RECORD_HASH_DOMAIN);
-        hasher.update(&record[..4]);
-        hasher.update(&record[4..hash_start]);
-        assert_eq!(&record[hash_start..], &hasher.finalize()[..]);
-    }
-}
-
 fn entitlement_tag(value: EntitlementState) -> u8 {
     match value {
         EntitlementState::Unknown => 0,
@@ -178,4 +153,29 @@ fn valid_sha256(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+#[cfg(test)]
+mod tests {
+    use sha2::{Digest, Sha256};
+
+    use super::{RECORD_HASH_DOMAIN, frame_record};
+
+    #[test]
+    fn record_length_and_domain_separated_hash_cover_the_framing_prefix() {
+        let record = frame_record(vec![1, 7, 9, 11]).expect("small test record is bounded");
+        let declared_len = u32::from_be_bytes(
+            record[..4]
+                .try_into()
+                .expect("record includes the fixed prefix"),
+        ) as usize;
+        assert_eq!(declared_len, record.len() - 4);
+
+        let hash_start = record.len() - 32;
+        let mut hasher = Sha256::new();
+        hasher.update(RECORD_HASH_DOMAIN);
+        hasher.update(&record[..4]);
+        hasher.update(&record[4..hash_start]);
+        assert_eq!(&record[hash_start..], &hasher.finalize()[..]);
+    }
 }
