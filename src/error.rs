@@ -85,6 +85,7 @@ impl std::fmt::Display for ProviderFailure {
 pub enum StorageFailure {
     Spawn,
     CommandFailed,
+    Timeout,
     MalformedListing,
     ReadbackFailed,
     InvalidManifest,
@@ -96,6 +97,7 @@ impl std::fmt::Display for StorageFailure {
         match self {
             Self::Spawn => f.write_str("spawn"),
             Self::CommandFailed => f.write_str("command_failed"),
+            Self::Timeout => f.write_str("timeout"),
             Self::MalformedListing => f.write_str("malformed_listing"),
             Self::ReadbackFailed => f.write_str("readback_failed"),
             Self::InvalidManifest => f.write_str("invalid_manifest"),

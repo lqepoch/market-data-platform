@@ -7,7 +7,7 @@ use clap::{Parser, ValueEnum};
 use market_data_platform::{
     MarketDataError, Result,
     archive::{
-        ArchiveLimits, DEFAULT_MAX_MANIFEST_BYTES, DEFAULT_MAX_OBJECT_BYTES,
+        ArchiveLimits, ArchivePublisher, DEFAULT_MAX_MANIFEST_BYTES, DEFAULT_MAX_OBJECT_BYTES,
         DEFAULT_MAX_STAGING_BYTES, DEFAULT_UPLOAD_QUEUE_CAPACITY,
     },
     parquet_store,
@@ -67,6 +67,15 @@ enum Command {
         symbol: Option<String>,
         #[arg(long)]
         export_jsonl: Option<PathBuf>,
+    },
+    /// Report orphaned MDP temporary files; deletion requires the explicit --apply flag.
+    CleanupStaging {
+        #[arg(long)]
+        state_dir: PathBuf,
+        #[arg(long)]
+        staging_dir: PathBuf,
+        #[arg(long)]
+        apply: bool,
     },
 }
 
@@ -151,6 +160,14 @@ async fn main() -> Result<()> {
                 }
                 Ok(())
             }
+        }
+        Command::CleanupStaging {
+            state_dir,
+            staging_dir,
+            apply,
+        } => {
+            let report = ArchivePublisher::cleanup_staging(&state_dir, &staging_dir, apply)?;
+            print_json(&report)
         }
     }
 }

@@ -43,11 +43,17 @@ cargo +1.98.1 run --offline -- verify \
 cargo +1.98.1 run --offline -- query-bars \
   --parquet /tmp/mdp-demo/staging/synthetic-2026-10-08-bars-1m-v1.parquet \
   --symbol QQQ --export-jsonl /tmp/mdp-bars.jsonl
+cargo +1.98.1 run --offline -- cleanup-staging \
+  --state-dir /tmp/mdp-demo/state --staging-dir /tmp/mdp-demo/staging
 ```
 
 `synthetic` runs the full local workflow and prints a JSON report. It creates immutable output
 files, so use a fresh `--output` directory for another run. `verify` accepts `market-events-v1` or
 `us-equity-trade-bar1m-v1`. `query-bars` prints rows as JSONL or writes them to a new export file.
+`cleanup-staging` is a dry run unless `--apply` is supplied; it only considers MDP-named temporary
+files, preserves live-PID/locked/unresolved-receipt candidates, and never removes published objects
+or manifests. On platforms without Linux `/proc` process evidence it conservatively preserves all
+PID-owned temporaries.
 
 To replay an existing shared-contract JSONL stream, provide a bounded session config and an explicit
 local-test store. The JSONL schema is the flattened Rust/Serde projection from `market-contracts`;
@@ -62,7 +68,7 @@ cargo +1.98.1 run --offline -- replay-jsonl \
   --local-test-store ./local-test-objects \
   --max-object-bytes 8589934592 \
   --max-manifest-bytes 65536 \
-  --max-staging-bytes 17179869184 \
+  --max-staging-bytes 34359738368 \
   --upload-queue-capacity 4
 ```
 
@@ -106,7 +112,14 @@ window end and no earlier than any event receive timestamp.
 - Aggregation: at most 500 expected symbols, 390 minutes per request, 100,000 input records, and
   100,000 output rows. The checked `symbols × minutes` bound is applied before bar allocation.
 - Archive queue defaults to 4 and cannot exceed 64. Default object, manifest, and total staging
-  limits are 8 GiB, 64 KiB, and 16 GiB; the CLI exposes these values for each JSONL replay.
+  limits are 8 GiB, 64 KiB, and 32 GiB; the CLI exposes these values for each JSONL replay. Before
+  replay, staging reserves peak room for two output objects, one object readback, three manifest
+  buffers, and receipt overhead. Parquet writers stop at the configured object-byte cap and remove
+  failed temporary output.
+- One rclone operation has a configurable total wall-clock deadline (`MDP_DRIVE_OPERATION_TIMEOUT_SECS`,
+  default 1800 seconds, maximum 7200). This supervisor deadline is independent of rclone's 60-second
+  idle timeout; timeout kills and reaps the child. The subprocess supervisor also consumes the
+  process-wide background-worker permit.
 - Each immutable manifest describes one Parquet object. SHA-256 is calculated locally and confirmed
   by downloading and hashing the complete remote object before manifest publication. Drive MD5 is
   advisory only. UNKNOWN outcomes are reconciled from a durable receipt and remote readback; a

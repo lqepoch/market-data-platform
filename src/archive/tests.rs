@@ -361,3 +361,107 @@ fn synthetic_parquet_cannot_be_relabelled_as_authorized_alpaca_drive_data() {
     ));
     assert_eq!(transport.upload_count(), 0);
 }
+
+#[test]
+fn replay_preflight_accounts_for_existing_files_and_peak_readback_reserve() {
+    let temp = tempdir().unwrap();
+    let staging = temp.path().join("staging");
+    fs::create_dir_all(&staging).unwrap();
+    let limits = ArchiveLimits {
+        max_object_bytes: 1024,
+        max_manifest_bytes: 128,
+        max_staging_bytes: 70_000,
+        upload_queue_capacity: 1,
+    };
+    assert!(limits.validate().is_ok());
+    assert!(ArchivePublisher::preflight_replay_staging(&staging, &limits).is_ok());
+    fs::write(staging.join("old-output.bin"), vec![0; 2048]).unwrap();
+    assert!(matches!(
+        ArchivePublisher::preflight_replay_staging(&staging, &limits),
+        Err(MarketDataError::InputLimit)
+    ));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn staging_cleanup_dry_run_and_apply_preserve_active_locked_and_unknown_state() {
+    let temp = tempdir().unwrap();
+    let state = temp.path().join("state");
+    let staging = temp.path().join("staging");
+    fs::create_dir_all(&state).unwrap();
+    fs::create_dir_all(&staging).unwrap();
+
+    let stale = staging.join(".stale-dataset-readback-4294967295-1.tmp");
+    fs::write(&stale, b"orphan").unwrap();
+    let active = staging.join(format!(
+        ".active-dataset-receipt-{}-2.tmp",
+        std::process::id()
+    ));
+    fs::write(&active, b"active").unwrap();
+    let locked = staging.join(".locked-dataset-manifest-4294967295-3.tmp");
+    fs::write(&locked, b"locked").unwrap();
+    let locked_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(state.join("locked-dataset.lock"))
+        .unwrap();
+    locked_file.lock_exclusive().unwrap();
+    let unknown = staging.join(".unknown-dataset-manifest-readback-4294967295-4.tmp");
+    fs::write(&unknown, b"unknown").unwrap();
+    fs::write(state.join("unknown-dataset.receipt.json"), b"not-json").unwrap();
+
+    let preview = ArchivePublisher::cleanup_staging(&state, &staging, false).unwrap();
+    assert!(preview.dry_run);
+    assert_eq!(preview.eligible_files, 1);
+    assert_eq!(preview.eligible_bytes, 6);
+    assert_eq!(preview.skipped_active_process, 1);
+    assert_eq!(preview.skipped_locked, 1);
+    assert_eq!(preview.skipped_unresolved_receipt, 1);
+    assert!(stale.exists());
+
+    let applied = ArchivePublisher::cleanup_staging(&state, &staging, true).unwrap();
+    assert_eq!(applied.removed_files, 1);
+    assert!(!stale.exists());
+    assert!(active.exists());
+    assert!(locked.exists());
+    assert!(unknown.exists());
+
+    drop(locked_file);
+    let unlocked = ArchivePublisher::cleanup_staging(&state, &staging, true).unwrap();
+    assert_eq!(unlocked.removed_files, 1);
+    assert!(!locked.exists());
+    assert!(unknown.exists());
+}
+
+#[test]
+fn cleanup_releases_only_temp_files_with_a_matching_committed_manifest() {
+    let temp = tempdir().unwrap();
+    let (publisher, _transport, request) = fixture(temp.path());
+    publisher.publish(&request).unwrap();
+    let staging = temp.path().join("staging");
+    let state = temp.path().join("state");
+    let candidate = staging.join(".synthetic-1-readback-4294967295-7.tmp");
+    fs::write(&candidate, b"orphaned verified readback temp").unwrap();
+
+    let preview = ArchivePublisher::cleanup_staging(&state, &staging, false).unwrap();
+    assert_eq!(preview.eligible_files, 1);
+    assert!(candidate.exists());
+
+    let applied = ArchivePublisher::cleanup_staging(&state, &staging, true).unwrap();
+    assert_eq!(applied.removed_files, 1);
+    assert!(!candidate.exists());
+
+    let mismatched = staging.join(".synthetic-1-manifest-4294967295-8.tmp");
+    fs::write(&mismatched, b"must be retained").unwrap();
+    let receipt_path = state.join("synthetic-1.receipt.json");
+    let mut receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(&receipt_path).unwrap()).unwrap();
+    receipt["dataset_id"] = serde_json::Value::String("other-dataset".into());
+    fs::write(&receipt_path, serde_json::to_vec(&receipt).unwrap()).unwrap();
+
+    let result = ArchivePublisher::cleanup_staging(&state, &staging, true).unwrap();
+    assert_eq!(result.removed_files, 0);
+    assert_eq!(result.skipped_unresolved_receipt, 1);
+    assert!(mismatched.exists());
+}

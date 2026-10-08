@@ -4,6 +4,7 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use chrono::{DateTime, Utc};
@@ -16,7 +17,7 @@ use crate::{
     MarketDataError, Result,
     aggregate::{CompletionEvidence, CompletionMode, SessionWindow, aggregate_trade_bars},
     archive::{ArchiveLimits, ArchivePublisher, ArchiveRequest, PublicationPurpose, TransportKind},
-    config::{AlpacaFeed, DriveConfig},
+    config::{AlpacaFeed, DEFAULT_DRIVE_OPERATION_TIMEOUT, DriveConfig},
     parquet_store,
     protocol::{self, DEFAULT_MAX_JSONL_BYTES, DEFAULT_MAX_JSONL_RECORDS},
     queue::{CollectionMessage, CollectionSubmitter},
@@ -188,12 +189,18 @@ pub async fn replay_file(
     let export = output.join("exports");
     fs::create_dir_all(&staging)?;
     fs::create_dir_all(&export)?;
+    ArchivePublisher::preflight_replay_staging(&staging, &options.limits)?;
     let event_dataset_id = format!("{dataset_id}-events-v1");
     let bar_dataset_id = format!("{dataset_id}-bars-1m-v1");
     let event_path = staging.join(format!("{event_dataset_id}.parquet"));
     let bar_path = staging.join(format!("{bar_dataset_id}.parquet"));
-    let event_verification = parquet_store::write_events(&event_path, &collected)?;
-    let bar_verification = parquet_store::write_bars(&bar_path, &bars)?;
+    let event_verification = parquet_store::write_events_with_limit(
+        &event_path,
+        &collected,
+        options.limits.max_object_bytes,
+    )?;
+    let bar_verification =
+        parquet_store::write_bars_with_limit(&bar_path, &bars, options.limits.max_object_bytes)?;
 
     let source_range = event_source_range(&market_messages)?;
     let event_missing = market_messages
@@ -562,11 +569,21 @@ pub fn drive_config_from_env(config_path: PathBuf) -> Result<DriveConfig> {
         std::env::var("MDP_DRIVE_ROOT_FOLDER_ID").map_err(|_| MarketDataError::InvalidInput)?;
     let dataset_prefix =
         std::env::var("MDP_DRIVE_DATASET_PREFIX").map_err(|_| MarketDataError::InvalidInput)?;
+    let operation_timeout = match std::env::var("MDP_DRIVE_OPERATION_TIMEOUT_SECS") {
+        Ok(value) => Duration::from_secs(
+            value
+                .parse::<u64>()
+                .map_err(|_| MarketDataError::InvalidInput)?,
+        ),
+        Err(std::env::VarError::NotPresent) => DEFAULT_DRIVE_OPERATION_TIMEOUT,
+        Err(std::env::VarError::NotUnicode(_)) => return Err(MarketDataError::InvalidInput),
+    };
     let config = DriveConfig {
         remote,
         root_folder_id,
         rclone_config: config_path,
         dataset_prefix,
+        operation_timeout,
     };
     config.validate()?;
     Ok(config)

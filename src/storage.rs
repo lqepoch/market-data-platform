@@ -5,12 +5,18 @@ use std::{
     fs::{self, File, OpenOptions},
     io::Read,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
+    sync::mpsc::{self, RecvTimeoutError},
+    thread,
+    time::{Duration, Instant},
 };
 
 use serde::Deserialize;
 
-use crate::{MarketDataError, Result, config::DriveConfig, error::StorageFailure};
+use crate::{
+    MarketDataError, Result, config::DriveConfig, error::StorageFailure,
+    queue::BackgroundWorkerPermit,
+};
 
 pub const MAX_RCLONE_OUTPUT_BYTES: usize = 2 * 1024 * 1024;
 const RCLONE_TIMEOUT: &str = "60s";
@@ -118,7 +124,7 @@ impl ObjectTransport for LocalTestTransport {
 }
 
 #[derive(Clone)]
-pub struct RcloneDriveTransport {
+pub(crate) struct RcloneDriveTransport {
     config: DriveConfig,
 }
 
@@ -129,7 +135,7 @@ impl fmt::Debug for RcloneDriveTransport {
 }
 
 impl RcloneDriveTransport {
-    pub fn new(config: DriveConfig) -> Result<Self> {
+    pub(crate) fn new(config: DriveConfig) -> Result<Self> {
         config.validate()?;
         Ok(Self { config })
     }
@@ -179,33 +185,7 @@ impl RcloneDriveTransport {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        let mut child = command
-            .spawn()
-            .map_err(|_| MarketDataError::Storage(StorageFailure::Spawn))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or(MarketDataError::Storage(StorageFailure::CommandFailed))?;
-        let mut output = Vec::with_capacity(output_cap.min(64 * 1024));
-        let read_result = stdout
-            .take(
-                u64::try_from(output_cap)
-                    .unwrap_or(u64::MAX)
-                    .saturating_add(1),
-            )
-            .read_to_end(&mut output);
-        if read_result.is_err() || output.len() > output_cap {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(MarketDataError::Storage(StorageFailure::MalformedListing));
-        }
-        let status = child
-            .wait()
-            .map_err(|_| MarketDataError::Storage(StorageFailure::CommandFailed))?;
-        Ok(CommandOutput {
-            status_code: status.code().unwrap_or(255),
-            stdout: output,
-        })
+        run_bounded_command(command, output_cap, self.config.operation_timeout)
     }
 
     fn object_arg(&self, dataset_id: &str, object_name: &str) -> Result<String> {
@@ -223,6 +203,145 @@ impl RcloneDriveTransport {
 struct CommandOutput {
     status_code: i32,
     stdout: Vec<u8>,
+}
+
+enum SupervisedExit {
+    Exited(ExitStatus),
+    TimedOut,
+    Cancelled,
+    Failed,
+}
+
+fn run_bounded_command(
+    mut command: Command,
+    output_cap: usize,
+    operation_timeout: Duration,
+) -> Result<CommandOutput> {
+    let supervisor_permit = BackgroundWorkerPermit::acquire()?;
+    let started_at = Instant::now();
+    let deadline = started_at
+        .checked_add(operation_timeout)
+        .ok_or(MarketDataError::InvalidInput)?;
+    let (child_sender, child_receiver) = mpsc::sync_channel::<Child>(1);
+    let (cancel_sender, cancel_receiver) = mpsc::sync_channel::<()>(1);
+    let (exit_sender, exit_receiver) = mpsc::sync_channel::<SupervisedExit>(1);
+    let supervisor = thread::Builder::new()
+        .name("mdp-rclone-supervisor".to_owned())
+        .spawn(move || {
+            let _supervisor_permit = supervisor_permit;
+            let Ok(mut child) = child_receiver.recv() else {
+                return;
+            };
+            loop {
+                if cancel_receiver.try_recv().is_ok() {
+                    let _ = child.kill();
+                    let status = child.wait();
+                    let outcome = if status.is_ok() {
+                        SupervisedExit::Cancelled
+                    } else {
+                        SupervisedExit::Failed
+                    };
+                    let _ = exit_sender.send(outcome);
+                    return;
+                }
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let status = child.wait();
+                    let outcome = if status.is_ok() {
+                        SupervisedExit::TimedOut
+                    } else {
+                        SupervisedExit::Failed
+                    };
+                    let _ = exit_sender.send(outcome);
+                    return;
+                }
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        let _ = exit_sender.send(SupervisedExit::Exited(status));
+                        return;
+                    }
+                    Ok(None) => thread::sleep(Duration::from_millis(5)),
+                    Err(_) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        let _ = exit_sender.send(SupervisedExit::Failed);
+                        return;
+                    }
+                }
+            }
+        })
+        .map_err(|_| MarketDataError::Storage(StorageFailure::Spawn))?;
+
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(_) => {
+            drop(child_sender);
+            let _ = supervisor.join();
+            return Err(MarketDataError::Storage(StorageFailure::Spawn));
+        }
+    };
+    let Some(stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        drop(child_sender);
+        let _ = supervisor.join();
+        return Err(MarketDataError::Storage(StorageFailure::CommandFailed));
+    };
+    if let Err(error) = child_sender.send(child) {
+        let mut child = error.0;
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = supervisor.join();
+        return Err(MarketDataError::Storage(StorageFailure::Spawn));
+    }
+
+    let mut output = Vec::with_capacity(output_cap.min(64 * 1024));
+    let read_result = stdout
+        .take(
+            u64::try_from(output_cap)
+                .unwrap_or(u64::MAX)
+                .saturating_add(1),
+        )
+        .read_to_end(&mut output);
+    let malformed_output = read_result.is_err() || output.len() > output_cap;
+    if malformed_output {
+        let _ = cancel_sender.try_send(());
+    }
+
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    let outcome = match exit_receiver.recv_timeout(remaining) {
+        Ok(outcome) => outcome,
+        Err(RecvTimeoutError::Timeout) => {
+            let _ = cancel_sender.try_send(());
+            let _ = supervisor.join();
+            return Err(MarketDataError::Storage(StorageFailure::Timeout));
+        }
+        Err(RecvTimeoutError::Disconnected) => {
+            let _ = supervisor.join();
+            return Err(MarketDataError::Storage(StorageFailure::CommandFailed));
+        }
+    };
+    supervisor
+        .join()
+        .map_err(|_| MarketDataError::Storage(StorageFailure::CommandFailed))?;
+
+    if matches!(outcome, SupervisedExit::TimedOut) {
+        return Err(MarketDataError::Storage(StorageFailure::Timeout));
+    }
+    if malformed_output || matches!(outcome, SupervisedExit::Cancelled) {
+        return Err(MarketDataError::Storage(StorageFailure::MalformedListing));
+    }
+    let SupervisedExit::Exited(status) = outcome else {
+        return Err(MarketDataError::Storage(StorageFailure::CommandFailed));
+    };
+    Ok(CommandOutput {
+        status_code: status.code().unwrap_or(255),
+        stdout: output,
+    })
 }
 
 #[derive(Deserialize)]
@@ -344,4 +463,36 @@ fn safe_component(value: &str) -> bool {
 
 fn safe_object_name(value: &str) -> bool {
     safe_component(value) && !value.starts_with('.') && !value.ends_with('.')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn total_operation_deadline_kills_and_reaps_child() {
+        let mut command = Command::new("sleep");
+        command.arg("5");
+        let started = Instant::now();
+        let result = run_bounded_command(command, 1024, Duration::from_millis(50));
+        assert!(matches!(
+            result,
+            Err(MarketDataError::Storage(StorageFailure::Timeout))
+        ));
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn output_cap_cancels_unbounded_child_output() {
+        let command = Command::new("yes");
+        let started = Instant::now();
+        let result = run_bounded_command(command, 128, Duration::from_secs(2));
+        assert!(matches!(
+            result,
+            Err(MarketDataError::Storage(StorageFailure::MalformedListing))
+        ));
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
 }

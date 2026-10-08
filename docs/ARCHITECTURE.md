@@ -56,6 +56,9 @@ Event and minute-bar Parquet schemas and fingerprints are imported from core's t
 registry. The MDP maps logical field types to Arrow and compares exact field order, names, types, and
 nullability. It does not hash Arrow's display or serialization format. Parquet footer row count must
 match decoded rows. Readers and exporters stay within file/row caps.
+Parquet output writers enforce the object-byte limit while writing and use a cleanup guard for
+failed temporary files. Replay preflights staging against peak object/readback/manifest/receipt
+reserve, rather than only checking the directory after output has already been written.
 
 One immutable `DatasetManifestV1` describes one Parquet object. It records source, sorted unique
 symbols, half-open source-time range, missing-source-time count, row count, canonical Parquet schema
@@ -70,9 +73,18 @@ repeat the create. A conflicting name/content pair fails closed. Cross-process p
 serialized by a per-dataset filesystem lock.
 
 The Drive adapter calls rclone with an argv array, explicit config and root ID, bounded subprocess
-output, one rclone retry, and `--immutable`. It does not use the Google Drive SDK or implement OAuth.
+output, one rclone retry, and `--immutable`. A separate total wall-clock deadline kills and reaps the
+child; rclone's `--timeout` remains an idle timeout. The supervisor uses the same process-wide
+worker permit. It does not use the Google Drive SDK or implement OAuth.
 Subprocess stderr and private config identifiers are never logged. Current public CLI paths only
 select local-test storage; the rclone adapter has not been run against a real account.
+
+`cleanup-staging` defaults to report-only. Applying it considers only recognized MDP temp filename
+patterns whose owner PID is no longer live, whose per-dataset publication lock can be acquired, and
+whose receipt is absent or committed. Unknown or unresolved receipts are preserved. Published
+Parquet, manifests, receipts, lock files, and unrecognized files are not cleanup targets. The staging
+and state directories must be trusted operator-owned paths; metadata-check/open races are outside
+the threat model. Non-Linux systems without equivalent process evidence preserve all PID-owned temps.
 
 ## Source admission and publication
 
