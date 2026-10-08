@@ -5,6 +5,10 @@ graph with `deny.toml`. The policy denies known advisories, yanked or unmaintain
 licenses and sources, wildcard versions, and unreviewed duplicate versions. There are no advisory
 exceptions. The `bans.skip` entries name only exact currently observed duplicate package versions
 and include the reason for each compatibility exception; new duplicate versions remain denied.
+The JWT verifier pins jsonwebtoken 10.3.0 with default features disabled and only its `aws_lc_rs`
+backend enabled. Application validation still allows HS256 only. This avoids pulling the optional
+RSA implementation into this verifier's dependency graph; no advisory is suppressed to obtain that
+result.
 
 The license allowlist contains only SPDX identifiers observed in the locked graph:
 Apache-2.0, Apache-2.0 WITH LLVM-exception, BSD-2-Clause, BSD-3-Clause, CC0-1.0, ISC, MIT,
@@ -51,8 +55,9 @@ python3 scripts/supply_chain.py --check
 ```
 
 `SOURCE-MANIFEST.json` records the exact locked package inventory and checksums, direct git source
-revisions, hashes of policy/input files, tool versions, generated artifact hashes, and a deterministic
-first-party source-tree hash. The tree hash is SHA-256 over path-sorted entries encoded as
+revisions, hashes of policy/input files (including the runtime-only `Dockerfile`, HTTP OpenAPI
+contract, offline container-smoke script, and change-specific provenance record), tool versions,
+generated artifact hashes, and a deterministic first-party source-tree hash. The tree hash is SHA-256 over path-sorted entries encoded as
 `u32be(path UTF-8 length) || path UTF-8 || raw SHA-256(file contents)`. The source manifest does not
 hash itself, sign the build, establish CI identity, attest a release, or prove that dependencies are
 safe beyond the checks recorded here. SBOM generation and local tests do not connect to Alpaca or

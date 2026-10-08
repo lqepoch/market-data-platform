@@ -19,8 +19,9 @@ shared-contract JSONL and synthetic input. No live SIP/OPRA feed was connected i
 - Synthetic records are `provider=synthetic`, `feed=synthetic`, `entitlement=unknown`. They are
   diagnostic data and cannot qualify as SIP/OPRA.
 - The rclone Google Drive adapter is implemented behind the archive boundary and has fake-transport
-  reconciliation tests. The public CLI only exposes `local-test`; real rclone execution, OAuth,
-  remote reads/writes, project quota discovery, and Drive upload are **NOT RUN**.
+  reconciliation tests. Replay and publishing use only `local-test`; the read-only service can be
+  configured with an operator rclone config. Real rclone execution, OAuth, remote reads/writes,
+  project quota discovery, and Drive upload are **NOT RUN**.
 - Core raw MessagePack v1 and correlated event v2 Parquet writers are available for offline local
   diagnostics. Their pair publisher is local-test only; synthetic inputs stay `synthetic/synthetic`
   and do not establish Alpaca provenance. The current broker adapter decodes a frame before placing
@@ -246,6 +247,54 @@ CARGO_BUILD_JOBS=2 cargo +1.98.1 test --release --offline --locked \
   Drive object folders are separated as `curated-<dataset-id>` and `diagnostic-<dataset-id>`.
   Browsers cannot read rclone configuration or access Drive directly; UI query must use an
   authenticated BFF.
+
+## Read-only HTTP service
+
+`mdp serve` exposes a bounded HTTP facade over the same hash-verified archive cache and isolated
+Parquet worker used by `remote-query-bars`. It emits the existing `lqepoch.us_equity_trade_bar_1m.v1`
+rows and an HTTP projection of `RemoteQuerySummary` in the JSON envelope
+`{ "summary": ..., "rows": [...] }`; `row_count` and `returned_rows` are canonical decimal strings
+on HTTP, while CLI JSON keeps its existing numeric encoding. It does not reinterpret V1 rows as
+DatasetManifestV2 completion evidence. See [`docs/openapi-v1.yaml`](docs/openapi-v1.yaml).
+The only data route is `GET /v1/datasets/{dataset_id}/bars?namespace=diagnostic|curated&symbol=QQQ`.
+The response is capped at 4 MiB and 390 rows, is marked `Cache-Control: no-store`, and each process
+allows two active query tasks with a bounded queue and 120-second deadline. Dropping a request,
+timing out, or shutting down cancels owned work and waits for child workers to be reaped before
+capacity is released.
+
+The listener defaults to `127.0.0.1:8088`. `GET /healthz` is liveness only. `/readyz` reports
+identity/transport configuration but always returns `market_ready: false` and
+`source_entitlement: unverified`; it is not evidence that data is available or entitled. With no
+MDP key pair, loopback liveness remains available while readiness and data requests return 503.
+Non-loopback bind is rejected unless both independent MDP keys are configured.
+
+```sh
+MDP_TERMINAL_JWT_SECRET='<terminal-only MDP signing key, at least 32 bytes>' \
+MDP_RESEARCH_JWT_SECRET='<research-only MDP signing key, at least 32 bytes>' \
+mdp serve --local-test-root /secure/local-test-objects --cache-dir /secure/mdp-cache
+```
+
+Tokens use HS256, audience `lqepoch-market-data`, exactly one scope `market:read`, and at most 60
+seconds lifetime. `kid=mdp-terminal` is bound to issuer `eqoboard-openterminal` and the terminal MDP
+key; `kid=mdp-research` is bound to issuer `openterminal-research` and the research MDP key. The
+two MDP keys must be different and must not reuse Gateway keys. Each trusted BFF signer receives
+only its matching MDP key; the service verifier receives both. This service only verifies tokens;
+the separate EqoBoard BFF signing helper and browser integration are outside this slice. The
+browser must call through its trusted BFF and must never read rclone configuration or private cache
+files directly.
+
+The LocalTest transport serves only `diagnostic`; the response must retain
+`synthetic/synthetic/unknown` provenance or the request fails closed. It cannot silently fall back to
+another transport and does not expose
+capture, upload, account, or order routes. The checked-in Dockerfile is a runtime-only LocalTest
+smoke wrapper: it requires an explicit immutable `MDP_RUNTIME_BASE`, contains no Rust builder, and
+does not include rclone. A Drive-enabled deployment needs its own reviewed immutable runtime base
+that includes a pinned rclone executable. `scripts/container_smoke.sh` uses a cached image ID,
+`--pull=false`, an offline Docker network, an exact copied-binary SHA-256 check, synthetic replay,
+authorization denial, an authenticated V1 query, and graceful shutdown. It makes no provider,
+OAuth, Drive, or broker calls; it reports host/runtime architecture and glibc versions. It verifies
+only that a host-built executable runs in the selected cached runtime image, not a container source
+build or production deployment. Production images must use a reviewed immutable registry digest.
 - Each immutable manifest describes one Parquet object. SHA-256 is calculated locally and confirmed
   by downloading and hashing the complete remote object before manifest publication. Drive MD5 is
   advisory only. UNKNOWN outcomes are reconciled from a durable receipt and remote readback; a

@@ -32,14 +32,18 @@ SBOM_SPEC = "1.5"
 INPUT_PATHS = (
     "Cargo.toml",
     "Cargo.lock",
+    "Dockerfile",
     "deny.toml",
     "LICENSE",
     "README.md",
     "AGENTS.md",
     "docs/ARCHITECTURE.md",
+    "docs/CHG-2026-001-MDP-HTTP-PROVENANCE.md",
     "docs/SUPPLY_CHAIN.md",
+    "docs/openapi-v1.yaml",
     "supply-chain/git-source-pins.json",
     "scripts/supply_chain.py",
+    "scripts/container_smoke.sh",
     "tests/test_supply_chain.py",
 )
 TREE_GLOBS = ("src/**/*.rs", "tests/**/*", "scripts/*.py")
@@ -69,6 +73,8 @@ EXPECTED_DUPLICATE_SKIPS = {
     ("crypto-common", "=0.2.2"),
     ("digest", "=0.10.7"),
     ("digest", "=0.11.3"),
+    ("base64", "=0.22.1"),
+    ("untrusted", "=0.7.1"),
 }
 
 

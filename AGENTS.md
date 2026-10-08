@@ -23,11 +23,27 @@ those belong to `broker-connectors`.
   invoke real OAuth or rclone configuration, query or publish remote archives, or upload data/test
   artifacts. Pin third-party Actions to full commit SHAs and grant each workflow only its required
   token permissions. Reuse `docs/CI.md` commands instead of duplicating validation logic.
-- Remote query is an operator-only, read-only CLI path. Require an explicit curated/diagnostic
-  namespace, verify remote IDs and exact manifest bytes, then verify downloaded SHA-256, size,
-  trusted schema fingerprint, footer, and row facts before serving or exporting. Store observations
-  only in the private bounded cache receipt; do not add self-hash fields to the shared core
-  manifest. A cache hit still rechecks current remote IDs/size/MD5 metadata and local SHA/schema/facts.
+- Remote query is an operator-only, read-only CLI path and an authenticated HTTP path. Require an
+  explicit curated/diagnostic namespace, verify remote IDs and exact manifest bytes, then verify
+  downloaded SHA-256, size, trusted schema fingerprint, footer, and row facts before serving or
+  exporting. Store observations only in the private bounded cache receipt; do not add self-hash
+  fields to the shared core manifest. A cache hit still rechecks current remote IDs/size/MD5 metadata
+  and local SHA/schema/facts. HTTP emits the existing V1 bar DTO and query summary; its u64 summary
+  counts are canonical decimal strings while CLI JSON retains numbers. HTTP must not imply
+  DatasetManifestV2 completion evidence. LocalTest HTTP is diagnostic-only and explicitly
+  synthetic/unknown. Keep browser reads behind a trusted BFF; never expose cache or rclone config.
+- The HTTP service accepts only short-lived HS256 `market:read` delegations for the independent
+  `lqepoch-market-data` audience. `mdp-terminal` is bound to
+  `eqoboard-openterminal`/`MDP_TERMINAL_JWT_SECRET`; `mdp-research` is bound to
+  `openterminal-research`/`MDP_RESEARCH_JWT_SECRET`. The keys must differ from each other and all
+  Gateway keys. Each BFF signer holds only its matching MDP key; the MDP verifier holds both. Do
+  not trust identity headers or `EQO_ACCESS_TOKEN`. Authorize before request-level storage/query
+  access. LocalTest profile defaults to loopback; non-loopback requires both independent keys.
+- The HTTP supervisor owns at most two blocking query jobs, bounds its waiting queue and 120-second
+  request deadline, and retains capacity until cancellation has killed and reaped any child worker.
+  Request drop/timeout and service shutdown must cancel, join, and reap; never detach a worker or
+  publish a successful cache receipt after cancellation. Isolated Parquet decoding remains Linux
+  only and must fail `Unsupported` elsewhere without inline fallback.
   Serialize all cache misses with one cross-process budget lock, hold it through downloads and
   verification, and enforce the observed-size cap while streaming bytes to disk. Expired entries
   must not be treated as fresh or automatically evicted during queries. The local cleanup command
@@ -44,7 +60,12 @@ those belong to `broker-connectors`.
 - Run `cargo +1.98.1 fmt --all -- --check`, `CARGO_BUILD_JOBS=2 cargo +1.98.1 clippy --offline
   --all-targets -- -D warnings`, and `CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline` for Rust
   changes. Keep shared-schema golden tests and the synthetic CLI replay passing.
-- Synchronize README and `docs/ARCHITECTURE.md` whenever the CLI, limits, provenance, archive
+- `scripts/container_smoke.sh` is an offline LocalTest-only container smoke. It requires an already
+  cached immutable Linux runtime image ID in `MDP_RUNTIME_IMAGE_ID`, copies the host-built binary
+  after an exact SHA-256 comparison, and must never pull images or build Rust inside Docker. This
+  smoke does not validate rclone, Drive, or production BFF deployment.
+- Synchronize README, `docs/ARCHITECTURE.md`, and `docs/openapi-v1.yaml` whenever the API, CLI,
+  limits, provenance, archive
   behavior, or validation boundary changes.
 - Supply-chain changes must keep `deny.toml`, `supply-chain/git-source-pins.json`, the committed
   CycloneDX SBOM, license inventory, and `SOURCE-MANIFEST.json` synchronized. Run
