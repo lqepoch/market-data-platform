@@ -18,7 +18,7 @@ The final source tree passed:
 
 - `cargo +1.98.1 fmt --all -- --check`
 - `CARGO_BUILD_JOBS=2 cargo +1.98.1 clippy --offline --locked --all-targets -- -D warnings`
-- `CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline --locked` (90 unit tests and 4 CLI integration tests)
+- `CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline --locked` (90 unit tests and 5 CLI integration tests, including the null-definition negative test with a valid positive control)
 - `cargo +1.98.1 deny --all-features check all`
 - `python3 -m unittest discover -s tests -p 'test_supply_chain.py'`
 - `python3 scripts/supply_chain.py --write` followed by `--check`
