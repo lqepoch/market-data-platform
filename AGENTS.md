@@ -39,6 +39,9 @@ those belong to `broker-connectors`.
   Gateway keys. Each BFF signer holds only its matching MDP key; the MDP verifier holds both. Do
   not trust identity headers or `EQO_ACCESS_TOKEN`. Authorize before request-level storage/query
   access. LocalTest profile defaults to loopback; non-loopback requires both independent keys.
+- Apply `Cache-Control: no-store` at the outer HTTP router layer to every response, including auth,
+  extractor, unmatched-route, and overload responses. Preserve existing cache directives when adding
+  `no-store`.
 - The HTTP supervisor owns at most two blocking query jobs, bounds its waiting queue and 120-second
   request deadline, and retains capacity until cancellation has killed and reaped any child worker.
   Request drop/timeout and service shutdown must cancel, join, and reap; never detach a worker or

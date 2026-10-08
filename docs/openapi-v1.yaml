@@ -5,7 +5,9 @@ info:
   description: >-
     Read-only authenticated access to verified MDP datasets. Bars are the existing
     lqepoch.us_equity_trade_bar_1m.v1 contract. They do not carry DatasetManifestV2
-    completion evidence. A future BarV2 response must use a separately versioned contract.
+    completion evidence. A future BarV2 response must use a separately versioned contract. The
+    router adds Cache-Control: no-store to every response, including authorization, extractor,
+    fallback, and overload errors; an existing Cache-Control value is preserved.
 servers:
   - url: http://127.0.0.1:8088
     description: Default loopback-only listener
@@ -17,6 +19,9 @@ paths:
       responses:
         "200":
           description: The HTTP process is serving requests.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
@@ -32,12 +37,18 @@ paths:
       responses:
         "200":
           description: Required independent MDP verifier keys are configured.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Readiness"
         "503":
           description: The service is restricted to liveness because MDP keys are not configured.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
@@ -80,50 +91,72 @@ paths:
           description: Verified V1 bars and the existing remote query summary.
           headers:
             Cache-Control:
-              schema:
-                type: string
-                const: no-store
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/BarsResponseV1"
         "400":
           description: Invalid symbol, dataset identifier, or query parameters.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Missing or invalid market:read delegation.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Requested namespace is not authorized for the configured transport.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "413":
           description: The bounded result limit was exceeded.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "504":
           description: Query deadline expired; in-flight worker cancellation is supervised.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "503":
           description: No authenticated service or verified query result is available.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 components:
+  headers:
+    NoStore:
+      description: Response is not cacheable by HTTP caches.
+      schema:
+        type: string
+        const: no-store
   securitySchemes:
     mdpDelegation:
       type: http

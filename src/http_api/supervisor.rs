@@ -129,6 +129,38 @@ impl QueryClient {
     }
 }
 
+#[cfg(test)]
+pub(super) struct HeldFullQueryQueue {
+    _receiver: mpsc::Receiver<SupervisorMessage>,
+}
+
+#[cfg(test)]
+impl QueryClient {
+    pub(super) fn with_full_queue_for_test() -> (Self, HeldFullQueryQueue) {
+        let (sender, receiver) = mpsc::channel(QUERY_QUEUE_CAPACITY);
+        for _ in 0..QUERY_QUEUE_CAPACITY {
+            let (response, _result) = oneshot::channel();
+            assert!(
+                sender
+                    .try_send(SupervisorMessage::Query(QueryJob {
+                        namespace: DatasetNamespace::Diagnostic,
+                        dataset_id: "synthetic-dataset".to_owned(),
+                        symbol: "QQQ".to_owned(),
+                        cancellation: CancellationToken::new(),
+                        response,
+                    }))
+                    .is_ok()
+            );
+        }
+        (
+            Self { sender },
+            HeldFullQueryQueue {
+                _receiver: receiver,
+            },
+        )
+    }
+}
+
 struct CancelOnDrop(CancellationToken);
 
 impl Drop for CancelOnDrop {

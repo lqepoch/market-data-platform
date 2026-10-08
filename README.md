@@ -257,8 +257,10 @@ rows and an HTTP projection of `RemoteQuerySummary` in the JSON envelope
 on HTTP, while CLI JSON keeps its existing numeric encoding. It does not reinterpret V1 rows as
 DatasetManifestV2 completion evidence. See [`docs/openapi-v1.yaml`](docs/openapi-v1.yaml).
 The only data route is `GET /v1/datasets/{dataset_id}/bars?namespace=diagnostic|curated&symbol=QQQ`.
-The response is capped at 4 MiB and 390 rows, is marked `Cache-Control: no-store`, and each process
-allows two active query tasks with a bounded queue and 120-second deadline. Dropping a request,
+Responses are capped at 4 MiB and 390 rows. An outer router middleware applies
+`Cache-Control: no-store` to every response, including authentication failures, extractor failures,
+unmatched routes, and query overloads; existing cache directives are preserved. Each process allows
+two active query tasks with a bounded queue and 120-second deadline. Dropping a request,
 timing out, or shutting down cancels owned work and waits for child workers to be reaped before
 capacity is released.
 

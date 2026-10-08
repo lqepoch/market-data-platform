@@ -157,6 +157,30 @@ fn app_router(state: Arc<ServiceState>, auth: Option<AuthConfig>) -> Router {
         .route("/readyz", get(readiness))
         .merge(protected_routes)
         .with_state(state)
+        .layer(middleware::from_fn(no_store))
+}
+
+async fn no_store(request: axum::extract::Request, next: middleware::Next) -> Response {
+    let mut response = next.run(request).await;
+    let has_no_store = response
+        .headers()
+        .get_all(header::CACHE_CONTROL)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(|directive| {
+            directive
+                .trim()
+                .split_once('=')
+                .map_or(directive.trim(), |(name, _)| name.trim())
+        })
+        .any(|directive| directive.eq_ignore_ascii_case("no-store"));
+    if !has_no_store {
+        response
+            .headers_mut()
+            .append(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    response
 }
 
 async fn liveness() -> impl IntoResponse {

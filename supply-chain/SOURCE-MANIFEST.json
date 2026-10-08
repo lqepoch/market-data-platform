@@ -50,11 +50,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "b67e1bdd79ed726781466dcc57d18b8d0fd0a86114729e17e7296d80f5f337fe"
+      "sha256": "2bf36f19d78c203519a8d55dffb373e03a365976c0486e742579f456733feb1c"
     },
     {
       "path": "AGENTS.md",
-      "sha256": "2c4f3e0e112864e31c9f05817d931923e956238f4cb708fc4ba9f36d2784ffaf"
+      "sha256": "340dcee212b7eef0022ac0269f973f06f6bb14b40ba4d99275bea0dfbb178780"
     },
     {
       "path": "docs/ARCHITECTURE.md",
@@ -70,7 +70,7 @@
     },
     {
       "path": "docs/openapi-v1.yaml",
-      "sha256": "481b489241b4a85ee93cf7a564ab4758f1854a7d030c06c435d0b6dd53c04e14"
+      "sha256": "8745d63dde7b3f255b695c4582989f0db74acd588d8174eec6280721b5eb856c"
     },
     {
       "path": "supply-chain/git-source-pins.json",
@@ -1713,7 +1713,7 @@
       },
       {
         "path": "src/http_api.rs",
-        "sha256": "5b6dd098871802984292ddab999ba05de45c70575dcabd6e43fd2f1134e3b0df"
+        "sha256": "0c494c88ee2cc9b05ed4a4a0f235b3afd379a62fd4b7bafb421cf31f40657a9b"
       },
       {
         "path": "src/http_api/auth.rs",
@@ -1721,11 +1721,11 @@
       },
       {
         "path": "src/http_api/supervisor.rs",
-        "sha256": "a617049d9979bf6db4c43c5f70f9971b835daad8a87ef4f8da063a12941fd0b7"
+        "sha256": "acd6b3bd3460337f28fb73a49969f4e6f6b2440330835bc3c3a855e6a9ef7829"
       },
       {
         "path": "src/http_api/tests.rs",
-        "sha256": "911ce84120ee22f79f5d38f67a43654ccac4e3008fef0f19c7206ede55524e47"
+        "sha256": "be4f13656b351fa30f1f4287526796b0e12d4b331452b237647cc4a44775d2ab"
       },
       {
         "path": "src/lib.rs",
@@ -1836,7 +1836,7 @@
         "sha256": "672f37defce7e1d67f8d684580db4e6ce9e517afd8c6bdf67f99d96c7e573eca"
       }
     ],
-    "sha256": "8f32a45e4289215146202a0cd190f3022cc9c48c23b11c7f628055e3dc97120f"
+    "sha256": "832cb421d161079ba1098098c1676c9329f4463ae3e595ba86c30ca12b741aa8"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
