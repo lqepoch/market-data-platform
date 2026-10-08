@@ -6,15 +6,20 @@
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use market_contracts::parquet_schema::{
     MARKET_EVENT_PARQUET_SCHEMA_ID, MARKET_EVENT_PARQUET_SCHEMA_V2_ID,
-    MARKET_RAW_FRAME_PARQUET_SCHEMA_ID, ParquetSchemaDescriptorV1, ParquetSchemaError,
-    US_EQUITY_TRADE_BAR_1M_SCHEMA_ID, trusted_parquet_schema, trusted_schema_fingerprint,
+    MARKET_EVENT_PARQUET_SCHEMA_V3_ID, MARKET_RAW_FRAME_PARQUET_SCHEMA_ID,
+    MARKET_RAW_FRAME_PARQUET_SCHEMA_V2_ID, MARKET_RAW_JSON_FRAME_PARQUET_SCHEMA_V2_ID,
+    ParquetSchemaDescriptorV1, ParquetSchemaError, US_EQUITY_TRADE_BAR_1M_SCHEMA_ID,
+    trusted_parquet_schema, trusted_schema_fingerprint,
 };
 
 use crate::{MarketDataError, Result};
 
 pub const EVENT_SCHEMA_ID: &str = MARKET_EVENT_PARQUET_SCHEMA_ID;
 pub const EVENT_SCHEMA_V2_ID: &str = MARKET_EVENT_PARQUET_SCHEMA_V2_ID;
+pub const EVENT_SCHEMA_V3_ID: &str = MARKET_EVENT_PARQUET_SCHEMA_V3_ID;
 pub const RAW_FRAME_SCHEMA_ID: &str = MARKET_RAW_FRAME_PARQUET_SCHEMA_ID;
+pub const RAW_FRAME_SCHEMA_V2_ID: &str = MARKET_RAW_FRAME_PARQUET_SCHEMA_V2_ID;
+pub const RAW_JSON_FRAME_SCHEMA_V2_ID: &str = MARKET_RAW_JSON_FRAME_PARQUET_SCHEMA_V2_ID;
 pub const MINUTE_BAR_SCHEMA_ID: &str = US_EQUITY_TRADE_BAR_1M_SCHEMA_ID;
 
 pub fn descriptor(schema_id: &str) -> Result<ParquetSchemaDescriptorV1> {

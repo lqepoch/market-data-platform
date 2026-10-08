@@ -4,8 +4,9 @@ use crate::queue::CollectionMessage;
 use chrono::{DateTime, SecondsFormat, Utc};
 use market_contracts::{
     DecimalString, EntitlementState, EventMetadataV1, MarketDataSourceV1, MarketEventEnvelopeV1,
-    MarketEventParquetRowV2, MarketEventV1, NumericEncodingV1, RawFrameDispositionV1,
-    RawFrameReferenceV2, RawFrameStorageRecordV1,
+    MarketEventParquetRowV2, MarketEventParquetRowV3, MarketEventV1, NumericEncodingV1,
+    RawFrameCaptureInstanceIdV2, RawFrameDispositionV1, RawFrameReferenceV2, RawFrameReferenceV3,
+    RawFrameStorageRecordV1, RawFrameStorageRecordV2,
 };
 #[cfg(feature = "benchmark-snappy")]
 use parquet::basic::Compression;
@@ -145,6 +146,122 @@ fn event_v2_row(frame: &RawFrameStorageRecordV1, ordinal: u32) -> MarketEventPar
             raw_frame_event_count: frame.event_count,
         }),
     }
+}
+
+fn raw_frame_v2_record() -> RawFrameStorageRecordV2 {
+    let frame_bytes = vec![
+        0x92, 0xa5, b't', b'r', b'a', b'd', b'e', 0xa4, b'1', b'.', b'2', b'5',
+    ];
+    let digest = Sha256::digest(&frame_bytes);
+    RawFrameStorageRecordV2 {
+        schema_version: 2,
+        provider: "synthetic".to_owned(),
+        feed: "synthetic".to_owned(),
+        entitlement: EntitlementState::Unknown,
+        source_numeric_encoding: Some(NumericEncodingV1::DecimalToken),
+        capture_instance_id: RawFrameCaptureInstanceIdV2::parse("00000000000040008000000000000001")
+            .unwrap(),
+        source_generation: 3,
+        source_frame_sequence: 1,
+        canonical_generation: 5,
+        received_timestamp_utc: UtcTimestamp::parse("2026-10-08T14:30:00Z").unwrap(),
+        frame_sha256: digest.iter().map(|byte| format!("{byte:02x}")).collect(),
+        frame_bytes,
+        event_count: 1,
+        disposition: RawFrameDispositionV1::MarketData,
+        symbols_json: r#"["QQQ"]"#.to_owned(),
+    }
+}
+
+fn event_v3_row(frame: &RawFrameStorageRecordV2) -> MarketEventParquetRowV3 {
+    MarketEventParquetRowV3 {
+        event: MarketEventEnvelopeV1 {
+            metadata: EventMetadataV1 {
+                schema_version: 1,
+                source: MarketDataSourceV1::new(
+                    "synthetic",
+                    "synthetic",
+                    EntitlementState::Unknown,
+                    NumericEncodingV1::DecimalToken,
+                    None,
+                )
+                .unwrap(),
+                generation: frame.canonical_generation,
+                sequence: frame.source_frame_sequence,
+                raw_frame_sha256: Some(frame.frame_sha256.clone()),
+                source_timestamp: Some(frame.received_timestamp_utc.clone()),
+                received_timestamp: frame.received_timestamp_utc.clone(),
+            },
+            event: MarketEventV1::StockTrade {
+                symbol: "QQQ".to_owned(),
+                price: DecimalString::new("600.25").unwrap(),
+                size: DecimalString::new("1").unwrap(),
+            },
+        },
+        raw_frame_reference: Some(RawFrameReferenceV3 {
+            raw_frame_capture_instance_id: frame.capture_instance_id.clone(),
+            raw_frame_source_generation: frame.source_generation,
+            raw_frame_generation: frame.canonical_generation,
+            raw_frame_sequence: frame.source_frame_sequence,
+            raw_frame_event_ordinal: 1,
+            raw_frame_event_count: frame.event_count,
+        }),
+    }
+}
+
+#[test]
+fn core_raw_frame_v2_and_event_v3_roundtrip_capture_key_and_validate_exact_pair() {
+    let temp = tempdir().unwrap();
+    let raw_path = temp.path().join("capture-raw-v2.parquet");
+    let event_path = temp.path().join("capture-events-v3.parquet");
+    let frame = raw_frame_v2_record();
+    let event = event_v3_row(&frame);
+    market_contracts::validate_messagepack_capture_chunk_v2(
+        std::slice::from_ref(&frame),
+        std::slice::from_ref(&event),
+    )
+    .unwrap();
+
+    let raw = write_raw_capture_frames_v2_with_limit(
+        &raw_path,
+        std::slice::from_ref(&frame),
+        1024 * 1024,
+    )
+    .unwrap();
+    let events =
+        write_event_v3_with_limit(&event_path, std::slice::from_ref(&event), 1024 * 1024).unwrap();
+    assert_eq!(raw.schema_id, crate::schema::RAW_FRAME_SCHEMA_V2_ID);
+    assert_eq!(events.schema_id, crate::schema::EVENT_SCHEMA_V3_ID);
+    assert_eq!(
+        raw.schema_sha256,
+        market_contracts::trusted_schema_fingerprint(crate::schema::RAW_FRAME_SCHEMA_V2_ID,)
+            .unwrap()
+    );
+    assert_eq!(
+        events.schema_sha256,
+        market_contracts::trusted_schema_fingerprint(crate::schema::EVENT_SCHEMA_V3_ID,).unwrap()
+    );
+    assert_eq!(
+        read_capture_raw_frames_v2(&raw_path, 1024 * 1024).unwrap(),
+        std::slice::from_ref(&frame)
+    );
+    assert_eq!(
+        read_capture_event_v3(&event_path, 1024 * 1024).unwrap(),
+        [event]
+    );
+    assert_eq!(
+        verify_capture_pair_v2(
+            &raw_path,
+            crate::schema::RAW_FRAME_SCHEMA_V2_ID,
+            &event_path,
+            1024 * 1024,
+        )
+        .unwrap(),
+        RawEventCorrelationVerification {
+            raw_frame_rows: 1,
+            event_rows: 1,
+        }
+    );
 }
 
 #[test]

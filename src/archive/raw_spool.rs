@@ -14,7 +14,10 @@ use std::{
     },
 };
 
-use broker_ports::{RawFrameSinkError, RawFrameSinkFactory};
+use broker_ports::{
+    RawCaptureInstanceId, RawFrameCapture, RawFrameFinalization, RawFrameSinkError,
+    RawFrameSinkFactory,
+};
 use tokio::sync::watch;
 
 #[cfg(target_os = "linux")]
@@ -124,10 +127,61 @@ impl LocalRawFrameSpoolFactory {
         self.inner.supervisor.close_and_wait().await;
     }
 
+    /// Opens a read-only cursor over one capture created by this live factory instance.
+    ///
+    /// The cursor snapshots the synchronized log length after confirming that no frame is
+    /// awaiting finalization. It never opens directories from an earlier process. Returned chunks
+    /// are bounded by the shared Core raw-capture limits and preserve source-local generations.
+    pub(crate) fn open_current_capture_reader(
+        &self,
+        capture_instance_id: RawCaptureInstanceId,
+    ) -> Result<RawFrameSpoolCaptureReader, RawFrameSinkError> {
+        #[cfg(target_os = "linux")]
+        {
+            Ok(RawFrameSpoolCaptureReader {
+                inner: linux::open_capture_reader(&self.inner, capture_instance_id)?,
+            })
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = capture_instance_id;
+            Err(RawFrameSinkError::Unavailable)
+        }
+    }
+
     /// Returns the bounded summary of old directories preserved as unknown.
     #[must_use]
     pub const fn recovery_summary(&self) -> RawFrameSpoolRecoverySummary {
         self.recovery
+    }
+}
+
+/// Exact pre-decode bytes and the matching durable post-decode summary reconstructed from WAL.
+pub(crate) struct SpooledRawFrame {
+    pub(crate) capture: RawFrameCapture,
+    pub(crate) finalization: RawFrameFinalization,
+    pub(crate) finalization_summary_sha256: String,
+}
+
+/// Streaming reader for one current-process capture's fully finalized WAL records.
+pub(crate) struct RawFrameSpoolCaptureReader {
+    #[cfg(target_os = "linux")]
+    inner: linux::CaptureReader,
+}
+
+impl RawFrameSpoolCaptureReader {
+    /// Returns the next bounded chunk, or `None` after the complete snapshotted WAL is verified.
+    pub(crate) fn next_chunk(&mut self) -> Result<Option<Vec<SpooledRawFrame>>, RawFrameSinkError> {
+        #[cfg(target_os = "linux")]
+        {
+            self.inner.next_chunk()
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        {
+            Err(RawFrameSinkError::Unavailable)
+        }
     }
 }
 

@@ -86,10 +86,108 @@ async fn local_spool_syncs_exact_bytes_and_quarantines_prior_process_identity() 
     assert_eq!(recovery.preserved_capture_directories, 1);
     assert_eq!(recovery.preserved_bytes, committed_bytes.len() as u64);
     assert_eq!(fs::read(&old_log).unwrap(), committed_bytes);
+    assert!(matches!(
+        restarted.open_current_capture_reader(first_id),
+        Err(RawFrameSinkError::Unavailable)
+    ));
 
     let new_sink = restarted.create_sink("synthetic", "synthetic").unwrap();
     assert_ne!(new_sink.capture_instance_id(), first_id);
     assert_eq!(fs::read(&old_log).unwrap(), committed_bytes);
+}
+
+#[tokio::test]
+async fn local_spool_readback_reconstructs_only_fully_finalized_bounded_chunks() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("raw-spool");
+    let factory = LocalRawFrameSpoolFactory::open(&root, RawFrameSpoolLimits::default()).unwrap();
+    let sink = factory.create_sink("synthetic", "synthetic").unwrap();
+    let capture_id = sink.capture_instance_id();
+
+    for (generation, sequence, payload, summary) in [
+        (7, 1, FIXTURE_FRAME, market_summary()),
+        (
+            7,
+            2,
+            b"{\"T\":\"q\",\"S\":\"SYNTH\"}".as_slice(),
+            control_summary(),
+        ),
+        (
+            9,
+            1,
+            b"{\"T\":\"t\",\"S\":\"SYNTH2\",\"p\":2.5}".as_slice(),
+            raw_json_summary(),
+        ),
+    ] {
+        let capture = capture(capture_id, generation, sequence, payload);
+        let predecode_ack = sink.persist_before_decode(&capture).await.unwrap();
+        assert!(predecode_ack.matches(&capture));
+        let finalization_ack = sink
+            .finalize_after_decode(&predecode_ack, &summary)
+            .await
+            .unwrap();
+        assert!(finalization_ack.matches(&predecode_ack, &summary));
+    }
+
+    let mut reader = factory.open_current_capture_reader(capture_id).unwrap();
+    let first_chunk = reader.next_chunk().unwrap().unwrap();
+    assert_eq!(first_chunk.len(), 2);
+    assert_eq!(first_chunk[0].capture.source_generation(), 7);
+    assert_eq!(first_chunk[0].capture.frame_sequence(), 1);
+    assert_eq!(first_chunk[0].capture.payload().as_bytes(), FIXTURE_FRAME);
+    assert_eq!(first_chunk[0].finalization.event_count(), 1);
+    assert_eq!(
+        first_chunk[0].finalization_summary_sha256,
+        broker_ports::RawFrameFinalizationAck::for_finalization(
+            &broker_ports::RawFrameCaptureAck::for_capture(&first_chunk[0].capture),
+            &first_chunk[0].finalization,
+        )
+        .summary_sha256()
+    );
+    assert_eq!(first_chunk[1].capture.source_generation(), 7);
+    assert_eq!(first_chunk[1].capture.frame_sequence(), 2);
+    assert_eq!(first_chunk[1].finalization.event_count(), 0);
+
+    let reconnect_chunk = reader.next_chunk().unwrap().unwrap();
+    assert_eq!(reconnect_chunk.len(), 1);
+    assert_eq!(reconnect_chunk[0].capture.source_generation(), 9);
+    assert_eq!(reconnect_chunk[0].capture.frame_sequence(), 1);
+    assert_eq!(
+        reconnect_chunk[0].capture.payload().as_bytes(),
+        b"{\"T\":\"t\",\"S\":\"SYNTH2\",\"p\":2.5}"
+    );
+    assert_eq!(
+        reconnect_chunk[0].finalization.numeric_encoding(),
+        Some(NumericEncodingV1::RawJsonBytes)
+    );
+    assert!(reader.next_chunk().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn local_spool_readback_rejects_record_checksum_corruption() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path().join("raw-spool");
+    let factory = LocalRawFrameSpoolFactory::open(&root, RawFrameSpoolLimits::default()).unwrap();
+    let sink = factory.create_sink("synthetic", "synthetic").unwrap();
+    let capture_id = sink.capture_instance_id();
+    let capture = capture(capture_id, 1, 1, FIXTURE_FRAME);
+    let predecode_ack = sink.persist_before_decode(&capture).await.unwrap();
+    let summary = market_summary();
+    sink.finalize_after_decode(&predecode_ack, &summary)
+        .await
+        .unwrap();
+
+    let log_path = capture_dir(&root, capture_id).join("frames.log");
+    let mut bytes = fs::read(&log_path).unwrap();
+    let last_byte = bytes.len() - 1;
+    bytes[last_byte] ^= 0x01;
+    fs::write(&log_path, bytes).unwrap();
+
+    let mut reader = factory.open_current_capture_reader(capture_id).unwrap();
+    assert!(matches!(
+        reader.next_chunk(),
+        Err(RawFrameSinkError::Ambiguous)
+    ));
 }
 
 #[tokio::test]
@@ -182,6 +280,10 @@ async fn local_spool_does_not_accept_next_frame_before_finalization() {
     let id = sink.capture_instance_id();
     let first = capture(id, 1, 1, b"synthetic first frame");
     sink.persist_before_decode(&first).await.unwrap();
+    assert!(matches!(
+        factory.open_current_capture_reader(id),
+        Err(RawFrameSinkError::Poisoned)
+    ));
     let second = capture(id, 1, 2, b"synthetic second frame");
 
     assert_eq!(
@@ -464,6 +566,16 @@ fn market_summary() -> RawFrameFinalization {
         1,
         vec!["SYNTH".to_owned()],
         Some(NumericEncodingV1::DecimalToken),
+        RawFrameDisposition::DecodedMarketData,
+    )
+    .unwrap()
+}
+
+fn raw_json_summary() -> RawFrameFinalization {
+    RawFrameFinalization::new(
+        1,
+        vec!["SYNTH2".to_owned()],
+        Some(NumericEncodingV1::RawJsonBytes),
         RawFrameDisposition::DecodedMarketData,
     )
     .unwrap()

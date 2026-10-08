@@ -3,6 +3,9 @@
 pub mod aggregate;
 pub mod archive;
 pub mod cancellation;
+#[cfg(feature = "offline-capture-synthetic")]
+#[doc(hidden)]
+pub mod capture_synthetic;
 pub mod config;
 pub mod error;
 pub mod http_api;

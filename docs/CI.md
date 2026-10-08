@@ -29,7 +29,9 @@ Run the checks from the repository root:
 ```sh
 cargo +1.98.1 fmt --all -- --check
 CARGO_BUILD_JOBS=2 cargo +1.98.1 clippy --offline --all-targets -- -D warnings
+CARGO_BUILD_JOBS=2 cargo +1.98.1 clippy --offline --all-targets --features offline-capture-synthetic -- -D warnings
 CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline
+CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline --features offline-capture-synthetic --test offline_capture_cli
 cargo +1.98.1 deny --all-features check all
 python3 -m unittest discover -s tests -p 'test_supply_chain.py'
 python3 scripts/supply_chain.py --check

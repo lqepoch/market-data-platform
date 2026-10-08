@@ -32,6 +32,17 @@ those belong to `broker-connectors`.
   counts are canonical decimal strings while CLI JSON retains numbers. HTTP must not imply
   DatasetManifestV2 completion evidence. LocalTest HTTP is diagnostic-only and explicitly
   synthetic/unknown. Keep browser reads behind a trusted BFF; never expose cache or rclone config.
+- The optional `offline-capture-synthetic` feature may replay only the broker-owned fixed
+  `AlpacaOpraTradeV1` MessagePack fixture through its existing runner. Preserve `alpaca/opra` and
+  unknown entitlement. Mark Pair manifests `LocalArchive` because they describe exact local finite
+  input/readback; include `synthetic-offline-fixture` and the reviewed fixture ID in `input_identity`
+  and dataset IDs. The private MDP receipt and CLI report must retain `SYNTHETIC_REPLAY_FIXTURE`,
+  `NOT_ASSERTED`, and explicit not-real-OPRA/not-live labeling. `LocalArchive` does not establish
+  provider authority, entitlement, Drive durability, or completeness. The fixed freshness clock is
+  only a fixture freshness cutoff; received timestamps remain actual runner timestamps. The local
+  `FixtureEnd` control marker is never provider or watermark evidence; ordinary EOF, timeout, or
+  cancellation cannot complete a capture. Never add arbitrary fixture bytes, provider credentials,
+  or a live-capture path to this feature.
 - `archive::LocalRawFrameSpoolFactory` implements the broker's two-stage raw-frame sink on Linux.
   Persist exact payload bytes and the full source-local identity before predecode ACK, then persist
   the matching finalization summary before final ACK. Cancellation, ambiguous I/O, sequence gaps,

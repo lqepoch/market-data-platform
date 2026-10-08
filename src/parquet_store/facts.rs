@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{rows::source_from_bar, *};
-use market_contracts::{NumericEncodingV1, RawFrameStorageRecordV1};
+use market_contracts::{
+    NumericEncodingV1, RawFrameStorageRecordV1, RawFrameStorageRecordV2,
+    RawJsonFrameStorageRecordV2,
+};
 
 #[derive(Default)]
 pub(super) struct DatasetFacts {
@@ -140,6 +143,58 @@ impl DatasetFacts {
             .checked_add(1)
             .ok_or(MarketDataError::InputLimit)?;
         Ok(())
+    }
+
+    pub(super) fn observe_raw_frame_v2(
+        &mut self,
+        provider: &str,
+        feed: &str,
+        entitlement: market_contracts::EntitlementState,
+        encoding: NumericEncodingV1,
+        symbols: impl IntoIterator<Item = String>,
+    ) -> Result<()> {
+        let source = MarketDataSourceV1 {
+            provider: provider.to_owned(),
+            feed: feed.to_owned(),
+            entitlement,
+            numeric_encoding: encoding,
+            source_record_id: None,
+        };
+        self.observe_source(source)?;
+        self.symbols.extend(symbols);
+        self.source_timestamp_missing_rows = self
+            .source_timestamp_missing_rows
+            .checked_add(1)
+            .ok_or(MarketDataError::InputLimit)?;
+        Ok(())
+    }
+
+    pub(super) fn observe_raw_frame_v2_messagepack(
+        &mut self,
+        row: &RawFrameStorageRecordV2,
+    ) -> Result<()> {
+        row.validate().map_err(|_| MarketDataError::Contract)?;
+        self.observe_raw_frame_v2(
+            &row.provider,
+            &row.feed,
+            row.entitlement,
+            NumericEncodingV1::RawMessagePackBytes,
+            row.symbols().map_err(|_| MarketDataError::Contract)?,
+        )
+    }
+
+    pub(super) fn observe_raw_json_frame_v2(
+        &mut self,
+        row: &RawJsonFrameStorageRecordV2,
+    ) -> Result<()> {
+        row.validate().map_err(|_| MarketDataError::Contract)?;
+        self.observe_raw_frame_v2(
+            &row.provider,
+            &row.feed,
+            row.entitlement,
+            NumericEncodingV1::RawJsonBytes,
+            row.symbols().map_err(|_| MarketDataError::Contract)?,
+        )
     }
 
     pub(super) fn observe_bar(&mut self, row: &TradeMinuteBarV1) -> Result<()> {
