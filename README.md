@@ -201,10 +201,12 @@ window end and no earlier than any event receive timestamp.
   60 CPU seconds, 120 seconds wall time, 256 MiB stdout, and two active workers per process. Worker
   failure is rejected before cache receipt creation; subprocess groups are terminated and reaped.
   The CLI uses Tokio's current-thread runtime so short-lived workers do not reserve a per-core thread
-  pool inside the address-space cap. The production CLI also rejects a file-level fixture whose
-  unchanged page bytes contain a null definition level while the footer and Arrow schema hint
-  declare the field required; both `verify` and `query-bars` fail without publishing output or a
-  receipt. This covers that malformed-null case, not every invalid definition-level encoding.
+  pool inside the address-space cap. The file-level null fixture starts from a production-written,
+  valid 390-row synthetic session: the positive file passes CLI `verify` and `query-bars`, then the
+  negative copy changes only the first `symbol` to null and rewrites the footer and Arrow schema hint
+  to declare that column required. Other decoded columns are compared unchanged, and the Parquet
+  decoder plus both CLI paths reject the negative copy before publishing output or a receipt. This
+  covers that malformed-null case, not every invalid definition-level encoding.
   Non-Linux platforms return `Unsupported` for isolated decode and do not fall back to inline decode.
   The OS boundary protects the parent from page-header allocation bombs; it is not a per-page size
   validator or a claim that the Parquet reader itself bounds every allocation.

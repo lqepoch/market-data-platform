@@ -77,13 +77,15 @@ supervisor kills and reaps failed/timed-out workers. A decode error cannot creat
 receipt or return rows. Other operating systems fail closed with `Unsupported` instead of decoding
 inline. This is process containment, not a per-page validator or an absolute guarantee against
 every allocation pattern within the capped worker. The CLI uses Tokio's current-thread runtime so
-short-lived workers do not reserve a per-core thread pool inside the address-space cap. A file-level
-fixture writes a nullable `symbol` column with an actual null definition level, then rewrites only
-the footer and Arrow schema hint to declare that column required. The page-data prefix is asserted
-byte-identical, and the resulting file still matches the trusted logical schema and fingerprint.
-Production CLI `verify` and `query-bars` both reject it through the isolated worker; the test
-confirms that no decoded report, query export, manifest, or receipt is published. This covers null
-definition levels for a required field, not every malformed Parquet encoding.
+short-lived workers do not reserve a per-core thread pool inside the address-space cap. The file-level
+fixture starts from a production-written, valid 390-row synthetic session whose CLI `verify` and
+`query-bars` both pass. Its negative copy changes only the first `symbol` to null, then rewrites the
+footer and Arrow schema hint to declare that column required. The test compares all other decoded
+columns with the positive file, asserts that the Parquet decoder rejects the required-field null,
+and confirms that CLI `verify` and `query-bars` publish no report, export, manifest, or receipt. The
+page-data prefix is unchanged during the footer rewrite and the malformed file still matches the
+trusted logical schema and fingerprint. This covers null definition levels for a required field,
+not every malformed Parquet encoding.
 
 The low-level `parquet_store` in-process reader functions are limited to MDP-owned output and
 trusted local fixtures. The `parquet_worker` launcher resolves `current_exe` and is CLI-owned, not a

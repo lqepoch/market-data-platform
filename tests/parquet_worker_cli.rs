@@ -357,11 +357,61 @@ async fn production_cli_rejects_a_real_page_header_bomb_without_publishing_query
 }
 
 #[tokio::test]
-async fn production_cli_rejects_null_definition_levels_for_a_required_field() {
+async fn production_cli_rejects_null_definition_levels_after_a_valid_positive_control() {
     let _serial = CLI_SERIAL.get_or_init(Default::default).lock().await;
     let temp = tempdir().unwrap();
-    let malformed = temp.path().join("required-symbol-with-null-level.parquet");
-    required_null_fixture::write_required_schema_with_null_definition_level(&malformed);
+    let source_dir = temp.path().join("source");
+    std::fs::create_dir(&source_dir).unwrap();
+    synthetic_390_minute_session_replay(&source_dir)
+        .await
+        .unwrap();
+    let positive = source_dir
+        .join("staging/synthetic-2026-10-08-full-390-minute-session-parquet-v2-bars-1m-v1.parquet");
+
+    let positive_verify = run_cli(&[
+        "verify",
+        "--parquet",
+        positive.to_str().unwrap(),
+        "--schema",
+        "us-equity-trade-bar1m-v1",
+    ]);
+    assert!(
+        positive_verify.status.success(),
+        "valid positive control failed: {}",
+        String::from_utf8_lossy(&positive_verify.stderr)
+    );
+    let positive_json: serde_json::Value = serde_json::from_slice(&positive_verify.stdout).unwrap();
+    assert_eq!(positive_json["decoded_rows"], 390);
+    let positive_export = temp.path().join("positive-query.jsonl");
+    let positive_query = run_cli(&[
+        "query-bars",
+        "--parquet",
+        positive.to_str().unwrap(),
+        "--symbol",
+        "QQQ",
+        "--export-jsonl",
+        positive_export.to_str().unwrap(),
+    ]);
+    assert!(
+        positive_query.status.success(),
+        "valid positive-control query failed: {}",
+        String::from_utf8_lossy(&positive_query.stderr)
+    );
+    let positive_query_json: serde_json::Value =
+        serde_json::from_slice(&positive_query.stdout).unwrap();
+    assert_eq!(positive_query_json["exported_rows"], 390);
+    assert_eq!(
+        std::fs::read_to_string(positive_export)
+            .unwrap()
+            .lines()
+            .count(),
+        390
+    );
+
+    let negative_dir = temp.path().join("negative");
+    std::fs::create_dir(&negative_dir).unwrap();
+    let malformed = negative_dir.join("required-symbol-with-null-level.parquet");
+    required_null_fixture::write_required_schema_with_null_definition_level(&positive, &malformed);
 
     let verify = run_cli(&[
         "verify",
@@ -374,6 +424,11 @@ async fn production_cli_rejects_null_definition_levels_for_a_required_field() {
         !verify.status.success(),
         "verify accepted malformed Parquet; stdout={} stderr={}",
         String::from_utf8_lossy(&verify.stdout),
+        String::from_utf8_lossy(&verify.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&verify.stderr).contains("Error: Parquet"),
+        "verify did not report the required-field Parquet decode failure: {}",
         String::from_utf8_lossy(&verify.stderr)
     );
     assert!(!String::from_utf8_lossy(&verify.stdout).contains("\"decoded_rows\""));
@@ -394,10 +449,15 @@ async fn production_cli_rejects_null_definition_levels_for_a_required_field() {
         String::from_utf8_lossy(&query.stdout),
         String::from_utf8_lossy(&query.stderr)
     );
+    assert!(
+        String::from_utf8_lossy(&query.stderr).contains("Error: Parquet"),
+        "query did not report the required-field Parquet decode failure: {}",
+        String::from_utf8_lossy(&query.stderr)
+    );
     assert!(!String::from_utf8_lossy(&query.stdout).contains("\"exported_rows\""));
     assert!(!export.exists());
 
-    for entry in std::fs::read_dir(temp.path()).unwrap() {
+    for entry in std::fs::read_dir(&negative_dir).unwrap() {
         let name = entry.unwrap().file_name();
         let name = name.to_string_lossy();
         assert!(
