@@ -21,6 +21,11 @@ shared-contract JSONL and synthetic input. No live SIP/OPRA feed was connected i
 - The rclone Google Drive adapter is implemented behind the archive boundary and has fake-transport
   reconciliation tests. The public CLI only exposes `local-test`; real rclone execution, OAuth,
   remote reads/writes, project quota discovery, and Drive upload are **NOT RUN**.
+- Core raw MessagePack v1 and correlated event v2 Parquet writers are available for offline local
+  diagnostics. Their pair publisher is local-test only; synthetic inputs stay `synthetic/synthetic`
+  and do not establish Alpaca provenance. The current broker adapter decodes a frame before placing
+  its raw bytes and normalized events on the in-memory ordered channel. MDP does not yet fsync those
+  bytes before broker normalization, and no runnable provider capture command is connected.
 - SIP/OPRA entitlement and source authorization remain **UNVERIFIED** until trusted operator/provider
   evidence is supplied through the approved source-admission path. Readback proves object bytes, not
   provenance, entitlement, feed completeness, or market-data licensing.
@@ -51,8 +56,10 @@ cargo +1.98.1 run --offline -- cleanup-staging \
 ```
 
 `synthetic` runs the full local workflow and prints a JSON report. It creates immutable output
-files, so use a fresh `--output` directory for another run. `verify` accepts `market-events-v1` or
-`us-equity-trade-bar1m-v1`. `query-bars` prints rows as JSONL or writes them to a new export file.
+files, so use a fresh `--output` directory for another run. `verify` accepts `market-events-v1`,
+`market-events-v2`, `market-raw-frame-v1`, or `us-equity-trade-bar1m-v1`. The v2 event and raw-frame
+schemas must match their exact core schema fingerprints and physical fields. `query-bars` prints
+rows as JSONL or writes them to a new export file.
 `cleanup-staging` is a dry run unless `--apply` is supplied; it only considers MDP-named temporary
 files, preserves live-PID/locked/unresolved-receipt candidates, and never removes published objects
 or manifests. On platforms without Linux `/proc` process evidence it conservatively preserves all
@@ -143,6 +150,37 @@ window end and no earlier than any event receive timestamp.
 ## Bounds and storage contract
 
 - Raw event frame: at most 16 KiB. JSONL input: at most 64 MiB and 100,000 records.
+- The separate broker raw-MessagePack frame contract allows at most 1 MiB per frame. An MDP raw
+  capture object is capped at 16 MiB of frame bytes and 1,024 frame rows. The raw Parquet manifest
+  records one row per application frame, has no source-time range, and counts every frame as missing
+  a source timestamp; receive time is not substituted for provider event time. `symbols_json=[]`
+  is valid for control/unknown rows only when the whole capture contains a nonempty symbol union.
+  Captures with an empty union, sequence gaps, malformed frames, or provider errors do not receive
+  a paired capture receipt. Malformed/error frames may remain in bounded staging for operator
+  quarantine and recovery. This raw MessagePack schema accepts Alpaca OPRA frames or explicitly
+  synthetic frames; it rejects SIP JSON and indicative-feed relabeling, which require their own
+  wire-format contract.
+- `ArchivePublisher::publish_local_diagnostic_capture_pair` verifies raw frame hashes, canonical
+  generation/sequence continuity, event-to-frame hashes, provider/feed/entitlement/receive-time
+  identity, symbol membership, and complete per-frame event ordinals before publishing the pair to
+  the injected `local-test` transport. It writes a private pair receipt containing both object IDs,
+  manifest hashes, content hashes, schemas, and counts. The receipt scope is only
+  `local_parquet_pair_verified`; provider completeness is `not_asserted`. Raw-only and event-v2-only
+  publication are rejected, and this pair API cannot write to Google Drive. Its caller must supply
+  a fresh cryptographically random UUIDv4 for each provider subscription/capture instance, so a
+  process restart that reuses a numeric generation does not reuse an immutable dataset identity.
+  Durable pair state records `in_flight`/`unknown` and component progress; a half-published pair
+  has no pair receipt. Restart reconciles each immutable component before publishing the pair
+  receipt, and the same capture UUID cannot be reused with different frame/event bytes. Pair
+  correlation decodes inline and accepts only MDP-owned producer files in its configured staging
+  directory; arbitrary Parquet must use the CLI worker boundary. A future capture CLI must add
+  cross-object correlation to the worker before exposing such an entrypoint.
+- The broker's current MessagePack path decodes/analyzes the application frame before queueing its
+  raw bytes and projected events. The MDP pair API publishes the raw object before the event object
+  only after both have been decoded/projected and written to local staging; it does not provide
+  persist-before-normalize. A durable broker-side raw sink and acknowledgement before decoding are
+  still required for that guarantee. No real OPRA capture, Google Drive write, or provider watermark
+  was exercised.
 - Collection/archive queues: 256 events and 64 pending submissions in the replay path; at most 32
   combined dedicated collection and archive writer threads per process; tracked provider/feed
   cursors: 64; durable gap ledger: 64 MiB.

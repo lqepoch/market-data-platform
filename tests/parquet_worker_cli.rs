@@ -11,7 +11,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+use market_contracts::{
+    DecimalString, EntitlementState, EventMetadataV1, MarketDataSourceV1, MarketEventEnvelopeV1,
+    MarketEventParquetRowV2, MarketEventV1, NumericEncodingV1, RawFrameDispositionV1,
+    RawFrameReferenceV2, RawFrameStorageRecordV1, UtcTimestamp,
+};
 use market_data_platform::pipeline::synthetic_390_minute_session_replay;
+use market_data_platform::{parquet_store, schema};
+use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 use tokio::sync::Mutex;
 
@@ -127,6 +134,94 @@ async fn production_cli_verifies_and_queries_through_the_isolated_worker() {
         std::fs::read_to_string(export).unwrap().lines().count(),
         390
     );
+}
+
+#[tokio::test]
+async fn production_cli_verifies_core_raw_frame_v1_and_correlated_event_v2() {
+    let _serial = CLI_SERIAL.get_or_init(Default::default).lock().await;
+    let temp = tempdir().unwrap();
+    let raw_path = temp.path().join("synthetic-raw.parquet");
+    let event_path = temp.path().join("synthetic-events-v2.parquet");
+    let frame_bytes = vec![
+        0x92, 0xa5, b't', b'r', b'a', b'd', b'e', 0xa4, b'1', b'.', b'2', b'5',
+    ];
+    let source_time = UtcTimestamp::parse("2026-10-08T13:30:15Z").unwrap();
+    let frame = RawFrameStorageRecordV1 {
+        schema_version: 1,
+        provider: "synthetic".to_owned(),
+        feed: "synthetic".to_owned(),
+        entitlement: EntitlementState::Unknown,
+        source_numeric_encoding: Some(NumericEncodingV1::DecimalToken),
+        generation: 1,
+        frame_sequence: 1,
+        received_timestamp_utc: source_time.clone(),
+        frame_sha256: hex::encode(Sha256::digest(&frame_bytes)),
+        frame_bytes,
+        event_count: 1,
+        disposition: RawFrameDispositionV1::MarketData,
+        symbols_json: r#"["QQQ"]"#.to_owned(),
+    };
+    parquet_store::write_raw_frames_with_limit(
+        &raw_path,
+        std::slice::from_ref(&frame),
+        1024 * 1024,
+    )
+    .unwrap();
+    let event_source = MarketDataSourceV1::new(
+        "synthetic",
+        "synthetic",
+        EntitlementState::Unknown,
+        NumericEncodingV1::DecimalToken,
+        None,
+    )
+    .unwrap();
+    let event = MarketEventParquetRowV2 {
+        event: MarketEventEnvelopeV1 {
+            metadata: EventMetadataV1 {
+                schema_version: 1,
+                source: event_source,
+                generation: 1,
+                sequence: 1,
+                raw_frame_sha256: Some(frame.frame_sha256.clone()),
+                source_timestamp: Some(source_time.clone()),
+                received_timestamp: source_time,
+            },
+            event: MarketEventV1::StockTrade {
+                symbol: "QQQ".to_owned(),
+                price: DecimalString::new("600.25").unwrap(),
+                size: DecimalString::new("1").unwrap(),
+            },
+        },
+        raw_frame_reference: Some(RawFrameReferenceV2 {
+            raw_frame_generation: 1,
+            raw_frame_sequence: 1,
+            raw_frame_event_ordinal: 1,
+            raw_frame_event_count: 1,
+        }),
+    };
+    parquet_store::write_event_v2_with_limit(&event_path, &[event], 1024 * 1024).unwrap();
+
+    for (path, schema_id, schema_arg) in [
+        (
+            &raw_path,
+            schema::RAW_FRAME_SCHEMA_ID,
+            "market-raw-frame-v1",
+        ),
+        (&event_path, schema::EVENT_SCHEMA_V2_ID, "market-events-v2"),
+    ] {
+        let path = path.to_str().unwrap();
+        let verified = run_cli(&["verify", "--parquet", path, "--schema", schema_arg]);
+        assert!(
+            verified.status.success(),
+            "{}",
+            String::from_utf8_lossy(&verified.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&verified.stdout).unwrap();
+        assert_eq!(report["schema_id"], schema_id);
+        assert_eq!(report["decoded_rows"], 1);
+        assert_eq!(report["source"]["provider"], "synthetic");
+        assert_eq!(report["source"]["entitlement"], "unknown");
+    }
 }
 
 #[tokio::test]

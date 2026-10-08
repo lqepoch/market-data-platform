@@ -112,6 +112,60 @@ pub(super) fn decode_event_batch(batch: &RecordBatch) -> Result<Vec<MarketEventE
     Ok(rows)
 }
 
+pub(super) fn decode_event_v2_batch(batch: &RecordBatch) -> Result<Vec<MarketEventParquetRowV2>> {
+    let events = decode_event_batch(batch)?;
+    let index = |name: &str| -> Result<usize> {
+        batch
+            .schema()
+            .index_of(name)
+            .map_err(|_| MarketDataError::Parquet)
+    };
+    let u64s = |name: &str| -> Result<&UInt64Array> {
+        batch
+            .column(index(name)?)
+            .as_any()
+            .downcast_ref()
+            .ok_or(MarketDataError::Parquet)
+    };
+    let u32s = |name: &str| -> Result<&UInt32Array> {
+        batch
+            .column(index(name)?)
+            .as_any()
+            .downcast_ref()
+            .ok_or(MarketDataError::Parquet)
+    };
+    let generation = u64s("raw_frame_generation")?;
+    let sequence = u64s("raw_frame_sequence")?;
+    let ordinal = u32s("raw_frame_event_ordinal")?;
+    let count = u32s("raw_frame_event_count")?;
+    let mut rows = Vec::with_capacity(events.len());
+    for (index, event) in events.into_iter().enumerate() {
+        let present = [
+            !generation.is_null(index),
+            !sequence.is_null(index),
+            !ordinal.is_null(index),
+            !count.is_null(index),
+        ];
+        let raw_frame_reference = match present {
+            [false, false, false, false] => None,
+            [true, true, true, true] => Some(market_contracts::RawFrameReferenceV2 {
+                raw_frame_generation: generation.value(index),
+                raw_frame_sequence: sequence.value(index),
+                raw_frame_event_ordinal: ordinal.value(index),
+                raw_frame_event_count: count.value(index),
+            }),
+            _ => return Err(MarketDataError::Contract),
+        };
+        let row = MarketEventParquetRowV2 {
+            event,
+            raw_frame_reference,
+        };
+        row.validate().map_err(|_| MarketDataError::Contract)?;
+        rows.push(row);
+    }
+    Ok(rows)
+}
+
 pub(super) fn decode_bar_batch(batch: &RecordBatch) -> Result<Vec<TradeMinuteBarV1>> {
     validate_no_unexpected_nulls(batch)?;
     let col = |name: &str| -> Result<usize> {
@@ -350,7 +404,7 @@ fn nonnegative_decimal(value: &str) -> Result<ExactDecimal> {
     Ok(value)
 }
 
-fn parse_entitlement(value: &str) -> Result<EntitlementState> {
+pub(super) fn parse_entitlement(value: &str) -> Result<EntitlementState> {
     match value {
         "unknown" => Ok(EntitlementState::Unknown),
         "authorized" => Ok(EntitlementState::Authorized),
@@ -359,7 +413,7 @@ fn parse_entitlement(value: &str) -> Result<EntitlementState> {
     }
 }
 
-fn parse_numeric_encoding(value: &str) -> Result<NumericEncodingV1> {
+pub(super) fn parse_numeric_encoding(value: &str) -> Result<NumericEncodingV1> {
     match value {
         "decimal_token" => Ok(NumericEncodingV1::DecimalToken),
         "integer_token" => Ok(NumericEncodingV1::IntegerToken),
@@ -376,11 +430,11 @@ fn optional_decimal_value(array: &StringArray, index: usize) -> Result<Option<De
         .transpose()
 }
 
-fn optional_string_value(array: &StringArray, index: usize) -> Option<&str> {
+pub(super) fn optional_string_value(array: &StringArray, index: usize) -> Option<&str> {
     (!array.is_null(index)).then(|| array.value(index))
 }
 
-fn optional_timestamp_value(
+pub(super) fn optional_timestamp_value(
     array: &TimestampNanosecondArray,
     index: usize,
 ) -> Result<Option<UtcTimestamp>> {

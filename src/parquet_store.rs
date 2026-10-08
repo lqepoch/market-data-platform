@@ -1,7 +1,6 @@
 //! Typed Arrow/Parquet event and completed-minute-bar storage.
 
 use std::{
-    collections::BTreeSet,
     fs::{self, File, OpenOptions},
     path::Path,
     sync::{Arc, atomic::AtomicBool},
@@ -16,7 +15,8 @@ use chrono::NaiveDate;
 use exact_decimal::ExactDecimal;
 use market_contracts::{
     DatasetTimeRangeV1, DecimalString, EntitlementState, EventMetadataV1, MarketDataSourceV1,
-    MarketEventEnvelopeV1, MarketEventV1, NumericEncodingV1, UtcTimestamp,
+    MarketEventEnvelopeV1, MarketEventParquetRowV2, MarketEventV1, NumericEncodingV1,
+    RawFrameStorageRecordV1, UtcTimestamp,
 };
 use parquet::{
     arrow::{ArrowWriter, arrow_reader::ParquetRecordBatchReaderBuilder},
@@ -30,7 +30,8 @@ use crate::{
     aggregate::validate_stock_symbol,
     queue::CollectionMessage,
     schema::{
-        EVENT_SCHEMA_ID, MINUTE_BAR_SCHEMA_ID, arrow_schema, fingerprint, validate_arrow_schema,
+        EVENT_SCHEMA_ID, EVENT_SCHEMA_V2_ID, MINUTE_BAR_SCHEMA_ID, RAW_FRAME_SCHEMA_ID,
+        arrow_schema, fingerprint, validate_arrow_schema,
     },
 };
 
@@ -47,6 +48,7 @@ const MAX_PARQUET_TOTAL_UNCOMPRESSED_BYTES: u64 = 512 * 1024 * 1024;
 mod facts;
 mod metadata;
 mod projection;
+mod raw_frames;
 mod rows;
 mod write_helpers;
 use facts::DatasetFacts;
@@ -55,7 +57,7 @@ use metadata::{
     writer_properties,
 };
 use projection::*;
-use rows::{decode_bar_batch, decode_event_batch, validate_bar_row};
+use rows::{decode_bar_batch, decode_event_batch, decode_event_v2_batch, validate_bar_row};
 use write_helpers::{
     CappedWriter, TempFileCleanup, create_new_file, parent_dir, parquet_write_error, temporary_path,
 };
@@ -73,8 +75,33 @@ pub struct ParquetVerification {
     pub source_timestamp_missing_rows: u64,
 }
 
+/// Counts from a verified raw-frame/event-v2 local object pair.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RawEventCorrelationVerification {
+    pub raw_frame_rows: u64,
+    pub event_rows: u64,
+}
+
 pub fn write_events(path: &Path, messages: &[CollectionMessage]) -> Result<ParquetVerification> {
     write_events_with_limit(path, messages, crate::archive::DEFAULT_MAX_OBJECT_BYTES)
+}
+
+/// Write byte-exact provider MessagePack frames under the core raw-frame schema.
+pub fn write_raw_frames_with_limit(
+    path: &Path,
+    frames: &[RawFrameStorageRecordV1],
+    max_object_bytes: u64,
+) -> Result<ParquetVerification> {
+    raw_frames::write_frames(path, frames, max_object_bytes)
+}
+
+/// Inline decoder for MDP-owned raw-capture files in the configured staging directory only.
+/// External Parquet must be verified through the CLI worker boundary.
+pub(crate) fn read_capture_raw_frames(
+    path: &Path,
+    max_object_bytes: u64,
+) -> Result<Vec<RawFrameStorageRecordV1>> {
+    raw_frames::read_capture_frames(path, max_object_bytes)
 }
 
 pub fn write_events_with_limit(
@@ -110,8 +137,47 @@ fn write_events_with_compression(
     if events.is_empty() {
         return Err(MarketDataError::IncompleteWindow);
     }
-    let schema = Arc::new(arrow_schema(EVENT_SCHEMA_ID)?);
-    validate_arrow_schema(EVENT_SCHEMA_ID, &schema)?;
+    let rows = events
+        .into_iter()
+        .map(|event| MarketEventParquetRowV2 {
+            event: (*event).clone(),
+            raw_frame_reference: None,
+        })
+        .collect::<Vec<_>>();
+    write_event_rows(path, &rows, EVENT_SCHEMA_ID, max_bytes, compression)
+}
+
+/// Write normalized events with their exact source-frame references under the core v2 schema.
+pub fn write_event_v2_with_limit(
+    path: &Path,
+    rows: &[MarketEventParquetRowV2],
+    max_bytes: u64,
+) -> Result<ParquetVerification> {
+    if rows.is_empty() || rows.len() > crate::protocol::DEFAULT_MAX_JSONL_RECORDS {
+        return Err(MarketDataError::InputLimit);
+    }
+    for row in rows {
+        row.validate().map_err(|_| MarketDataError::Contract)?;
+    }
+    write_event_rows(
+        path,
+        rows,
+        EVENT_SCHEMA_V2_ID,
+        max_bytes,
+        default_compression(),
+    )
+}
+
+fn write_event_rows(
+    path: &Path,
+    rows_v2: &[MarketEventParquetRowV2],
+    schema_id: &str,
+    max_bytes: u64,
+    compression: Compression,
+) -> Result<ParquetVerification> {
+    let events = rows_v2.iter().map(|row| &row.event).collect::<Vec<_>>();
+    let schema = Arc::new(arrow_schema(schema_id)?);
+    validate_arrow_schema(schema_id, &schema)?;
     let mut columns: Vec<ArrayRef> = Vec::with_capacity(schema.fields().len());
     columns.push(Arc::new(UInt32Array::from(
         events
@@ -201,17 +267,53 @@ fn write_events_with_compression(
         rows.iter().map(|row| row.ask_size.as_deref()),
     ));
 
+    if schema_id == EVENT_SCHEMA_V2_ID {
+        columns.push(Arc::new(UInt64Array::from(
+            rows_v2
+                .iter()
+                .map(|row| {
+                    row.raw_frame_reference
+                        .map(|value| value.raw_frame_generation)
+                })
+                .collect::<Vec<_>>(),
+        )));
+        columns.push(Arc::new(UInt64Array::from(
+            rows_v2
+                .iter()
+                .map(|row| {
+                    row.raw_frame_reference
+                        .map(|value| value.raw_frame_sequence)
+                })
+                .collect::<Vec<_>>(),
+        )));
+        columns.push(Arc::new(UInt32Array::from(
+            rows_v2
+                .iter()
+                .map(|row| {
+                    row.raw_frame_reference
+                        .map(|value| value.raw_frame_event_ordinal)
+                })
+                .collect::<Vec<_>>(),
+        )));
+        columns.push(Arc::new(UInt32Array::from(
+            rows_v2
+                .iter()
+                .map(|row| {
+                    row.raw_frame_reference
+                        .map(|value| value.raw_frame_event_count)
+                })
+                .collect::<Vec<_>>(),
+        )));
+    } else if schema_id != EVENT_SCHEMA_ID
+        || rows_v2.iter().any(|row| row.raw_frame_reference.is_some())
+    {
+        return Err(MarketDataError::ParquetSchema);
+    }
+
     let batch =
         RecordBatch::try_new(Arc::clone(&schema), columns).map_err(|_| MarketDataError::Parquet)?;
-    write_batch_atomic_with_compression(
-        path,
-        schema,
-        &batch,
-        max_bytes,
-        compression,
-        EVENT_SCHEMA_ID,
-    )?;
-    verify_with_limit(path, EVENT_SCHEMA_ID, max_bytes)
+    write_batch_atomic_with_compression(path, schema, &batch, max_bytes, compression, schema_id)?;
+    verify_with_limit(path, schema_id, max_bytes)
 }
 
 pub fn write_bars(path: &Path, bars: &[TradeMinuteBarV1]) -> Result<ParquetVerification> {
@@ -395,9 +497,19 @@ pub fn verify_with_limit(
                     facts.observe_event(&row)?;
                 }
             }
+            EVENT_SCHEMA_V2_ID => {
+                for row in decode_event_v2_batch(&batch)? {
+                    facts.observe_event(&row.event)?;
+                }
+            }
             MINUTE_BAR_SCHEMA_ID => {
                 for row in decode_bar_batch(&batch)? {
                     facts.observe_bar(&row)?;
+                }
+            }
+            RAW_FRAME_SCHEMA_ID => {
+                for row in raw_frames::decode_frame_batch(&batch)? {
+                    facts.observe_raw_frame(&row)?;
                 }
             }
             _ => return Err(MarketDataError::ParquetSchema),
@@ -422,6 +534,21 @@ pub fn verify_with_limit(
         time_range,
         source_timestamp_missing_rows,
     })
+}
+
+/// Verify every event-v2 row against its byte-exact raw frame and require complete per-frame
+/// ordinal coverage. The caller must also bind both immutable manifests in the capture receipt.
+/// Inline pair correlation for producer-owned local Parquet files only.
+///
+/// Do not use this function on arbitrary or remote Parquet inputs. External inputs must be
+/// decoded through the CLI worker boundary; a future CLI capture-pair operation must perform this
+/// correlation in that worker rather than exposing this inline helper.
+pub(crate) fn verify_event_v2_against_raw(
+    raw_path: &Path,
+    event_path: &Path,
+    max_object_bytes: u64,
+) -> Result<RawEventCorrelationVerification> {
+    raw_frames::verify_event_v2_against_raw(raw_path, event_path, max_object_bytes)
 }
 
 pub fn query_bars(path: &Path, symbol_filter: Option<&str>) -> Result<Vec<TradeMinuteBarV1>> {

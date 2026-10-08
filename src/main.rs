@@ -18,7 +18,7 @@ use market_data_platform::{
         DEFAULT_REMOTE_CACHE_ENTRIES, DEFAULT_REMOTE_CACHE_TTL, DatasetNamespace,
         RemoteArchiveReader, RemoteCacheCleaner, RemoteCacheLimits,
     },
-    schema::{EVENT_SCHEMA_ID, MINUTE_BAR_SCHEMA_ID},
+    schema::{EVENT_SCHEMA_ID, EVENT_SCHEMA_V2_ID, MINUTE_BAR_SCHEMA_ID, RAW_FRAME_SCHEMA_ID},
 };
 
 const MAX_SESSION_CONFIG_BYTES: usize = 1024 * 1024;
@@ -162,6 +162,8 @@ enum Command {
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum SchemaArg {
     MarketEventsV1,
+    MarketEventsV2,
+    MarketRawFrameV1,
     UsEquityTradeBar1mV1,
 }
 
@@ -190,6 +192,8 @@ impl SchemaArg {
     const fn schema_id(self) -> &'static str {
         match self {
             Self::MarketEventsV1 => EVENT_SCHEMA_ID,
+            Self::MarketEventsV2 => EVENT_SCHEMA_V2_ID,
+            Self::MarketRawFrameV1 => RAW_FRAME_SCHEMA_ID,
             Self::UsEquityTradeBar1mV1 => MINUTE_BAR_SCHEMA_ID,
         }
     }

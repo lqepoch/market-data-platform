@@ -5,8 +5,10 @@ use std::{collections::HashMap, sync::Mutex};
 use crate::queue::CollectionMessage;
 use market_contracts::{
     DecimalString, EntitlementState, EventMetadataV1, MarketDataSourceV1, MarketEventEnvelopeV1,
-    MarketEventV1, NumericEncodingV1, UtcTimestamp,
+    MarketEventParquetRowV2, MarketEventV1, NumericEncodingV1, RawFrameDispositionV1,
+    RawFrameReferenceV2, RawFrameStorageRecordV1, UtcTimestamp,
 };
+use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
 #[derive(Default)]
@@ -316,7 +318,7 @@ fn drive_publication_requires_verified_entitled_exact_feed() {
     let temp = tempdir().unwrap();
     let (_, _, mut request) = fixture(temp.path());
     request.purpose = PublicationPurpose::Curated;
-    assert!(validate_request(&request, TransportKind::RcloneGoogleDrive).is_err());
+    assert!(validate_request(&request, TransportKind::RcloneGoogleDrive, false).is_err());
 }
 
 #[test]
@@ -333,7 +335,7 @@ fn drive_opra_binary_projection_is_diagnostic_only_and_paths_are_namespaced() {
         None,
     )
     .unwrap();
-    assert!(validate_request(&request, TransportKind::RcloneGoogleDrive).is_ok());
+    assert!(validate_request(&request, TransportKind::RcloneGoogleDrive, false).is_ok());
     assert_eq!(
         namespaced_dataset_id("curated", "qqq-week-1").unwrap(),
         "curated-qqq-week-1"
@@ -351,7 +353,346 @@ fn drive_opra_binary_projection_is_diagnostic_only_and_paths_are_namespaced() {
         None,
     )
     .unwrap();
-    assert!(validate_request(&request, TransportKind::RcloneGoogleDrive).is_err());
+    assert!(validate_request(&request, TransportKind::RcloneGoogleDrive, false).is_err());
+}
+
+fn local_capture_pair_fixture(
+    root: &Path,
+    frame_sequences: &[u64],
+) -> (
+    ArchivePublisher,
+    FakeTransport,
+    String,
+    ArchiveRequest,
+    ArchiveRequest,
+) {
+    let staging = root.join("staging");
+    let state = root.join("state");
+    fs::create_dir_all(&staging).unwrap();
+    let capture_id = "db575a0c-88a4-4ae9-b303-6729a47a64b4".to_owned();
+    let timestamp = UtcTimestamp::parse("2026-10-08T13:30:15Z").unwrap();
+    let event_source = MarketDataSourceV1::new(
+        "synthetic",
+        "synthetic",
+        EntitlementState::Unknown,
+        NumericEncodingV1::DecimalToken,
+        None,
+    )
+    .unwrap();
+    let mut frames = Vec::new();
+    let mut events = Vec::new();
+    for (index, frame_sequence) in frame_sequences.iter().copied().enumerate() {
+        let bytes = format!("synthetic-only frame {frame_sequence}").into_bytes();
+        let frame = RawFrameStorageRecordV1 {
+            schema_version: 1,
+            provider: "synthetic".to_owned(),
+            feed: "synthetic".to_owned(),
+            entitlement: EntitlementState::Unknown,
+            source_numeric_encoding: Some(NumericEncodingV1::DecimalToken),
+            generation: 1,
+            frame_sequence,
+            received_timestamp_utc: timestamp.clone(),
+            frame_sha256: hex::encode(Sha256::digest(&bytes)),
+            frame_bytes: bytes,
+            event_count: 1,
+            disposition: RawFrameDispositionV1::MarketData,
+            symbols_json: r#"["QQQ"]"#.to_owned(),
+        };
+        let event_sequence = u64::try_from(index + 1).unwrap();
+        frames.push(frame.clone());
+        events.push(MarketEventParquetRowV2 {
+            event: MarketEventEnvelopeV1 {
+                metadata: EventMetadataV1 {
+                    schema_version: 1,
+                    source: event_source.clone(),
+                    generation: 1,
+                    sequence: event_sequence,
+                    raw_frame_sha256: Some(frame.frame_sha256.clone()),
+                    source_timestamp: Some(timestamp.clone()),
+                    received_timestamp: timestamp.clone(),
+                },
+                event: MarketEventV1::StockTrade {
+                    symbol: "QQQ".to_owned(),
+                    price: DecimalString::new("600.25").unwrap(),
+                    size: DecimalString::new("1").unwrap(),
+                },
+            },
+            raw_frame_reference: Some(RawFrameReferenceV2 {
+                raw_frame_generation: frame.generation,
+                raw_frame_sequence: frame.frame_sequence,
+                raw_frame_event_ordinal: 1,
+                raw_frame_event_count: 1,
+            }),
+        });
+    }
+
+    let raw_path = staging.join(format!("{capture_id}-raw.parquet"));
+    let event_path = staging.join(format!("{capture_id}-events.parquet"));
+    parquet_store::write_raw_frames_with_limit(&raw_path, &frames, 1024 * 1024).unwrap();
+    parquet_store::write_event_v2_with_limit(&event_path, &events, 1024 * 1024).unwrap();
+    let raw_verification =
+        parquet_store::verify_with_limit(&raw_path, RAW_FRAME_SCHEMA_ID, 1024 * 1024).unwrap();
+    let event_verification =
+        parquet_store::verify_with_limit(&event_path, EVENT_SCHEMA_V2_ID, 1024 * 1024).unwrap();
+
+    let raw_request = ArchiveRequest {
+        dataset_id: format!("{capture_id}-raw"),
+        object_name: format!("{capture_id}-raw.parquet"),
+        schema_id: RAW_FRAME_SCHEMA_ID.to_owned(),
+        purpose: PublicationPurpose::Raw,
+        source: MarketDataSourceV1 {
+            provider: "synthetic".to_owned(),
+            feed: "synthetic".to_owned(),
+            entitlement: EntitlementState::Unknown,
+            numeric_encoding: NumericEncodingV1::RawMessagePackBytes,
+            source_record_id: None,
+        },
+        symbols: raw_verification.symbols,
+        time_range: None,
+        source_timestamp_missing_rows: raw_verification.footer_rows,
+        row_count: raw_verification.footer_rows,
+        source_pages_exhausted: None,
+        input_eof: true,
+        parquet_path: raw_path,
+    };
+    let event_request = ArchiveRequest {
+        dataset_id: format!("{capture_id}-events"),
+        object_name: format!("{capture_id}-events.parquet"),
+        schema_id: EVENT_SCHEMA_V2_ID.to_owned(),
+        purpose: PublicationPurpose::Diagnostic,
+        source: event_verification.source,
+        symbols: event_verification.symbols,
+        time_range: event_verification.time_range,
+        source_timestamp_missing_rows: event_verification.source_timestamp_missing_rows,
+        row_count: event_verification.footer_rows,
+        source_pages_exhausted: None,
+        input_eof: true,
+        parquet_path: event_path,
+    };
+    let transport = FakeTransport::default();
+    let publisher = ArchivePublisher::new(
+        Arc::new(transport.clone()),
+        TransportKind::LocalTest,
+        state,
+        staging,
+        ArchiveLimits::default(),
+    )
+    .unwrap();
+    (publisher, transport, capture_id, raw_request, event_request)
+}
+
+#[test]
+fn local_capture_pair_publishes_exact_raw_and_event_refs_with_non_authoritative_receipt() {
+    let temp = tempdir().unwrap();
+    let (publisher, transport, capture_id, raw, events) =
+        local_capture_pair_fixture(temp.path(), &[10]);
+    assert!(matches!(
+        publisher.publish(&raw),
+        Err(MarketDataError::PublicationNotAuthorized)
+    ));
+    assert!(matches!(
+        publisher.publish(&events),
+        Err(MarketDataError::PublicationNotAuthorized)
+    ));
+    let receipt = publisher
+        .publish_local_diagnostic_capture_pair(&capture_id, &raw, &events)
+        .unwrap();
+    assert_eq!(receipt.raw_frame_rows, 1);
+    assert_eq!(receipt.normalized_event_rows, 1);
+    assert!(receipt.raw_event_references_verified);
+    assert_eq!(receipt.evidence_scope, "local_parquet_pair_verified");
+    assert_eq!(receipt.provider_completeness, "not_asserted");
+    assert_eq!(transport.upload_count(), 4);
+
+    let receipt_path = temp
+        .path()
+        .join("state")
+        .join(format!("{capture_id}.capture-pair.json"));
+    let stored: super::capture_pair::LocalDiagnosticCapturePairReceiptV1 =
+        serde_json::from_slice(&fs::read(receipt_path).unwrap()).unwrap();
+    assert_eq!(stored, receipt);
+    assert_eq!(
+        publisher
+            .publish_local_diagnostic_capture_pair(&capture_id, &raw, &events)
+            .unwrap(),
+        receipt
+    );
+    assert_eq!(transport.upload_count(), 4);
+}
+
+#[test]
+fn local_capture_pair_reconciles_event_create_unknown_without_publishing_partial_receipt() {
+    let temp = tempdir().unwrap();
+    let (publisher, transport, capture_id, raw, events) =
+        local_capture_pair_fixture(temp.path(), &[10]);
+    transport.fail_after_create(&events.object_name);
+
+    assert!(matches!(
+        publisher.publish_local_diagnostic_capture_pair(&capture_id, &raw, &events),
+        Err(MarketDataError::UnknownOutcome)
+    ));
+    assert_eq!(transport.upload_count(), 3);
+    let state_path = temp
+        .path()
+        .join("state")
+        .join(format!("{capture_id}.capture-pair.state.json"));
+    let state: serde_json::Value = serde_json::from_slice(&fs::read(state_path).unwrap()).unwrap();
+    assert_eq!(state["phase"], "unknown");
+    assert!(
+        !temp
+            .path()
+            .join("state")
+            .join(format!("{capture_id}.capture-pair.json"))
+            .exists(),
+        "a half-published pair must not receive its formal local pair receipt"
+    );
+
+    let recovered = publisher
+        .publish_local_diagnostic_capture_pair(&capture_id, &raw, &events)
+        .unwrap();
+    assert!(recovered.raw_event_references_verified);
+    assert_eq!(transport.upload_count(), 4);
+    let state: serde_json::Value = serde_json::from_slice(
+        &fs::read(
+            temp.path()
+                .join("state")
+                .join(format!("{capture_id}.capture-pair.state.json")),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(state["phase"], "committed");
+}
+
+#[test]
+fn local_capture_pair_reconciles_raw_create_unknown_before_event_publication() {
+    let temp = tempdir().unwrap();
+    let (publisher, transport, capture_id, raw, events) =
+        local_capture_pair_fixture(temp.path(), &[10]);
+    transport.fail_after_create(&raw.object_name);
+
+    assert!(matches!(
+        publisher.publish_local_diagnostic_capture_pair(&capture_id, &raw, &events),
+        Err(MarketDataError::UnknownOutcome)
+    ));
+    assert_eq!(transport.upload_count(), 1);
+    assert!(
+        !temp
+            .path()
+            .join("state")
+            .join(format!("{capture_id}.capture-pair.json"))
+            .exists()
+    );
+
+    publisher
+        .publish_local_diagnostic_capture_pair(&capture_id, &raw, &events)
+        .unwrap();
+    assert_eq!(transport.upload_count(), 4);
+}
+
+#[test]
+fn local_capture_id_cannot_be_reused_for_a_different_raw_frame_key_or_dataset_content() {
+    let first_root = tempdir().unwrap();
+    let (first_publisher, _, capture_id, raw, events) =
+        local_capture_pair_fixture(first_root.path(), &[10]);
+    first_publisher
+        .publish_local_diagnostic_capture_pair(&capture_id, &raw, &events)
+        .unwrap();
+
+    let second_root = tempdir().unwrap();
+    let (_, second_transport, second_capture_id, second_raw, second_events) =
+        local_capture_pair_fixture(second_root.path(), &[11]);
+    assert_eq!(capture_id, second_capture_id);
+    let restarted = ArchivePublisher::new(
+        Arc::new(second_transport.clone()),
+        TransportKind::LocalTest,
+        first_root.path().join("state"),
+        second_root.path().join("staging"),
+        ArchiveLimits::default(),
+    )
+    .unwrap();
+
+    assert!(matches!(
+        restarted.publish_local_diagnostic_capture_pair(&capture_id, &second_raw, &second_events),
+        Err(MarketDataError::Conflict)
+    ));
+    assert_eq!(second_transport.upload_count(), 0);
+}
+
+#[test]
+fn local_capture_pair_quarantines_sequence_gaps_before_any_publication() {
+    let temp = tempdir().unwrap();
+    let (publisher, transport, capture_id, raw, events) =
+        local_capture_pair_fixture(temp.path(), &[10, 12]);
+    assert!(matches!(
+        publisher.publish_local_diagnostic_capture_pair(&capture_id, &raw, &events),
+        Err(MarketDataError::IncompleteWindow)
+    ));
+    assert_eq!(transport.upload_count(), 0);
+    assert!(
+        !temp
+            .path()
+            .join("state")
+            .join(format!("{capture_id}.capture-pair.json"))
+            .exists()
+    );
+}
+
+#[test]
+fn local_capture_pair_rejects_oversized_existing_receipt_before_publication() {
+    let temp = tempdir().unwrap();
+    let (publisher, transport, capture_id, raw, events) =
+        local_capture_pair_fixture(temp.path(), &[10]);
+    let receipt_path = temp
+        .path()
+        .join("state")
+        .join(format!("{capture_id}.capture-pair.json"));
+    fs::write(
+        &receipt_path,
+        vec![b'x'; usize::try_from(DEFAULT_MAX_MANIFEST_BYTES).unwrap() + 1],
+    )
+    .unwrap();
+    assert!(matches!(
+        publisher.publish_local_diagnostic_capture_pair(&capture_id, &raw, &events),
+        Err(MarketDataError::InputLimit)
+    ));
+    assert_eq!(transport.upload_count(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn local_capture_pair_rejects_receipt_symlink_before_publication() {
+    let temp = tempdir().unwrap();
+    let (publisher, transport, capture_id, raw, events) =
+        local_capture_pair_fixture(temp.path(), &[10]);
+    let receipt_path = temp
+        .path()
+        .join("state")
+        .join(format!("{capture_id}.capture-pair.json"));
+    let target = temp.path().join("outside-receipt.json");
+    fs::write(&target, b"{}").unwrap();
+    std::os::unix::fs::symlink(target, &receipt_path).unwrap();
+    assert!(matches!(
+        publisher.publish_local_diagnostic_capture_pair(&capture_id, &raw, &events),
+        Err(MarketDataError::InvalidInput)
+    ));
+    assert_eq!(transport.upload_count(), 0);
+}
+
+#[test]
+fn local_capture_pair_rejects_parquet_outside_producer_staging() {
+    let temp = tempdir().unwrap();
+    let (publisher, transport, capture_id, mut raw, events) =
+        local_capture_pair_fixture(temp.path(), &[10]);
+    let outside = temp.path().join("untrusted-input.parquet");
+    fs::copy(&raw.parquet_path, &outside).unwrap();
+    raw.parquet_path = outside;
+
+    assert!(matches!(
+        publisher.publish_local_diagnostic_capture_pair(&capture_id, &raw, &events),
+        Err(MarketDataError::InvalidInput)
+    ));
+    assert_eq!(transport.upload_count(), 0);
 }
 
 fn assert_request_mismatch_rejected(change: impl FnOnce(&mut ArchiveRequest)) {

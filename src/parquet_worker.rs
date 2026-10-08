@@ -22,6 +22,8 @@ pub fn verify(
     max_object_bytes: u64,
 ) -> Result<ParquetVerification> {
     if schema_id != crate::schema::EVENT_SCHEMA_ID
+        && schema_id != crate::schema::EVENT_SCHEMA_V2_ID
+        && schema_id != crate::schema::RAW_FRAME_SCHEMA_ID
         && schema_id != crate::schema::MINUTE_BAR_SCHEMA_ID
     {
         return Err(MarketDataError::ParquetSchema);

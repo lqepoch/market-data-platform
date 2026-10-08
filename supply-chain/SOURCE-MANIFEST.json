@@ -46,7 +46,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "f600a09a720f56ba056bc5d5bcfec0f8e494ec5d0bb1d9c0929e0271c7f47877"
+      "sha256": "178c0a2c033fbca2cbdeedbc7b2b526f6bfcfe69d68d4905bb9f9aa0b2c41a9a"
     },
     {
       "path": "AGENTS.md",
@@ -54,7 +54,7 @@
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "sha256": "8fe1f475c5b56dad32d9ba89d188b4d0c90c61d2100085a356983b54cd331fe1"
+      "sha256": "11d611492d8e065edbd33d5eeb6f3bc555a230f697b4d8c4432c8a7a79bc7211"
     },
     {
       "path": "docs/SUPPLY_CHAIN.md",
@@ -1470,11 +1470,15 @@
       },
       {
         "path": "src/archive.rs",
-        "sha256": "652a6ccbd5a83fafe5e04205fd97f66a5d5022e235cdb15764bd94c1c49a5509"
+        "sha256": "6fdb59d5f6d61b218ff467c1d0f8c7eca19ddd7ac037f8064cb16fcebb19a20b"
+      },
+      {
+        "path": "src/archive/capture_pair.rs",
+        "sha256": "ab75d4356773cc2e44a803220cd066d3078b42ff2977101de1840be98154dba0"
       },
       {
         "path": "src/archive/tests.rs",
-        "sha256": "87d463cc3ecf763b937d8f7be6df0e43431e3a0de1cdc7c56140b413fdd36bbc"
+        "sha256": "bdbc5cac843a7527c784b9c1d9c07673f3dcdb5ef504a5e91c975405a0942073"
       },
       {
         "path": "src/config.rs",
@@ -1490,15 +1494,15 @@
       },
       {
         "path": "src/main.rs",
-        "sha256": "adead1d256b102f75fe153faa191eea7f7e07ca5c83d64fc29df9518ed45cec1"
+        "sha256": "d58a11b3c2780dec0a0bb44af75d6b5b1d239dc7c75cea2d10efa5b0d5108266"
       },
       {
         "path": "src/parquet_store.rs",
-        "sha256": "89fdb1f8a4356556c65abae3edd7bc1ab8078223b59056aa760d708f95f187e6"
+        "sha256": "6b0896c4ba0e4986e53b4d12439834f2c79dbc04ede791e33c857d232a26f6b8"
       },
       {
         "path": "src/parquet_store/facts.rs",
-        "sha256": "ed82ed1f456dfa727b9a19013e61d6323ec37e67ee92cd3a336faef323488949"
+        "sha256": "1d8f69aabc20019e76bf7d44854e2c6af7736972b94300f8ef89f259b9b50f35"
       },
       {
         "path": "src/parquet_store/metadata.rs",
@@ -1509,12 +1513,16 @@
         "sha256": "5d07fb71de02c364d5685a27c58aac3b62e8b892f47f32edddc0737456f5f152"
       },
       {
+        "path": "src/parquet_store/raw_frames.rs",
+        "sha256": "7fff54da2df6174c6b263b33de0aed47c7f4462249baeca86846a9ebb70c08be"
+      },
+      {
         "path": "src/parquet_store/rows.rs",
-        "sha256": "d09ca55040384d4a49993a4f70b02716d9f5ad3751568b482b325210ca338e03"
+        "sha256": "74101d4029f373cff0d2d6cf6aa40534e14acbd02101d4426660abb0b22bda3c"
       },
       {
         "path": "src/parquet_store/tests.rs",
-        "sha256": "e7fdac2c044c179126fcfe031e45f1c3d8c2ad1c72c965ef19153f6abf9311f9"
+        "sha256": "99979cccb02a004f6387cf5031dd1f713bb972a4b7b80b372f811ea0e189cee8"
       },
       {
         "path": "src/parquet_store/write_helpers.rs",
@@ -1522,7 +1530,7 @@
       },
       {
         "path": "src/parquet_worker.rs",
-        "sha256": "080164c0ae8b9bbe0b5099a7fceb1071c6b21467f29a17e6ca3c667b080da54f"
+        "sha256": "9c4a87aa5892503f9ee85e60397070be070a246c475f02842304cc7bf2959320"
       },
       {
         "path": "src/pipeline.rs",
@@ -1558,7 +1566,7 @@
       },
       {
         "path": "src/schema.rs",
-        "sha256": "16f9e67ee34163f9c8adbf4c1844b94368b6d59f7ba049a50e4eaa79a9abb90e"
+        "sha256": "84eeef00365a11646254bd5f61399d4cc817c5f392adbba0472b3d9b5c4274e4"
       },
       {
         "path": "src/storage.rs",
@@ -1578,14 +1586,14 @@
       },
       {
         "path": "tests/parquet_worker_cli.rs",
-        "sha256": "d8e8e84b5ab9c807dfd3497dd30ef6bd463fd65c55b60c96e9d68cb5a58aeb45"
+        "sha256": "2726e9a9ab6dae82a342525886a6ada81d857a55d477f4f4c266f552caca2522"
       },
       {
         "path": "tests/test_supply_chain.py",
         "sha256": "672f37defce7e1d67f8d684580db4e6ce9e517afd8c6bdf67f99d96c7e573eca"
       }
     ],
-    "sha256": "27520784d22a3bae356c19302b580bfb7ef7ce321684d0d7685d7c4949e7a415"
+    "sha256": "0d23defb8a027b8186945083e7a75f34c23a7c9ab309307e3ba8da46d57de95a"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",

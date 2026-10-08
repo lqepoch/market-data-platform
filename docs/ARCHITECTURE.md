@@ -52,10 +52,11 @@ allowed-lateness policy, and corresponding recovery tests.
 
 ## Parquet and manifest
 
-Event and minute-bar Parquet schemas and fingerprints are imported from core's trusted schema
-registry. The MDP maps logical field types to Arrow and compares exact field order, names, types, and
-nullability. It does not hash Arrow's display or serialization format. Parquet footer row count must
-match decoded rows. Readers and exporters stay within file/row caps.
+Event v1, event v2, raw MessagePack frame v1, and minute-bar Parquet schemas and fingerprints are
+imported from core's trusted schema registry. The MDP maps logical field types to Arrow and compares
+exact field order, names, types, and nullability. It does not hash Arrow's display or serialization
+format. Parquet footer row count must match decoded rows. Readers and exporters stay within
+file/row caps.
 New writers place the descriptor and fingerprint under the core-owned metadata key names in both
 Arrow schema metadata and flat footer key/value metadata. Readers allow a legacy V1 file with no
 registry keys, allow unrelated metadata when both registry keys are absent, and require both exact
@@ -85,6 +86,55 @@ trusted local fixtures. The `parquet_worker` launcher resolves `current_exe` and
 general SDK for embedding applications. External consumers must launch a pinned MDP worker
 executable or provide an equivalent isolated process boundary; the low-level reader is not an
 untrusted-file boundary.
+
+The core raw-frame v1 schema stores one exact MessagePack application frame per row, with provider,
+feed, entitlement, projection encoding when known, generation/frame sequence, receive timestamp,
+SHA-256, expected normalized-event count, disposition, and sorted symbol JSON. The payload itself
+is binary and never emitted in `Debug` output. Each frame is capped at 1 MiB; an object is capped at
+16 MiB and 1,024 frame rows. Raw-frame manifests have no source-time range and count every frame as
+missing a source timestamp. Local receive time is not substituted for provider event time. An empty
+symbol list is valid for control/unknown rows only when the complete object has a nonempty symbol
+union. The MDP adapter accepts `alpaca/opra` or explicit `synthetic/synthetic` identity for this
+MessagePack schema; it rejects SIP JSON and indicative-feed relabeling rather than treating distinct
+wire formats as MessagePack.
+
+Event v2 appends an all-or-none raw reference tuple: generation, frame sequence, one-based event
+ordinal, and expected event count. Before local pair publication, MDP verifies frame SHA-256 values,
+event/frame provider-feed-entitlement-receive-time identity, projection encoding where present,
+symbol membership, duplicate/missing ordinals, per-frame expected counts, and contiguous frame
+sequence within one generation. The pair publisher accepts only the injected local-test transport;
+raw-only and event-v2-only publication are rejected. Empty symbol unions, frame sequence gaps,
+malformed/provider-error dispositions, or failed event correlation do not produce a pair receipt.
+Control and unknown-message frames can be retained alongside market frames without inventing event
+rows. Each pair uses a caller-created fresh UUIDv4 capture identity, distinct from the adapter's
+process-local numeric generation. The private receipt binds that capture identity and both local
+object IDs, content hashes, Parquet schema fingerprints, manifest hashes, generation/sequence range,
+and row counts. Its scope is `local_parquet_pair_verified`, and provider
+completeness is `not_asserted`; the receipt verifies the finite Parquet pair, not provider stream
+drain or EOF. It is not an entitlement, source-authorization, historical-completeness, or
+research-admission certificate.
+
+A separate durable pair-state file records `in_flight`, `raw_committed`, `event_committed`,
+`unknown`, or `committed` around component publication. If an object create has an ambiguous
+outcome, no pair receipt is written; restart reconciles each component through its existing
+immutable publication receipt and exact remote readback, then writes the pair receipt only after
+both components verify. Capture IDs are bound to the complete input intent, so reuse with changed
+frame bytes, sequence, or event rows fails with a conflict before another object is published.
+
+Pair correlation currently decodes inline and is restricted to MDP-owned files in the configured
+producer staging directory. The stable frame key is the pair's UUIDv4 capture identity plus source
+generation and frame sequence; reuse of that capture identity with different input bytes conflicts
+before publication. Do not route operator-supplied or remote Parquet through this API. A future CLI
+capture-pair command must add pair correlation to the isolated worker protocol first; the ordinary
+CLI `verify` worker currently verifies each object separately and does not claim cross-object
+correlation.
+
+This storage step does not guarantee raw persistence before normalization. The current pinned broker
+adapter decodes/analyzes an inbound frame, then places the raw-frame record and normalized events on
+an ordered bounded in-memory channel. MDP can publish the raw object before the event object after it
+consumes that channel, but the raw bytes have already passed through the decoder. A durable
+broker-side raw sink and acknowledgement before decoding are still required for a persist-before-
+normalize guarantee. No provider socket or real Drive is connected by this local API.
 
 The optional release benchmark writes and fully reads back 100,000 synthetic trade events using
 Zstandard level 1, Snappy, and no compression. It is used to compare this schema and configuration;
@@ -149,8 +199,11 @@ blocked until the trusted source-admission path supplies separately verified ent
 capture-completeness, and licensing evidence. Readback never upgrades an UNKNOWN or unauthorized
 source. OPRA binary-float projections are eligible only for the Drive `diagnostic` namespace and
 only after explicit authorized-entitlement evidence; they are not source-exact and cannot be read as
-curated research data. Byte-exact raw OPRA frames require the separate bounded sidecar contract and
-remain unavailable until that broker adapter lands.
+curated research data. Byte-exact raw MessagePack and event-v2 pair storage now use the additive core
+schemas, but the MDP pair publisher is local-test only and no provider capture command is connected.
+The broker adapter currently decodes before the MDP receives raw bytes, so persist-before-normalize
+remains unavailable. No raw data is uploaded to Google Drive, and a successful hash/readback never
+promotes unknown or unauthorized provenance.
 
 The repository contains no Alpaca secret and no live feed/upload test. Drive project/root identity and
 available quota remain UNKNOWN; use an operator-provided authorized root and quota snapshot before

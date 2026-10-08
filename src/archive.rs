@@ -27,7 +27,7 @@ use crate::{
     error::StorageFailure,
     parquet_store::{self, ParquetVerification},
     queue::BackgroundWorkerPermit,
-    schema::{EVENT_SCHEMA_ID, MINUTE_BAR_SCHEMA_ID},
+    schema::{EVENT_SCHEMA_ID, EVENT_SCHEMA_V2_ID, MINUTE_BAR_SCHEMA_ID, RAW_FRAME_SCHEMA_ID},
     storage::{
         LocalTestTransport, ObjectTransport, RcloneDriveTransport, RemoteObject,
         namespaced_dataset_id,
@@ -48,11 +48,15 @@ pub enum TransportKind {
     RcloneGoogleDrive,
 }
 
+mod capture_pair;
+pub use capture_pair::{CaptureArtifactReceiptV1, LocalDiagnosticCapturePairReceiptV1};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PublicationPurpose {
     Curated,
     Diagnostic,
+    Raw,
 }
 
 impl PublicationPurpose {
@@ -60,6 +64,7 @@ impl PublicationPurpose {
         match self {
             Self::Curated => "curated",
             Self::Diagnostic => "diagnostic",
+            Self::Raw => "raw",
         }
     }
 }
@@ -226,7 +231,19 @@ impl ArchivePublisher {
     }
 
     pub(crate) fn publish(&self, request: &ArchiveRequest) -> Result<DatasetManifestV1> {
-        validate_request(request, self.transport_kind)?;
+        self.publish_inner(request, false)
+    }
+
+    fn publish_capture_component(&self, request: &ArchiveRequest) -> Result<DatasetManifestV1> {
+        self.publish_inner(request, true)
+    }
+
+    fn publish_inner(
+        &self,
+        request: &ArchiveRequest,
+        allow_capture_component: bool,
+    ) -> Result<DatasetManifestV1> {
+        validate_request(request, self.transport_kind, allow_capture_component)?;
         let remote_dataset_id = match self.transport_kind {
             TransportKind::LocalTest => request.dataset_id.clone(),
             TransportKind::RcloneGoogleDrive => {
@@ -989,7 +1006,11 @@ fn intent_fingerprint(request: &ArchiveRequest) -> Result<String> {
     Ok(sha256_bytes(&serde_json::to_vec(&identity)?))
 }
 
-fn validate_request(request: &ArchiveRequest, transport: TransportKind) -> Result<()> {
+fn validate_request(
+    request: &ArchiveRequest,
+    transport: TransportKind,
+    allow_capture_component: bool,
+) -> Result<()> {
     if !safe_component(&request.dataset_id)
         || !safe_object_name(&request.object_name)
         || request.object_name != format!("{}.parquet", request.dataset_id)
@@ -997,17 +1018,34 @@ fn validate_request(request: &ArchiveRequest, transport: TransportKind) -> Resul
         || request.symbols.windows(2).any(|pair| pair[0] >= pair[1])
         || !matches!(
             request.schema_id.as_str(),
-            EVENT_SCHEMA_ID | MINUTE_BAR_SCHEMA_ID
+            EVENT_SCHEMA_ID | EVENT_SCHEMA_V2_ID | MINUTE_BAR_SCHEMA_ID | RAW_FRAME_SCHEMA_ID
         )
         || !request.input_eof
         || request.source_pages_exhausted == Some(false)
     {
         return Err(MarketDataError::InvalidInput);
     }
-    request
-        .source
-        .validate()
-        .map_err(|_| MarketDataError::Contract)?;
+    let is_raw = request.schema_id == RAW_FRAME_SCHEMA_ID;
+    let is_event_v2 = request.schema_id == EVENT_SCHEMA_V2_ID;
+    if is_raw {
+        if !allow_capture_component
+            || request.purpose != PublicationPurpose::Raw
+            || request.source.numeric_encoding
+                != market_contracts::NumericEncodingV1::RawMessagePackBytes
+            || request.time_range.is_some()
+            || request.source_timestamp_missing_rows != request.row_count
+            || request.source_pages_exhausted.is_some()
+        {
+            return Err(MarketDataError::PublicationNotAuthorized);
+        }
+    } else if is_event_v2 && !allow_capture_component {
+        return Err(MarketDataError::PublicationNotAuthorized);
+    } else {
+        request
+            .source
+            .validate()
+            .map_err(|_| MarketDataError::Contract)?;
+    }
     match (transport, request.purpose) {
         (TransportKind::RcloneGoogleDrive, PublicationPurpose::Curated) => {
             let exact_numeric = matches!(
@@ -1038,7 +1076,10 @@ fn validate_request(request: &ArchiveRequest, transport: TransportKind) -> Resul
                 return Err(MarketDataError::PublicationNotAuthorized);
             }
         }
-        (TransportKind::LocalTest, PublicationPurpose::Diagnostic) => {}
+        (TransportKind::LocalTest, PublicationPurpose::Diagnostic)
+            if !is_raw && (!is_event_v2 || allow_capture_component) => {}
+        (TransportKind::LocalTest, PublicationPurpose::Raw)
+            if allow_capture_component && is_raw => {}
         _ => return Err(MarketDataError::PublicationNotAuthorized),
     }
     Ok(())

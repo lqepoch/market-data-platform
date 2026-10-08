@@ -4,11 +4,13 @@ use crate::queue::CollectionMessage;
 use chrono::{DateTime, SecondsFormat, Utc};
 use market_contracts::{
     DecimalString, EntitlementState, EventMetadataV1, MarketDataSourceV1, MarketEventEnvelopeV1,
-    MarketEventV1, NumericEncodingV1,
+    MarketEventParquetRowV2, MarketEventV1, NumericEncodingV1, RawFrameDispositionV1,
+    RawFrameReferenceV2, RawFrameStorageRecordV1,
 };
 #[cfg(feature = "benchmark-snappy")]
 use parquet::basic::Compression;
 use parquet::{arrow::arrow_reader::ParquetRecordBatchReaderBuilder, basic::CompressionCodec};
+use sha2::{Digest, Sha256};
 #[cfg(feature = "benchmark-snappy")]
 use std::time::Instant;
 use tempfile::tempdir;
@@ -84,6 +86,173 @@ pub(crate) fn event_with_record_id(sequence: u64, source_record_id: String) -> C
             size: DecimalString::new("1").unwrap(),
         },
     })
+}
+
+fn raw_frame_record(
+    frame_sequence: u64,
+    frame_bytes: Vec<u8>,
+    event_count: u32,
+    disposition: RawFrameDispositionV1,
+    symbols_json: &str,
+) -> RawFrameStorageRecordV1 {
+    let digest = Sha256::digest(&frame_bytes);
+    RawFrameStorageRecordV1 {
+        schema_version: 1,
+        provider: "synthetic".to_owned(),
+        feed: "synthetic".to_owned(),
+        entitlement: EntitlementState::Unknown,
+        source_numeric_encoding: (event_count > 0).then_some(NumericEncodingV1::DecimalToken),
+        generation: 1,
+        frame_sequence,
+        received_timestamp_utc: UtcTimestamp::parse("2026-10-08T14:30:00Z").unwrap(),
+        frame_sha256: digest.iter().map(|byte| format!("{byte:02x}")).collect(),
+        frame_bytes,
+        event_count,
+        disposition,
+        symbols_json: symbols_json.to_owned(),
+    }
+}
+
+fn event_v2_row(frame: &RawFrameStorageRecordV1, ordinal: u32) -> MarketEventParquetRowV2 {
+    MarketEventParquetRowV2 {
+        event: MarketEventEnvelopeV1 {
+            metadata: EventMetadataV1 {
+                schema_version: 1,
+                source: MarketDataSourceV1::new(
+                    "synthetic",
+                    "synthetic",
+                    EntitlementState::Unknown,
+                    NumericEncodingV1::DecimalToken,
+                    None,
+                )
+                .unwrap(),
+                generation: frame.generation,
+                sequence: u64::from(ordinal),
+                raw_frame_sha256: Some(frame.frame_sha256.clone()),
+                source_timestamp: Some(frame.received_timestamp_utc.clone()),
+                received_timestamp: frame.received_timestamp_utc.clone(),
+            },
+            event: MarketEventV1::OptionTrade {
+                symbol: "QQQ   261016C00600000".to_owned(),
+                price: DecimalString::new("1.25").unwrap(),
+                size: DecimalString::new("1").unwrap(),
+            },
+        },
+        raw_frame_reference: Some(RawFrameReferenceV2 {
+            raw_frame_generation: frame.generation,
+            raw_frame_sequence: frame.frame_sequence,
+            raw_frame_event_ordinal: ordinal,
+            raw_frame_event_count: frame.event_count,
+        }),
+    }
+}
+
+#[test]
+fn core_raw_frame_and_event_v2_schemas_roundtrip_exact_bytes_and_complete_references() {
+    let temp = tempdir().unwrap();
+    let raw_path = temp.path().join("capture-raw.parquet");
+    let event_path = temp.path().join("capture-events.parquet");
+    let frame = raw_frame_record(
+        1,
+        vec![
+            0x92, 0xa5, b't', b'r', b'a', b'd', b'e', 0xa4, b'1', b'.', b'2', b'5',
+        ],
+        1,
+        RawFrameDispositionV1::MarketData,
+        r#"["QQQ   261016C00600000"]"#,
+    );
+    let raw =
+        write_raw_frames_with_limit(&raw_path, std::slice::from_ref(&frame), 1024 * 1024).unwrap();
+    assert_eq!(raw.schema_id, RAW_FRAME_SCHEMA_ID);
+    assert_eq!(
+        raw.source.numeric_encoding,
+        NumericEncodingV1::RawMessagePackBytes
+    );
+    assert_eq!(raw.source_timestamp_missing_rows, 1);
+    assert_eq!(raw.time_range, None);
+    assert_eq!(raw.symbols, ["QQQ   261016C00600000"]);
+    let decoded_frames = read_capture_raw_frames(&raw_path, 1024 * 1024).unwrap();
+    assert_eq!(decoded_frames.as_slice(), std::slice::from_ref(&frame));
+
+    let event = event_v2_row(&frame, 1);
+    let events =
+        write_event_v2_with_limit(&event_path, std::slice::from_ref(&event), 1024 * 1024).unwrap();
+    assert_eq!(events.schema_id, EVENT_SCHEMA_V2_ID);
+    assert_eq!(events.footer_rows, 1);
+    assert_eq!(
+        verify_event_v2_against_raw(&raw_path, &event_path, 1024 * 1024).unwrap(),
+        RawEventCorrelationVerification {
+            raw_frame_rows: 1,
+            event_rows: 1,
+        }
+    );
+}
+
+#[test]
+fn raw_diagnostics_allow_empty_symbol_frames_when_capture_union_is_nonempty() {
+    let temp = tempdir().unwrap();
+    let path = temp.path().join("capture-raw.parquet");
+    let diagnostic = raw_frame_record(
+        1,
+        b"unknown message".to_vec(),
+        0,
+        RawFrameDispositionV1::UnknownMessage,
+        "[]",
+    );
+    let market = raw_frame_record(
+        2,
+        b"synthetic market message".to_vec(),
+        1,
+        RawFrameDispositionV1::MarketData,
+        r#"["QQQ   261016C00600000"]"#,
+    );
+    let verification =
+        write_raw_frames_with_limit(&path, &[diagnostic, market], 1024 * 1024).unwrap();
+    assert_eq!(verification.footer_rows, 2);
+    assert_eq!(verification.symbols, ["QQQ   261016C00600000"]);
+}
+
+#[test]
+fn messagepack_raw_schema_rejects_sip_and_indicative_source_relabeling() {
+    let temp = tempdir().unwrap();
+    for feed in ["sip", "indicative"] {
+        let path = temp.path().join(format!("{feed}-raw.parquet"));
+        let mut frame = raw_frame_record(
+            1,
+            b"synthetic-only bytes".to_vec(),
+            1,
+            RawFrameDispositionV1::MarketData,
+            r#"["QQQ"]"#,
+        );
+        frame.provider = "alpaca".to_owned();
+        frame.feed = feed.to_owned();
+        assert!(matches!(
+            write_raw_frames_with_limit(&path, &[frame], 1024 * 1024),
+            Err(MarketDataError::Contract)
+        ));
+        assert!(!path.exists());
+    }
+}
+
+#[test]
+fn event_v2_pair_rejects_missing_expected_event_ordinals() {
+    let temp = tempdir().unwrap();
+    let raw_path = temp.path().join("capture-raw.parquet");
+    let event_path = temp.path().join("capture-events.parquet");
+    let frame = raw_frame_record(
+        1,
+        b"two synthetic trades".to_vec(),
+        2,
+        RawFrameDispositionV1::MarketData,
+        r#"["QQQ   261016C00600000"]"#,
+    );
+    write_raw_frames_with_limit(&raw_path, std::slice::from_ref(&frame), 1024 * 1024).unwrap();
+    let event = event_v2_row(&frame, 1);
+    write_event_v2_with_limit(&event_path, &[event], 1024 * 1024).unwrap();
+    assert!(matches!(
+        verify_event_v2_against_raw(&raw_path, &event_path, 1024 * 1024),
+        Err(MarketDataError::IncompleteWindow)
+    ));
 }
 
 #[test]

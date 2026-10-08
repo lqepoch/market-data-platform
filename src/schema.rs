@@ -5,13 +5,16 @@
 
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use market_contracts::parquet_schema::{
-    MARKET_EVENT_PARQUET_SCHEMA_ID, ParquetSchemaDescriptorV1, ParquetSchemaError,
+    MARKET_EVENT_PARQUET_SCHEMA_ID, MARKET_EVENT_PARQUET_SCHEMA_V2_ID,
+    MARKET_RAW_FRAME_PARQUET_SCHEMA_ID, ParquetSchemaDescriptorV1, ParquetSchemaError,
     US_EQUITY_TRADE_BAR_1M_SCHEMA_ID, trusted_parquet_schema, trusted_schema_fingerprint,
 };
 
 use crate::{MarketDataError, Result};
 
 pub const EVENT_SCHEMA_ID: &str = MARKET_EVENT_PARQUET_SCHEMA_ID;
+pub const EVENT_SCHEMA_V2_ID: &str = MARKET_EVENT_PARQUET_SCHEMA_V2_ID;
+pub const RAW_FRAME_SCHEMA_ID: &str = MARKET_RAW_FRAME_PARQUET_SCHEMA_ID;
 pub const MINUTE_BAR_SCHEMA_ID: &str = US_EQUITY_TRADE_BAR_1M_SCHEMA_ID;
 
 pub fn descriptor(schema_id: &str) -> Result<ParquetSchemaDescriptorV1> {
@@ -58,6 +61,7 @@ pub fn validate_arrow_schema(schema_id: &str, schema: &Schema) -> Result<()> {
 fn arrow_type(logical: &str) -> Result<DataType> {
     match logical {
         "utf8" | "decimal_string" | "date_iso8601" | "sha256_hex" => Ok(DataType::Utf8),
+        "binary" => Ok(DataType::Binary),
         "uint32" => Ok(DataType::UInt32),
         "uint64" => Ok(DataType::UInt64),
         "bool" => Ok(DataType::Boolean),

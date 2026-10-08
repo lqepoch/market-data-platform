@@ -1,4 +1,7 @@
+use std::collections::BTreeSet;
+
 use super::{rows::source_from_bar, *};
+use market_contracts::{NumericEncodingV1, RawFrameStorageRecordV1};
 
 #[derive(Default)]
 pub(super) struct DatasetFacts {
@@ -116,6 +119,25 @@ impl DatasetFacts {
                 .checked_add(1)
                 .ok_or(MarketDataError::InputLimit)?;
         }
+        Ok(())
+    }
+
+    pub(super) fn observe_raw_frame(&mut self, row: &RawFrameStorageRecordV1) -> Result<()> {
+        row.validate().map_err(|_| MarketDataError::Contract)?;
+        let source = MarketDataSourceV1 {
+            provider: row.provider.clone(),
+            feed: row.feed.clone(),
+            entitlement: row.entitlement,
+            numeric_encoding: NumericEncodingV1::RawMessagePackBytes,
+            source_record_id: None,
+        };
+        self.observe_source(source)?;
+        self.symbols
+            .extend(row.symbols().map_err(|_| MarketDataError::Contract)?);
+        self.source_timestamp_missing_rows = self
+            .source_timestamp_missing_rows
+            .checked_add(1)
+            .ok_or(MarketDataError::InputLimit)?;
         Ok(())
     }
 
