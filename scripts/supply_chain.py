@@ -39,6 +39,7 @@ INPUT_PATHS = (
     "AGENTS.md",
     "docs/ARCHITECTURE.md",
     "docs/CHG-2026-001-MDP-HTTP-PROVENANCE.md",
+    "docs/CHG-2026-001-MDP-EMPTY-TRADE-MINUTES.md",
     "docs/SUPPLY_CHAIN.md",
     "docs/openapi-v1.yaml",
     "supply-chain/git-source-pins.json",

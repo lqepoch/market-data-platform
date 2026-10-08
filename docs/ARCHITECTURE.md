@@ -5,7 +5,7 @@
 - `broker-connectors`: sole provider SDK, Alpaca REST/WebSocket transport, MessagePack decoder,
   timestamp extensions, subscription ACK state, reconnect generation, and feed-specific limits.
 - `market-data-platform`: bounded shared-envelope ingestion, sequence/gap accounting, event
-  persistence, caller-configured session windows, complete trade-only one-minute aggregation,
+  persistence, caller-configured session windows, finite-input trade-only one-minute aggregation,
   Parquet query/export, and immutable dataset publication.
 - `trading-core/market-contracts`: event/control DTOs, exact decimal and timestamp types, manifest,
   uint64 JSON encoding, and canonical Parquet schema descriptors/fingerprints.
@@ -33,13 +33,18 @@ when a write fails. The process-wide permit budget caps both writer classes toge
 append holds a file lock while enforcing its byte cap and syncing the record.
 
 The current bar transform requires caller-supplied trade date, session ID, timezone, session policy
-ID/hash, exact session bounds, exact requested half-open window, and expected symbols. A complete
-window contains one or more source-timestamped trades for every expected symbol/minute. Trades are
-ordered by source time then sequence, exact decimal values drive OHLCV, source range is per-bar
+ID/hash, exact session bounds, exact requested half-open window, and expected symbols. Each expected
+symbol must have at least one source-timestamped trade in the finite input. A minute without an
+observed trade, including a quote-only minute, is omitted rather than represented by a zero bar;
+each emitted row carries that symbol's expected and empty minute counts. The reader checks that the
+number of unique rows per symbol equals `expected_minutes - empty_trade_minutes`, and rejects
+undeclared missing rows or inconsistent counts across the symbol's rows. Trades are ordered by
+source time then sequence, exact decimal values drive OHLCV, source range is per-bar
 `[min_source_time, max_source_time + 1ns)`, and actual `available_at` remains collection completion
 time. Quotes are excluded from OHLCV and counted separately; no NBBO or quote-state completeness is
-claimed. Missing trade minutes, missing source timestamps, invalid provenance, gaps, unsupported
-options, or incomplete EOF prevent bar output.
+claimed. Empty-minute counts describe absence in the consumed finite input and do not establish
+provider-side market completeness or entitlement. Missing source timestamps, invalid provenance,
+gaps, unsupported options, and incomplete EOF still prevent bar output.
 
 Historical replay configuration must explicitly say whether the provider endpoint is paged. Paged
 history requires `source_pages_exhausted=true` and writes `completion_mode=historical_eof_paged`;

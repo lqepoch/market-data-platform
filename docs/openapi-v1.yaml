@@ -268,6 +268,11 @@ components:
     TradeMinuteBarV1:
       type: object
       additionalProperties: false
+      description: >-
+        One observed trade-minute bar. The window may be sparse: minutes without a trade observation,
+        including quote-only minutes, have no row. For each symbol, emitted row count equals
+        window_expected_minutes minus window_empty_trade_minutes. The count describes the consumed
+        finite input and does not prove provider-side market completeness or entitlement.
       required:
         - schema_version
         - source_provider

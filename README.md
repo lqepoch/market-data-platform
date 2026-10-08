@@ -143,10 +143,15 @@ Example session configuration (synthetic fixture only):
 `historical_eof` requires a non-synthetic provider and explicit `source_is_paged` context. Paged
 sources must report `source_pages_exhausted: true`; non-paged sources must report `null`. Output
 bars preserve that distinction as `historical_eof_paged` or `historical_eof_nonpaged`. Each requested
-symbol/minute must contain at least one timestamped trade. The requested
-window is contained in the caller-supplied session and repeated on each output row; a partial
-window must not be promoted as a whole-session sample. `available_at` must be no earlier than the
-window end and no earlier than any event receive timestamp.
+symbol must have at least one timestamped trade in the window. Minutes with no observed trade,
+including quote-only minutes, are omitted rather than represented by zero-valued bars; every emitted
+row for that symbol repeats `window_expected_minutes` and `window_empty_trade_minutes`, so its row
+count must equal expected minus empty minutes. The Parquet reader enforces that count and rejects
+undeclared omissions or inconsistent per-symbol counts. This describes the finite input only: EOF
+and page-exhaustion metadata do not prove provider-side market completeness or entitlement. The
+requested window is contained in the caller-supplied session and repeated on each output row; a
+partial window must not be promoted as a whole-session sample. `available_at` must be no earlier
+than the window end and no earlier than any event receive timestamp.
 
 ## Bounds and storage contract
 

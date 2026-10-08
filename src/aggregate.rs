@@ -86,6 +86,7 @@ pub struct TradeMinuteBarV1 {
     pub late_event_count: u64,
     #[serde(with = "wire_u64")]
     pub window_expected_minutes: u64,
+    /// Expected window minutes with no trade observed for this symbol in the finite input.
     #[serde(with = "wire_u64")]
     pub window_empty_trade_minutes: u64,
     pub source_start_utc: UtcTimestamp,
@@ -110,10 +111,12 @@ struct TradePoint {
     size: ExactDecimal,
 }
 
-/// Aggregate only complete, source-timestamped equity trade windows.
+/// Aggregate source-timestamped equity trades from an EOF-marked finite input window.
 ///
-/// Quotes are counted for lineage but never affect OHLCV. A gap, missing timestamp, late event,
-/// unsupported option event, empty expected minute, or partial input prevents any bars escaping.
+/// Quotes are counted for lineage but never affect OHLCV. The accepted finite input may omit
+/// minutes with no trade observation; those minutes are counted and no synthetic zero bar is
+/// emitted. This observation does not prove provider-side market completeness. Gaps, missing
+/// timestamps, late events, unsupported options, and inputs without EOF still fail closed.
 pub fn aggregate_trade_bars(
     messages: &[CollectionMessage],
     window: &SessionWindow,
@@ -270,6 +273,30 @@ pub fn aggregate_trade_bars(
     let mut bars =
         Vec::with_capacity(usize::try_from(output_rows).map_err(|_| MarketDataError::InputLimit)?);
     for symbol in expected {
+        let empty_trade_minutes = (0..expected_minutes).try_fold(0_u64, |empty, offset| {
+            let bar_start_ns = start_ns
+                .checked_add(
+                    i64::try_from(offset)
+                        .map_err(|_| MarketDataError::InvalidInput)?
+                        .checked_mul(MINUTE_NS)
+                        .ok_or(MarketDataError::InvalidInput)?,
+                )
+                .ok_or(MarketDataError::InvalidInput)?;
+            let key = (symbol.clone(), bar_start_ns);
+            let has_trade = buckets
+                .get(&key)
+                .is_some_and(|bucket| !bucket.trades.is_empty());
+            if has_trade {
+                Ok(empty)
+            } else {
+                empty.checked_add(1).ok_or(MarketDataError::InputLimit)
+            }
+        })?;
+        // A symbol with no emitted bars cannot carry this window's per-symbol
+        // empty-minute fact in the V1 row contract.
+        if empty_trade_minutes == expected_minutes {
+            return Err(MarketDataError::IncompleteWindow);
+        }
         for offset in 0..expected_minutes {
             let bar_start_ns = start_ns
                 .checked_add(
@@ -280,10 +307,9 @@ pub fn aggregate_trade_bars(
                 )
                 .ok_or(MarketDataError::InvalidInput)?;
             let key = (symbol.clone(), bar_start_ns);
-            let bucket = buckets.get(&key).ok_or(MarketDataError::IncompleteWindow)?;
-            if bucket.trades.is_empty() {
-                return Err(MarketDataError::IncompleteWindow);
-            }
+            let Some(bucket) = buckets.get(&key).filter(|bucket| !bucket.trades.is_empty()) else {
+                continue;
+            };
             let mut trades = bucket.trades.iter().collect::<Vec<_>>();
             trades.sort_by(|left, right| {
                 left.timestamp
@@ -364,7 +390,7 @@ pub fn aggregate_trade_bars(
                 // imply source-side lateness; real-time watermark mode is not implemented.
                 late_event_count: 0,
                 window_expected_minutes: expected_minutes,
-                window_empty_trade_minutes: 0,
+                window_empty_trade_minutes: empty_trade_minutes,
                 source_start_utc: timestamp_from_ns(
                     source_start
                         .timestamp_nanos_opt()
@@ -522,6 +548,34 @@ mod tests {
         })
     }
 
+    fn quote(sequence: u64, timestamp: &str) -> CollectionMessage {
+        CollectionMessage::Market(MarketEventEnvelopeV1 {
+            metadata: EventMetadataV1 {
+                schema_version: 1,
+                source: MarketDataSourceV1::new(
+                    "synthetic",
+                    "synthetic",
+                    EntitlementState::Unknown,
+                    NumericEncodingV1::DecimalToken,
+                    None,
+                )
+                .unwrap(),
+                generation: 1,
+                sequence,
+                raw_frame_sha256: None,
+                source_timestamp: Some(UtcTimestamp::parse(timestamp).unwrap()),
+                received_timestamp: UtcTimestamp::parse(timestamp).unwrap(),
+            },
+            event: MarketEventV1::StockQuote {
+                symbol: "QQQ".into(),
+                bid: Some(DecimalString::new("10").unwrap()),
+                ask: Some(DecimalString::new("11").unwrap()),
+                bid_size: Some(DecimalString::new("1").unwrap()),
+                ask_size: Some(DecimalString::new("1").unwrap()),
+            },
+        })
+    }
+
     fn completion() -> CompletionEvidence {
         CompletionEvidence {
             mode: CompletionMode::SyntheticEof,
@@ -557,15 +611,38 @@ mod tests {
     }
 
     #[test]
-    fn empty_minutes_and_missing_source_time_fail_closed() {
+    fn finite_sparse_window_counts_empty_trade_minutes_without_zero_bars() {
+        let bars = aggregate_trade_bars(
+            &[
+                trade(1, "2026-10-08T13:30:10Z", "10", "1"),
+                quote(2, "2026-10-08T13:31:10Z"),
+            ],
+            &window(),
+            &completion(),
+        )
+        .unwrap();
+        assert_eq!(bars.len(), 1);
+        assert_eq!(bars[0].window_expected_minutes, 2);
+        assert_eq!(bars[0].window_empty_trade_minutes, 1);
+        assert_eq!(bars[0].bar_start_utc.as_str(), "2026-10-08T13:30:00Z");
+        assert_eq!(bars[0].source_entitlement, "unknown");
+        assert_eq!(bars[0].completion_mode, "synthetic_eof");
+
         assert!(matches!(
             aggregate_trade_bars(
-                &[trade(1, "2026-10-08T13:30:10Z", "10", "1")],
+                &[
+                    quote(1, "2026-10-08T13:30:10Z"),
+                    quote(2, "2026-10-08T13:31:10Z")
+                ],
                 &window(),
                 &completion()
             ),
             Err(MarketDataError::IncompleteWindow)
         ));
+    }
+
+    #[test]
+    fn missing_source_time_still_fails_closed_for_sparse_windows() {
         let mut missing = trade(1, "2026-10-08T13:30:10Z", "10", "1");
         if let CollectionMessage::Market(event) = &mut missing {
             event.metadata.source_timestamp = None;
