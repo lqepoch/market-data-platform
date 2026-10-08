@@ -2,8 +2,16 @@
   "schema_version": 1,
   "sources": [
     {
+      "origin": "https://github.com/lqepoch/broker-connectors",
+      "rev": "70a8f89378be29a700111c3c6759ae31614efeb5",
+      "packages": [
+        "alpaca-stream",
+        "broker-ports"
+      ]
+    },
+    {
       "origin": "https://github.com/lqepoch/trading-core",
-      "rev": "4230418f7fe25f70e3011fed2ba7eb59c7e4d875",
+      "rev": "0a2eaff08d45e8abc1a0137dab17d5d3ef5553c8",
       "packages": [
         "domain",
         "exact-decimal",

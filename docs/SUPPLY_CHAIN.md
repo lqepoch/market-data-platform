@@ -3,23 +3,22 @@
 The repository pins Rust dependencies in `Cargo.lock` and checks the complete all-feature, all-target
 graph with `deny.toml`. The policy denies known advisories, yanked or unmaintained crates, unknown
 licenses and sources, wildcard versions, and unreviewed duplicate versions. There are no advisory
-exceptions. The four `bans.skip` entries name only exact currently observed duplicate package
-versions and include the reason for each compatibility exception; new duplicate versions remain
-denied.
+exceptions. The `bans.skip` entries name only exact currently observed duplicate package versions
+and include the reason for each compatibility exception; new duplicate versions remain denied.
 
 The license allowlist contains only SPDX identifiers observed in the locked graph:
-Apache-2.0, Apache-2.0 WITH LLVM-exception, BSD-2-Clause, BSD-3-Clause, CC0-1.0, MIT, Unicode-3.0,
-and Unlicense. License expressions offering an allowed choice are accepted by cargo-deny; an
+Apache-2.0, Apache-2.0 WITH LLVM-exception, BSD-2-Clause, BSD-3-Clause, CC0-1.0, ISC, MIT,
+Unicode-3.0, and Unlicense. License expressions offering an allowed choice are accepted by cargo-deny; an
 unapproved license cannot be waived by the NOTICE inventory. `supply-chain/NOTICE.txt` lists every
 locked package, its declared license expression, and its lock source. It is an inventory, not a
 replacement for upstream license texts or notices.
 
-Git dependencies are limited by `deny.toml` to the trading-core origin. The stricter
-`supply-chain/git-source-pins.json` and generator verify that every Git dependency in `Cargo.toml`
-uses a full 40-character revision and that each Git package in `Cargo.lock` resolves to exactly that
-revision. Cargo path dependencies are rejected. When a shared-core or broker pin changes, update the
-pin file, regenerate the artifacts, and review the complete SBOM/source-manifest diff in the same
-change.
+Git dependencies are limited by `deny.toml` to the trading-core and broker-connectors origins. The
+stricter `supply-chain/git-source-pins.json` and generator verify that every Git dependency in
+`Cargo.toml` uses a full 40-character revision and that each Git package in `Cargo.lock` resolves to
+exactly that revision. Cargo path dependencies are rejected. When a shared-core or broker pin
+changes, update the pin file, regenerate the artifacts, and review the complete SBOM/source-manifest
+diff in the same change.
 
 ## Generate and verify
 

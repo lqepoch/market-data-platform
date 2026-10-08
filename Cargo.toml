@@ -13,8 +13,10 @@ chrono = { version = "=0.4.45", features = ["serde"] }
 clap = { version = "=4.5.53", features = ["derive"] }
 fs2 = "=0.4.3"
 hex = "=0.4.3"
-exact-decimal = { git = "https://github.com/lqepoch/trading-core", rev = "4230418f7fe25f70e3011fed2ba7eb59c7e4d875", package = "exact-decimal" }
-market-contracts = { git = "https://github.com/lqepoch/trading-core", rev = "4230418f7fe25f70e3011fed2ba7eb59c7e4d875", package = "market-contracts" }
+market-contracts = { git = "https://github.com/lqepoch/trading-core", rev = "0a2eaff08d45e8abc1a0137dab17d5d3ef5553c8", package = "market-contracts" }
+exact-decimal = { git = "https://github.com/lqepoch/trading-core", rev = "0a2eaff08d45e8abc1a0137dab17d5d3ef5553c8", package = "exact-decimal" }
+broker-ports = { git = "https://github.com/lqepoch/broker-connectors", rev = "70a8f89378be29a700111c3c6759ae31614efeb5", package = "broker-ports" }
+alpaca-stream = { git = "https://github.com/lqepoch/broker-connectors", rev = "70a8f89378be29a700111c3c6759ae31614efeb5", package = "alpaca-stream" }
 parquet = { version = "=60.0.0", default-features = false, features = ["arrow", "zstd"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.151", features = ["arbitrary_precision"] }

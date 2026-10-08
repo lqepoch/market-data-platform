@@ -50,6 +50,7 @@ ALLOWED_LICENSES = {
     "BSD-2-Clause",
     "BSD-3-Clause",
     "CC0-1.0",
+    "ISC",
     "MIT",
     "Unicode-3.0",
     "Unlicense",
@@ -60,6 +61,14 @@ EXPECTED_DUPLICATE_SKIPS = {
     ("getrandom", "=0.3.4"),
     ("r-efi", "=5.3.0"),
     ("syn", "=2.0.119"),
+    ("block-buffer", "=0.10.4"),
+    ("block-buffer", "=0.12.1"),
+    ("cpufeatures", "=0.2.17"),
+    ("cpufeatures", "=0.3.1"),
+    ("crypto-common", "=0.1.7"),
+    ("crypto-common", "=0.2.2"),
+    ("digest", "=0.10.7"),
+    ("digest", "=0.11.3"),
 }
 
 

@@ -6,9 +6,10 @@ objects through a single-writer archive boundary.
 
 `broker-connectors` owns Alpaca SDK/REST/WebSocket transport, MessagePack decoding, typed
 subscription ACKs, feed selection, and connection generations. This repository consumes the
-versioned `market-contracts` DTOs; it does not create a second Alpaca client. Today the runnable
-CLI accepts shared-contract JSONL and synthetic input. No live SIP/OPRA feed was connected in this
-change.
+versioned `market-contracts` DTOs and pins the read-only `broker-ports` / `alpaca-stream` crates;
+it does not create a second Alpaca client. The connector crates are pinned for the upcoming collector
+integration but are not yet wired to a runnable live-capture command. Today the CLI accepts
+shared-contract JSONL and synthetic input. No live SIP/OPRA feed was connected in this change.
 
 ## Status and evidence
 
@@ -33,7 +34,9 @@ change.
 
 Use Rust 1.98.1 from `rust-toolchain.toml`.
 The shared contracts are pinned to trading-core revision
-`4230418f7fe25f70e3011fed2ba7eb59c7e4d875` in `Cargo.toml` and `Cargo.lock`.
+`0a2eaff08d45e8abc1a0137dab17d5d3ef5553c8` in `Cargo.toml` and `Cargo.lock`. The read-only Alpaca
+port and stream crates are pinned to `broker-connectors` revision
+`70a8f89378be29a700111c3c6759ae31614efeb5`.
 
 ```sh
 cargo +1.98.1 run --offline -- synthetic --output /tmp/mdp-demo
