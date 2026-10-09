@@ -54,6 +54,7 @@ async fn make_synthetic_provider_pair(output_root: &Path) -> String {
     const RECEIVED: &str = "2020-01-02T13:30:00Z";
     const WIRE: &[u8] = br#"{"fixture":true,"T":"t","S":"QQQ","p":600.25,"s":1}"#;
 
+    fs::create_dir_all(output_root).unwrap();
     let spool = crate::archive::LocalRawFrameSpoolFactory::open(
         output_root.join("raw-spool"),
         crate::archive::RawFrameSpoolLimits::default(),
