@@ -40,6 +40,10 @@ python3 scripts/supply_chain.py --check
 The dependency fetch and pinned tool installs use public crates.io and the public Git sources
 declared in `Cargo.toml`. The Rust, CLI, and Python tests use local fixtures and fake transports;
 they do not establish provider entitlement, remote archive access, or publication authorization.
+The `offline_capture_cli` integration test also exercises the exact single-receipt LocalTest
+pair verifier through the CLI, including missing/tampered inputs and a permissive-umask run; it
+checks that staging is private per invocation, shared-budget lock contention fails closed and
+recovers after unlock, and only the persistent owner-only lock remains after per-run cleanup.
 
 ## Optional offline HTTP container smoke
 

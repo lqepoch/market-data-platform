@@ -102,13 +102,49 @@ pub trait ObjectTransport: Send + Sync {
 #[derive(Clone)]
 pub struct LocalTestTransport {
     root: PathBuf,
+    no_follow: bool,
 }
 
 impl LocalTestTransport {
     pub fn new(root: impl Into<PathBuf>) -> Result<Self> {
         let root = root.into();
         fs::create_dir_all(&root)?;
-        Ok(Self { root })
+        Ok(Self {
+            root,
+            no_follow: false,
+        })
+    }
+
+    /// Opens an existing archive for the Unix-only, read-only capture-pair verifier.
+    ///
+    /// The legacy `new` constructor remains available on every platform with its existing
+    /// behavior. This stricter constructor requires descriptor-relative no-follow operations.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn open_existing(root: impl Into<PathBuf>) -> Result<Self> {
+        let root = root.into();
+        let metadata = fs::symlink_metadata(&root)?;
+        if !metadata.file_type().is_dir() {
+            return Err(MarketDataError::PublicationNotAuthorized);
+        }
+        let canonical_root = fs::canonicalize(&root)?;
+        use std::os::unix::fs::MetadataExt;
+
+        if metadata.uid() != rustix::process::geteuid().as_raw() {
+            return Err(MarketDataError::PublicationNotAuthorized);
+        }
+        let directory = open_directory_nofollow(&canonical_root)?;
+        let opened = directory.metadata()?;
+        if !opened.file_type().is_dir()
+            || opened.uid() != metadata.uid()
+            || opened.dev() != metadata.dev()
+            || opened.ino() != metadata.ino()
+        {
+            return Err(MarketDataError::PublicationNotAuthorized);
+        }
+        Ok(Self {
+            root: canonical_root,
+            no_follow: true,
+        })
     }
 
     fn object_path(&self, dataset_id: &str, object_name: &str) -> Result<PathBuf> {
@@ -121,14 +157,26 @@ impl LocalTestTransport {
 
 impl ObjectTransport for LocalTestTransport {
     fn lookup(&self, dataset_id: &str, object_name: &str) -> Result<Option<RemoteObject>> {
-        let path = self.object_path(dataset_id, object_name)?;
-        if !path.exists() {
-            return Ok(None);
-        }
-        let metadata = fs::metadata(&path)?;
-        if !metadata.is_file() {
-            return Err(MarketDataError::Storage(StorageFailure::MalformedListing));
-        }
+        let metadata = if self.no_follow {
+            let Some(file) = self.open_object(dataset_id, object_name)? else {
+                return Ok(None);
+            };
+            let metadata = file.metadata()?;
+            if !metadata.is_file() || local_file_has_multiple_links(&metadata) {
+                return Err(MarketDataError::Storage(StorageFailure::MalformedListing));
+            }
+            metadata
+        } else {
+            let path = self.object_path(dataset_id, object_name)?;
+            if !path.exists() {
+                return Ok(None);
+            }
+            let metadata = fs::metadata(path)?;
+            if !metadata.is_file() {
+                return Err(MarketDataError::Storage(StorageFailure::MalformedListing));
+            }
+            metadata
+        };
         Ok(Some(RemoteObject {
             id: format!("local-test:{dataset_id}-{object_name}"),
             size_bytes: metadata.len(),
@@ -171,8 +219,15 @@ impl ObjectTransport for LocalTestTransport {
         destination: &Path,
         max_bytes: u64,
     ) -> Result<()> {
-        let source = self.object_path(dataset_id, object_name)?;
-        copy_new_file_limited(&source, destination, max_bytes)
+        if self.no_follow {
+            let source = self
+                .open_object(dataset_id, object_name)?
+                .ok_or(MarketDataError::Storage(StorageFailure::ReadbackFailed))?;
+            copy_open_file_limited(source, destination, max_bytes, None)
+        } else {
+            let path = self.object_path(dataset_id, object_name)?;
+            copy_new_file_limited(&path, destination, max_bytes)
+        }
     }
 
     fn download_with_limit_cancellable(
@@ -183,8 +238,129 @@ impl ObjectTransport for LocalTestTransport {
         max_bytes: u64,
         cancellation: &CancellationToken,
     ) -> Result<()> {
-        let source = self.object_path(dataset_id, object_name)?;
-        copy_new_file_limited_cancellable(&source, destination, max_bytes, Some(cancellation))
+        if self.no_follow {
+            let source = self
+                .open_object(dataset_id, object_name)?
+                .ok_or(MarketDataError::Storage(StorageFailure::ReadbackFailed))?;
+            copy_open_file_limited(source, destination, max_bytes, Some(cancellation))
+        } else {
+            let path = self.object_path(dataset_id, object_name)?;
+            copy_new_file_limited_cancellable(&path, destination, max_bytes, Some(cancellation))
+        }
+    }
+}
+
+impl LocalTestTransport {
+    /// Copy one LocalTest object into an already-created private readback directory.
+    ///
+    /// This path is intentionally Linux-only and separate from the legacy ObjectTransport
+    /// download behavior so existing V1 callers retain their established permissions.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn download_private_with_limit(
+        &self,
+        dataset_id: &str,
+        object_name: &str,
+        destination: &Path,
+        max_bytes: u64,
+    ) -> Result<()> {
+        if !self.no_follow {
+            return Err(MarketDataError::PublicationNotAuthorized);
+        }
+        let source = self
+            .open_object(dataset_id, object_name)?
+            .ok_or(MarketDataError::Storage(StorageFailure::ReadbackFailed))?;
+        copy_open_file_limited_private(source, destination, max_bytes)
+    }
+
+    #[cfg(unix)]
+    fn open_object(&self, dataset_id: &str, object_name: &str) -> Result<Option<File>> {
+        use std::os::unix::fs::MetadataExt;
+
+        if !safe_component(dataset_id) || !safe_object_name(object_name) {
+            return Err(MarketDataError::InvalidInput);
+        }
+        let root = open_directory_nofollow(&self.root)?;
+        let dataset = match open_directory_at_nofollow(&root, dataset_id)? {
+            Some(directory) => directory,
+            None => return Ok(None),
+        };
+        let Some(file) = open_file_at_nofollow(&dataset, object_name)? else {
+            return Ok(None);
+        };
+        let metadata = file.metadata()?;
+        if !metadata.file_type().is_file()
+            || metadata.uid() != rustix::process::geteuid().as_raw()
+            || metadata.nlink() != 1
+        {
+            return Err(MarketDataError::Storage(StorageFailure::MalformedListing));
+        }
+        Ok(Some(file))
+    }
+
+    #[cfg(not(unix))]
+    fn open_object(&self, _dataset_id: &str, _object_name: &str) -> Result<Option<File>> {
+        Err(MarketDataError::PublicationNotAuthorized)
+    }
+}
+
+#[cfg(unix)]
+fn local_file_has_multiple_links(metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    metadata.nlink() != 1
+}
+
+#[cfg(not(unix))]
+fn local_file_has_multiple_links(_metadata: &fs::Metadata) -> bool {
+    false
+}
+
+#[cfg(unix)]
+fn open_directory_nofollow(path: &Path) -> Result<File> {
+    Ok(File::from(
+        rustix::fs::open(
+            path,
+            rustix::fs::OFlags::RDONLY
+                | rustix::fs::OFlags::DIRECTORY
+                | rustix::fs::OFlags::NOFOLLOW
+                | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .map_err(|error| std::io::Error::from_raw_os_error(error.raw_os_error()))?,
+    ))
+}
+
+#[cfg(unix)]
+fn open_directory_at_nofollow(parent: &File, name: &str) -> Result<Option<File>> {
+    match rustix::fs::openat(
+        parent,
+        name,
+        rustix::fs::OFlags::RDONLY
+            | rustix::fs::OFlags::DIRECTORY
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    ) {
+        Ok(fd) => Ok(Some(File::from(fd))),
+        Err(rustix::io::Errno::NOENT) => Ok(None),
+        Err(error) => Err(MarketDataError::Io(std::io::Error::from_raw_os_error(
+            error.raw_os_error(),
+        ))),
+    }
+}
+
+#[cfg(unix)]
+fn open_file_at_nofollow(parent: &File, name: &str) -> Result<Option<File>> {
+    match rustix::fs::openat(
+        parent,
+        name,
+        rustix::fs::OFlags::RDONLY | rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::empty(),
+    ) {
+        Ok(fd) => Ok(Some(File::from(fd))),
+        Err(rustix::io::Errno::NOENT) => Ok(None),
+        Err(error) => Err(MarketDataError::Io(std::io::Error::from_raw_os_error(
+            error.raw_os_error(),
+        ))),
     }
 }
 
@@ -476,7 +652,26 @@ fn copy_new_file_limited_cancellable(
     if !metadata.file_type().is_file() || metadata.len() > max_bytes {
         return Err(MarketDataError::InputLimit);
     }
-    let mut source = File::open(source)?;
+    let source = File::open(source)?;
+    copy_open_file_limited(source, destination, max_bytes, cancellation)
+}
+
+fn copy_open_file_limited(
+    mut source: File,
+    destination: &Path,
+    max_bytes: u64,
+    cancellation: Option<&CancellationToken>,
+) -> Result<()> {
+    if let Some(token) = cancellation {
+        ensure_not_cancelled(token)?;
+    }
+    if max_bytes == 0 {
+        return Err(MarketDataError::InvalidInput);
+    }
+    let metadata = source.metadata()?;
+    if !metadata.is_file() || metadata.len() > max_bytes {
+        return Err(MarketDataError::InputLimit);
+    }
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -506,6 +701,126 @@ fn copy_new_file_limited_cancellable(
     target.sync_all()?;
     cleanup.0 = None;
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn copy_open_file_limited_private(
+    mut source: File,
+    destination: &Path,
+    max_bytes: u64,
+) -> Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    if max_bytes == 0 {
+        return Err(MarketDataError::InvalidInput);
+    }
+    let source_metadata = source.metadata()?;
+    if !source_metadata.is_file() || source_metadata.len() > max_bytes {
+        return Err(MarketDataError::InputLimit);
+    }
+    let parent_path = destination.parent().ok_or(MarketDataError::InvalidInput)?;
+    let parent_metadata = fs::symlink_metadata(parent_path)?;
+    if !parent_metadata.file_type().is_dir()
+        || parent_metadata.uid() != rustix::process::geteuid().as_raw()
+        || parent_metadata.permissions().mode() & 0o7777 != 0o700
+    {
+        return Err(MarketDataError::PublicationNotAuthorized);
+    }
+    let parent = File::from(
+        rustix::fs::open(
+            parent_path,
+            rustix::fs::OFlags::RDONLY
+                | rustix::fs::OFlags::DIRECTORY
+                | rustix::fs::OFlags::NOFOLLOW
+                | rustix::fs::OFlags::CLOEXEC,
+            rustix::fs::Mode::empty(),
+        )
+        .map_err(|_| MarketDataError::PublicationNotAuthorized)?,
+    );
+    let opened_parent = parent.metadata()?;
+    if opened_parent.dev() != parent_metadata.dev() || opened_parent.ino() != parent_metadata.ino()
+    {
+        return Err(MarketDataError::PublicationNotAuthorized);
+    }
+    let name = destination
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| {
+            !value.is_empty()
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.'))
+        })
+        .ok_or(MarketDataError::InvalidInput)?;
+    let fd = rustix::fs::openat(
+        &parent,
+        name,
+        rustix::fs::OFlags::WRONLY
+            | rustix::fs::OFlags::CREATE
+            | rustix::fs::OFlags::EXCL
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC,
+        rustix::fs::Mode::from_raw_mode(0o600),
+    )
+    .map_err(|error| {
+        if error == rustix::io::Errno::EXIST {
+            MarketDataError::Conflict
+        } else {
+            MarketDataError::PublicationNotAuthorized
+        }
+    })?;
+    let mut target = File::from(fd);
+    let mut cleanup = RemoveAtOnDrop {
+        directory: parent,
+        name: name.to_owned(),
+        active: true,
+    };
+    let target_metadata = target.metadata()?;
+    if !target_metadata.is_file()
+        || target_metadata.uid() != rustix::process::geteuid().as_raw()
+        || target_metadata.permissions().mode() & 0o7777 != 0o600
+        || target_metadata.nlink() != 1
+    {
+        return Err(MarketDataError::PublicationNotAuthorized);
+    }
+    let mut copied = 0_u64;
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = source.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        copied = copied
+            .checked_add(u64::try_from(count).unwrap_or(u64::MAX))
+            .ok_or(MarketDataError::InputLimit)?;
+        if copied > max_bytes {
+            return Err(MarketDataError::InputLimit);
+        }
+        target.write_all(&buffer[..count])?;
+    }
+    target.sync_all()?;
+    cleanup.active = false;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+struct RemoveAtOnDrop {
+    directory: File,
+    name: String,
+    active: bool,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for RemoveAtOnDrop {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = rustix::fs::unlinkat(
+                &self.directory,
+                self.name.as_str(),
+                rustix::fs::AtFlags::empty(),
+            );
+        }
+    }
 }
 
 fn ensure_not_cancelled(cancellation: &CancellationToken) -> Result<()> {

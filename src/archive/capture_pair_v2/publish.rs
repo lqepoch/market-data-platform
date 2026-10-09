@@ -354,7 +354,7 @@ impl ArchivePublisher {
             return Err(MarketDataError::ParquetSchema);
         }
 
-        let state_directory = open_private_pair_directory(&self.state_dir)?;
+        let state_directory = open_private_pair_directory(&self.state_dir, true)?;
         preflight_absent(self, &raw_dataset_id, &raw_object_name)?;
         preflight_absent(
             self,
@@ -978,11 +978,19 @@ fn event_symbol(event: &market_contracts::MarketEventV1) -> &str {
 }
 
 fn dataset_id(input_identity: &str, role: &str, source: CapturePairSourceV2) -> Result<String> {
+    dataset_id_for_identity(input_identity, role, source.provider(), source.feed())
+}
+
+pub(super) fn dataset_id_for_identity(
+    input_identity: &str,
+    role: &str,
+    provider: &str,
+    feed: &str,
+) -> Result<String> {
     let digest = hex::encode(Sha256::digest(input_identity.as_bytes()));
-    let (prefix, role) = match source {
-        CapturePairSourceV2::SyntheticJsonl => ("synthetic-capture-pair-v2", role),
-        #[cfg(feature = "offline-capture-synthetic")]
-        CapturePairSourceV2::AlpacaOfflineFixture => (
+    let (prefix, role) = match (provider, feed) {
+        ("synthetic", "synthetic") => ("synthetic-capture-pair-v2", role),
+        ("alpaca", "opra") => (
             "synthetic-offline-fixture-alpaca-opra-trade-v1",
             match role {
                 "raw-v2" => "r2",
@@ -990,6 +998,7 @@ fn dataset_id(input_identity: &str, role: &str, source: CapturePairSourceV2) -> 
                 _ => return Err(MarketDataError::InvalidInput),
             },
         ),
+        _ => return Err(MarketDataError::InvalidInput),
     };
     let value = format!("{prefix}-{digest}-{role}");
     if !safe_component(&value) || value.len() > 128 {
@@ -1036,7 +1045,7 @@ pub(super) fn write_private_capture_record(
     {
         return Err(MarketDataError::InvalidInput);
     }
-    let directory = open_private_pair_directory(state_root)?;
+    let directory = open_private_pair_directory(state_root, true)?;
     write_private_create_only(
         &directory,
         &format!("capture-{capture_id_hex}.{suffix}"),
@@ -1045,7 +1054,7 @@ pub(super) fn write_private_capture_record(
 }
 
 #[cfg(unix)]
-fn open_private_pair_directory(state_root: &Path) -> Result<File> {
+pub(super) fn open_private_pair_directory(state_root: &Path, create: bool) -> Result<File> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     let parent_metadata = fs::symlink_metadata(state_root)?;
@@ -1066,11 +1075,16 @@ fn open_private_pair_directory(state_root: &Path) -> Result<File> {
         )
         .map_err(|_| MarketDataError::PublicationNotAuthorized)?,
     );
-    let _ = rustix::fs::mkdirat(
-        &parent,
-        PRIVATE_PAIR_DIRECTORY,
-        rustix::fs::Mode::from_raw_mode(PRIVATE_DIRECTORY_MODE),
-    );
+    if create {
+        match rustix::fs::mkdirat(
+            &parent,
+            PRIVATE_PAIR_DIRECTORY,
+            rustix::fs::Mode::from_raw_mode(PRIVATE_DIRECTORY_MODE),
+        ) {
+            Ok(()) | Err(rustix::io::Errno::EXIST) => {}
+            Err(_) => return Err(MarketDataError::PublicationNotAuthorized),
+        }
+    }
     let directory = File::from(
         rustix::fs::openat(
             &parent,
@@ -1084,9 +1098,12 @@ fn open_private_pair_directory(state_root: &Path) -> Result<File> {
         .map_err(|_| MarketDataError::PublicationNotAuthorized)?,
     );
     let metadata = directory.metadata()?;
+    let opened_parent = parent.metadata()?;
     if !metadata.file_type().is_dir()
         || metadata.uid() != rustix::process::geteuid().as_raw()
         || metadata.permissions().mode() & 0o7777 != PRIVATE_DIRECTORY_MODE
+        || opened_parent.dev() != parent_metadata.dev()
+        || opened_parent.ino() != parent_metadata.ino()
     {
         return Err(MarketDataError::PublicationNotAuthorized);
     }
@@ -1094,7 +1111,7 @@ fn open_private_pair_directory(state_root: &Path) -> Result<File> {
 }
 
 #[cfg(not(unix))]
-fn open_private_pair_directory(_state_root: &Path) -> Result<File> {
+pub(super) fn open_private_pair_directory(_state_root: &Path, _create: bool) -> Result<File> {
     Err(MarketDataError::PublicationNotAuthorized)
 }
 
@@ -1147,7 +1164,7 @@ fn write_private_create_only(_directory: &File, _name: &str, _bytes: &[u8]) -> R
     Err(MarketDataError::PublicationNotAuthorized)
 }
 
-fn map_pair_error(error: PairReceiptError) -> MarketDataError {
+pub(super) fn map_pair_error(error: PairReceiptError) -> MarketDataError {
     match error {
         PairReceiptError::CapacityExceeded => MarketDataError::InputLimit,
         PairReceiptError::InvalidInput | PairReceiptError::IdentityChanged => {
@@ -1159,7 +1176,9 @@ fn map_pair_error(error: PairReceiptError) -> MarketDataError {
     }
 }
 
-fn numeric_encoding_proto_json(value: NumericEncodingV1) -> Result<NumericEncodingProtoJsonV2> {
+pub(super) fn numeric_encoding_proto_json(
+    value: NumericEncodingV1,
+) -> Result<NumericEncodingProtoJsonV2> {
     match value {
         NumericEncodingV1::DecimalToken => Ok(NumericEncodingProtoJsonV2::DecimalToken),
         NumericEncodingV1::IntegerToken => Ok(NumericEncodingProtoJsonV2::IntegerToken),

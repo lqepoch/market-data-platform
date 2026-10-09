@@ -50,11 +50,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "fddef88fecddee39fa1542b6af626617b212ea82a88ba2551f75454489aa1469"
+      "sha256": "f4e7d4f13b20a9b1607647a4342d49accccc1c24ecf0d08c635056b521c287d2"
     },
     {
       "path": "AGENTS.md",
-      "sha256": "e79b9250c1f3d9eda8993d64fde48a0e49ab2ac857dc04a1c94620fd9cc3b509"
+      "sha256": "2cfb5144d5d8ee7cfac209be150b48bf6ecd1ed2eec6b8599d44b88182211e75"
     },
     {
       "path": ".github/workflows/ci.yml",
@@ -62,11 +62,11 @@
     },
     {
       "path": "docs/CI.md",
-      "sha256": "56251ed1fec7215da11c072e3826d694f0681231f847fe3745239a7781fb794e"
+      "sha256": "6b3bd31eaab6ec27bf420d9f09a9d6c659e69db6ad389242be566f7bfd78e197"
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "sha256": "0f606befa16ffbdb7caa5efd763bdabda3670f6403d3d5e40da3f146ef44a054"
+      "sha256": "68aab054542f9d30171f4116166e36ccf986d57f2480e2d6830f1d5e224cc894"
     },
     {
       "path": "docs/CHG-2026-001-MDP-HTTP-PROVENANCE.md",
@@ -1729,7 +1729,7 @@
       },
       {
         "path": "src/archive/capture_pair_v2.rs",
-        "sha256": "5451f460f92db052583ad50684e7557887b81b0ca47298573901e4a196e57849"
+        "sha256": "2320348a9a20e0068b6785a412ad52db08061f7c24291a28325abe4650e8fbef"
       },
       {
         "path": "src/archive/capture_pair_v2/offline_fixture.rs",
@@ -1741,7 +1741,15 @@
       },
       {
         "path": "src/archive/capture_pair_v2/publish.rs",
-        "sha256": "de92724aa996ec1981aa88b1b96f5065164a5c8ac571939e2a0f348105d70f29"
+        "sha256": "a60779483d0faca3fbf4834173e958a0ff3569b850a5b02a71351e8e29190765"
+      },
+      {
+        "path": "src/archive/capture_pair_v2/reader.rs",
+        "sha256": "2720685cba7d45ed89a6ebc9b7f35fdae7f1dcc0483bef62d725ac97de144650"
+      },
+      {
+        "path": "src/archive/capture_pair_v2/reader/verify.rs",
+        "sha256": "5f27175f987f231061a0202583051357d580888931ac5246b02de44d213aa363"
       },
       {
         "path": "src/archive/capture_pair_v2/rollup.rs",
@@ -1749,7 +1757,7 @@
       },
       {
         "path": "src/archive/capture_pair_v2/tests.rs",
-        "sha256": "824b58fe57d27504c43c2768e29b87cc9f0042825866f698f5e64259b62ff29c"
+        "sha256": "4d7997be2b42d141c94cb2b538b34fbfda8ae22adb2e66188d92d356b4ed3188"
       },
       {
         "path": "src/archive/raw_spool.rs",
@@ -1809,7 +1817,7 @@
       },
       {
         "path": "src/main.rs",
-        "sha256": "190bafa3634a9f0c34d7c728b6d11344e691a798e0f3294bdde16cab0e7e3dcf"
+        "sha256": "a2bb10252360f7ce15db767aad86a42cd2a8cf8d495e3066779636bf93134fce"
       },
       {
         "path": "src/parquet_store.rs",
@@ -1845,7 +1853,7 @@
       },
       {
         "path": "src/parquet_store/tests.rs",
-        "sha256": "796fc1fd5c43519282b0e4a69edaef461b2b69bb580a22b0f3ec33af59adf971"
+        "sha256": "976f51677341fcc6fc5e3914a7d88c4c248f5524351a67c5db1c01f4e5f7a63c"
       },
       {
         "path": "src/parquet_store/write_helpers.rs",
@@ -1853,7 +1861,7 @@
       },
       {
         "path": "src/parquet_worker.rs",
-        "sha256": "e7f4abfde6fc40d732c98583ac47ad1c3489c2745a153f43a68c79632e32765b"
+        "sha256": "06f42c81044634ee95b5923c9c8f6bd20fcdda23a4ae0d6b3895d1bb66f3d74c"
       },
       {
         "path": "src/pipeline.rs",
@@ -1897,7 +1905,7 @@
       },
       {
         "path": "src/storage.rs",
-        "sha256": "4ed463e4ee434d89cb2ee19ab3faece7f9c0b7162106968227525194f53c7560"
+        "sha256": "489389609f9af0334a5e22748666eafdc20c8b844eba1c4e78ce2a1ea5d999c4"
       },
       {
         "path": "src/storage/process.rs",
@@ -1917,7 +1925,7 @@
       },
       {
         "path": "tests/offline_capture_cli.rs",
-        "sha256": "b5ff876a9f2d748ec21e9c5f6151b3275e2edab40865f3cff9dc1ca3350219ff"
+        "sha256": "4c284aa875c2dbaa1c2a03f13c927d74d6760bb13c1e0ea5ac36bc35e42fd418"
       },
       {
         "path": "tests/parquet_worker_cli.rs",
@@ -1928,7 +1936,7 @@
         "sha256": "2a363162ec994b56cf22bc87a84e92405c82337ed28103a39fbcc12591426b53"
       }
     ],
-    "sha256": "da17c8d306f327cc4b795341e8fcf183480f1b18c39ec1a1382965baf254229d"
+    "sha256": "0a3135b76cd20d4b8e02458005dd088d24ba20bacd0312b65656b3bf594c3235"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",

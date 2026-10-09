@@ -9,12 +9,172 @@ use std::{path::Path, process::Command, time::Duration};
 use crate::{
     MarketDataError, Result,
     aggregate::TradeMinuteBarV1,
+    archive::{ArchiveLimits, capture_pair_v2::reader::VerifiedCapturePairChunkV2},
     cancellation::CancellationToken,
     parquet_store::ParquetVerification,
     storage::{MAX_DECODE_WORKER_OUTPUT_BYTES, run_decode_worker, run_decode_worker_cancellable},
 };
 
 const WORKER_WALL_TIMEOUT: Duration = Duration::from_secs(120);
+const PAIR_VERIFY_OUTPUT_BYTES: usize = 64 * 1024;
+
+/// Paths and limits for verifying one explicit local capture-pair chunk in the isolated worker.
+///
+/// This type is part of the hidden `parquet-worker` CLI protocol, not an SDK reader request.
+#[doc(hidden)]
+pub struct CapturePairV2WorkerRequest<'a> {
+    pub receipt_path: &'a Path,
+    pub raw_manifest_path: &'a Path,
+    pub raw_parquet_path: &'a Path,
+    pub event_manifest_path: &'a Path,
+    pub event_parquet_path: &'a Path,
+    pub raw_schema_id: &'a str,
+    pub receipt_name: &'a str,
+    pub max_manifest_bytes: u64,
+    pub max_object_bytes: u64,
+}
+
+/// Verify one raw/event pair using the same bounded Linux worker as other Parquet reads.
+pub(crate) fn verify_capture_pair_v2(
+    request: &CapturePairV2WorkerRequest<'_>,
+) -> Result<VerifiedCapturePairChunkV2> {
+    #[cfg(target_os = "linux")]
+    {
+        if request.raw_schema_id != crate::schema::RAW_FRAME_SCHEMA_V2_ID
+            && request.raw_schema_id != crate::schema::RAW_JSON_FRAME_SCHEMA_V2_ID
+        {
+            return Err(MarketDataError::ParquetSchema);
+        }
+        if request.max_manifest_bytes == 0 || request.max_object_bytes == 0 {
+            return Err(MarketDataError::InvalidInput);
+        }
+        let mut command = worker_command()?;
+        #[cfg(test)]
+        command
+            .env("MDP_TEST_WORKER_ACTION", "verify-capture-pair-v2")
+            .env("MDP_TEST_WORKER_RECEIPT", request.receipt_path)
+            .env("MDP_TEST_WORKER_RAW_MANIFEST", request.raw_manifest_path)
+            .env("MDP_TEST_WORKER_RAW_PARQUET", request.raw_parquet_path)
+            .env(
+                "MDP_TEST_WORKER_EVENT_MANIFEST",
+                request.event_manifest_path,
+            )
+            .env("MDP_TEST_WORKER_EVENT_PARQUET", request.event_parquet_path)
+            .env("MDP_TEST_WORKER_RAW_SCHEMA", request.raw_schema_id)
+            .env("MDP_TEST_WORKER_RECEIPT_NAME", request.receipt_name)
+            .env(
+                "MDP_TEST_WORKER_MAX_MANIFEST_BYTES",
+                request.max_manifest_bytes.to_string(),
+            )
+            .env(
+                "MDP_TEST_WORKER_MAX_OBJECT_BYTES",
+                request.max_object_bytes.to_string(),
+            );
+        #[cfg(not(test))]
+        command
+            .arg("verify-capture-pair-v2")
+            .arg("--parquet")
+            .arg(request.raw_parquet_path)
+            .arg("--schema-id")
+            .arg(request.raw_schema_id)
+            .arg("--pair-receipt")
+            .arg(request.receipt_path)
+            .arg("--raw-manifest")
+            .arg(request.raw_manifest_path)
+            .arg("--event-manifest")
+            .arg(request.event_manifest_path)
+            .arg("--event-parquet")
+            .arg(request.event_parquet_path)
+            .arg("--receipt-name")
+            .arg(request.receipt_name)
+            .arg("--max-manifest-bytes")
+            .arg(request.max_manifest_bytes.to_string())
+            .arg("--max-object-bytes")
+            .arg(request.max_object_bytes.to_string());
+        let output = run_decode_worker(command, PAIR_VERIFY_OUTPUT_BYTES, WORKER_WALL_TIMEOUT)?;
+        #[cfg(test)]
+        let output = output
+            .split(|byte| *byte == b'\n')
+            .find(|line| line.first() == Some(&b'{'))
+            .ok_or(MarketDataError::Parquet)?;
+        #[cfg(not(test))]
+        let output = output.as_slice();
+        serde_json::from_slice(output).map_err(MarketDataError::from)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = request;
+        Err(MarketDataError::Storage(
+            crate::error::StorageFailure::Unsupported,
+        ))
+    }
+}
+
+/// Internal worker action invoked only by the CLI subprocess entrypoint.
+#[doc(hidden)]
+pub(crate) fn worker_verify_capture_pair_v2(
+    request: &CapturePairV2WorkerRequest<'_>,
+) -> Result<VerifiedCapturePairChunkV2> {
+    #[cfg(target_os = "linux")]
+    {
+        crate::archive::capture_pair_v2::reader::verify_pair_chunk_files(request)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = request;
+        Err(MarketDataError::Storage(
+            crate::error::StorageFailure::Unsupported,
+        ))
+    }
+}
+
+/// Execute the worker-side action for the hidden `parquet-worker verify-capture-pair-v2` CLI.
+///
+/// This entrypoint is exposed only because the binary and library are separate Rust crates in
+/// this package. Do not use it as an application-facing reader API.
+#[doc(hidden)]
+pub fn cli_worker_verify_capture_pair_v2(
+    request: &CapturePairV2WorkerRequest<'_>,
+) -> Result<serde_json::Value> {
+    serde_json::to_value(worker_verify_capture_pair_v2(request)?).map_err(MarketDataError::from)
+}
+
+/// Run the LocalTest capture-pair verifier from the `market-data-platform` CLI process.
+///
+/// This entrypoint launches the bounded worker using `current_exe`; it is not a reusable library
+/// reader for embedding applications. Call it only from the matching CLI binary.
+#[doc(hidden)]
+#[cfg(target_os = "linux")]
+pub fn cli_verify_local_test_capture_pair_v2(
+    local_test_root: impl Into<std::path::PathBuf>,
+    state_root: impl Into<std::path::PathBuf>,
+    staging_root: impl Into<std::path::PathBuf>,
+    limits: ArchiveLimits,
+    receipt_name: &str,
+) -> Result<serde_json::Value> {
+    let reader = crate::archive::capture_pair_v2::reader::LocalCapturePairV2Reader::local_test(
+        local_test_root,
+        state_root,
+        staging_root,
+        limits,
+    )?;
+    serde_json::to_value(reader.verify_chunk(receipt_name)?).map_err(MarketDataError::from)
+}
+
+/// The read-only capture-pair verifier is available only on Linux.
+#[doc(hidden)]
+#[cfg(not(target_os = "linux"))]
+pub fn cli_verify_local_test_capture_pair_v2(
+    _local_test_root: impl Into<std::path::PathBuf>,
+    _state_root: impl Into<std::path::PathBuf>,
+    _staging_root: impl Into<std::path::PathBuf>,
+    _limits: ArchiveLimits,
+    _receipt_name: &str,
+) -> Result<serde_json::Value> {
+    Err(MarketDataError::Storage(
+        crate::error::StorageFailure::Unsupported,
+    ))
+}
 
 /// Verify a Parquet object from the MDP CLI in a worker with fixed OS memory/CPU limits.
 pub fn verify(
@@ -261,6 +421,36 @@ mod tests {
                 for row in rows {
                     println!("{}", serde_json::to_string(&row).unwrap());
                 }
+            }
+            "verify-capture-pair-v2" => {
+                let receipt = std::env::var_os("MDP_TEST_WORKER_RECEIPT").unwrap();
+                let raw_manifest = std::env::var_os("MDP_TEST_WORKER_RAW_MANIFEST").unwrap();
+                let raw_parquet = std::env::var_os("MDP_TEST_WORKER_RAW_PARQUET").unwrap();
+                let event_manifest = std::env::var_os("MDP_TEST_WORKER_EVENT_MANIFEST").unwrap();
+                let event_parquet = std::env::var_os("MDP_TEST_WORKER_EVENT_PARQUET").unwrap();
+                let raw_schema = std::env::var("MDP_TEST_WORKER_RAW_SCHEMA").unwrap();
+                let receipt_name = std::env::var("MDP_TEST_WORKER_RECEIPT_NAME").unwrap();
+                let max_manifest_bytes = std::env::var("MDP_TEST_WORKER_MAX_MANIFEST_BYTES")
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                let max_object_bytes = std::env::var("MDP_TEST_WORKER_MAX_OBJECT_BYTES")
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                let request = CapturePairV2WorkerRequest {
+                    receipt_path: Path::new(&receipt),
+                    raw_manifest_path: Path::new(&raw_manifest),
+                    raw_parquet_path: Path::new(&raw_parquet),
+                    event_manifest_path: Path::new(&event_manifest),
+                    event_parquet_path: Path::new(&event_parquet),
+                    raw_schema_id: &raw_schema,
+                    receipt_name: &receipt_name,
+                    max_manifest_bytes,
+                    max_object_bytes,
+                };
+                let summary = worker_verify_capture_pair_v2(&request).unwrap();
+                println!("{}", serde_json::to_string(&summary).unwrap());
             }
             _ => panic!("unknown test worker action"),
         }

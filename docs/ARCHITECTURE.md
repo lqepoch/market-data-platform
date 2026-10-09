@@ -148,8 +148,18 @@ frame sequence, exact payload and finalization digests, and both verified artifa
 Rollups are bounded and report source completeness as not asserted. Both paths reject operator-
 supplied or remote Parquet. The optional `capture-synthetic` CLI command uses the pair-specific
 LocalTest readback path for the broker-owned fixed fake-wire fixture; it does not add provider input
-or credentials. The ordinary CLI verify worker still verifies each object separately and does not
-claim cross-object correlation.
+or credentials. The `verify-capture-pair-v2` CLI accepts one explicit canonical chunk-receipt
+basename and reads only its two named LocalTest artifacts. It verifies both Core manifests, object
+IDs and hashes, schema fingerprints, row counts, and the complete raw-frame/event-v3 join inside
+the existing Linux Parquet worker; the reader is crate-private and the current-executable wrapper
+is owned by the matching CLI, not an embedding-library API. Temporary readback uses a private
+`0700` per-run directory with create-only `0600` files under the supplied existing staging root, which it
+never chmods. A persistent owner-only `.pair-readback-budget.lock` is acquired before staging
+budget preflight and held through run-directory cleanup; another reader fails with `LockHeld`.
+The lock is not a receipt or data artifact. It returns summary facts only. It does not enumerate receipts,
+return data rows, or verify the bounded capture rollup. Its output retains `unknown` entitlement
+and `NOT_ASSERTED` source completeness. The ordinary CLI `verify` command still verifies one object
+at a time and does not claim cross-object correlation.
 
 ## Durable predecode spool
 

@@ -34,6 +34,8 @@ use rollup::CapturePairRollupBuilderV2;
 
 mod publish;
 
+pub(crate) mod reader;
+
 #[cfg(feature = "offline-capture-synthetic")]
 pub(crate) mod offline_fixture;
 
