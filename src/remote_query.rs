@@ -169,7 +169,26 @@ struct VerifiedCache {
     parquet: ParquetVerification,
     content_sha256: String,
     cache_hit: bool,
-    _dataset_lock: Option<File>,
+    _dataset_lock: Option<CacheLockGuard>,
+}
+
+struct CacheLockGuard(File);
+
+impl CacheLockGuard {
+    fn try_lock_exclusive(file: File) -> Result<Self> {
+        file.try_lock_exclusive()
+            .map_err(|_| MarketDataError::LockHeld)?;
+        Ok(Self(file))
+    }
+}
+
+impl Drop for CacheLockGuard {
+    fn drop(&mut self) {
+        // `flock` is tied to the open file description and may survive the parent descriptor
+        // after `fork`. Explicitly unlock at the operation boundary so a pre-exec child cannot
+        // extend this process's cache-lock lifetime.
+        let _ = self.0.unlock();
+    }
 }
 
 struct TempDirectoryCleanup(Option<PathBuf>);
@@ -460,9 +479,7 @@ impl RemoteArchiveReader {
             .create(true)
             .truncate(false)
             .open(&lock_path)?;
-        lock_file
-            .try_lock_exclusive()
-            .map_err(|_| MarketDataError::LockHeld)?;
+        let lock_file = CacheLockGuard::try_lock_exclusive(lock_file)?;
 
         let manifest_name = format!("{dataset_id}.manifest.json");
         let object_name = format!("{dataset_id}.parquet");
@@ -741,7 +758,7 @@ impl RemoteArchiveReader {
         Ok(())
     }
 
-    fn lock_cache_budget(&self) -> Result<File> {
+    fn lock_cache_budget(&self) -> Result<CacheLockGuard> {
         let lock_dir = self.cache_root.join(".locks");
         fs::create_dir_all(&lock_dir)?;
         require_plain_dir(&lock_dir)?;
@@ -752,9 +769,7 @@ impl RemoteArchiveReader {
             .create(true)
             .truncate(false)
             .open(lock_path)?;
-        file.try_lock_exclusive()
-            .map_err(|_| MarketDataError::LockHeld)?;
-        Ok(file)
+        CacheLockGuard::try_lock_exclusive(file)
     }
 
     fn read_receipt(
