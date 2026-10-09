@@ -8,6 +8,9 @@
 use std::path::PathBuf;
 
 #[cfg(target_os = "linux")]
+use std::os::unix::fs::MetadataExt;
+
+#[cfg(target_os = "linux")]
 use std::{
     fs::{self, File},
     io::Read,
@@ -711,7 +714,7 @@ impl Drop for PrivateStagingRun {
 #[cfg(all(test, target_os = "linux"))]
 mod staging_tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
     #[test]
     fn cancellation_after_private_run_directory_creation_still_drops_cleanup_guard() {
