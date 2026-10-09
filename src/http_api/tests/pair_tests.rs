@@ -427,10 +427,8 @@ async fn pair_route_reuses_shared_staging_lock_and_rejects_tampered_artifacts() 
         .filter_map(std::result::Result::ok)
         .map(|entry| entry.path())
         .find(|path| {
-            path.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("chunk-")
+            let name = path.file_name().unwrap().to_string_lossy();
+            name.starts_with("chunk-") && name.ends_with(".receipt.json")
         })
         .unwrap();
     let receipt: Value = serde_json::from_slice(&fs::read(receipt_path).unwrap()).unwrap();
