@@ -330,7 +330,7 @@ rows and an HTTP projection of `RemoteQuerySummary` in the JSON envelope
 `{ "summary": ..., "rows": [...] }`; `row_count` and `returned_rows` are canonical decimal strings
 on HTTP, while CLI JSON keeps its existing numeric encoding. It does not reinterpret V1 rows as
 DatasetManifestV2 completion evidence. See [`docs/openapi-v1.yaml`](docs/openapi-v1.yaml).
-The only data route is `GET /v1/datasets/{dataset_id}/bars?namespace=diagnostic|curated&symbol=QQQ`.
+The regular bars route is `GET /v1/datasets/{dataset_id}/bars?namespace=diagnostic|curated&symbol=QQQ`.
 Responses are capped at 4 MiB and 390 rows. An outer router middleware applies
 `Cache-Control: no-store` to every response, including authentication failures, extractor failures,
 unmatched routes, and query overloads; existing cache directives are preserved. Each process allows
@@ -362,15 +362,36 @@ the separate EqoBoard BFF signing helper and browser integration are outside thi
 browser must call through its trusted BFF and must never read rclone configuration or private cache
 files directly.
 
-The LocalTest transport serves only `diagnostic`; the response must retain
-`synthetic/synthetic/unknown` provenance or the request fails closed. It cannot silently fall back to
-another transport and does not expose
-capture, upload, account, or order routes. The checked-in Dockerfile is a runtime-only LocalTest
+The LocalTest bars transport serves only `diagnostic`; the response must retain
+`synthetic/synthetic/unknown` provenance or the request fails closed. A Linux LocalTest service can
+optionally expose `GET /v2/local-test/capture-pairs/{receipt_sha256}/verify` when startup receives
+both `--pair-state-dir` and `--pair-staging-dir`. This route accepts exactly one lowercase SHA-256,
+constructs the canonical receipt basename internally, and verifies one existing LocalTest chunk
+through the same bounded Pair reader and query supervisor. It returns only compact object/manifest
+verification facts, preserves the receipt's validated provider/feed pair, and labels transport as
+`LocalTest`, entitlement `unknown`, and completeness `NOT_ASSERTED`; it never returns rows, raw
+payloads, or local paths. It does not enumerate receipts or establish a complete capture, provider
+entitlement, Drive durability, or freshness. The optional roots are accepted only with
+`--local-test-root`; the route is absent unless all LocalTest roots are configured. Authorization
+still runs before receipt or object access, and every response is `no-store`.
+
+To enable that route against existing LocalTest roots, pass both startup paths:
+
+```sh
+MDP_TERMINAL_JWT_SECRET='<terminal-only MDP signing key, at least 32 bytes>' \
+MDP_RESEARCH_JWT_SECRET='<research-only MDP signing key, at least 32 bytes>' \
+mdp serve --local-test-root /secure/local-test-objects --cache-dir /secure/mdp-cache \
+  --pair-state-dir /secure/local-test-state --pair-staging-dir /secure/pair-readback-staging
+```
+
+The service cannot silently fall back to another transport and does not start capture ingestion or
+expose upload, account, or order routes. The checked-in Dockerfile is a runtime-only LocalTest
 smoke wrapper: it requires an explicit immutable `MDP_RUNTIME_BASE`, contains no Rust builder, and
 does not include rclone. A Drive-enabled deployment needs its own reviewed immutable runtime base
 that includes a pinned rclone executable. `scripts/container_smoke.sh` uses a cached image ID,
 `--pull=false`, an offline Docker network, an exact copied-binary SHA-256 check, synthetic replay,
-authorization denial, an authenticated V1 query, and real SIGINT/SIGTERM shutdown. The SIGTERM case
+authorization denial, an authenticated V1 query, and real SIGINT/SIGTERM shutdown. It does not
+configure the optional Pair route. The SIGTERM case
 starts concurrent authenticated synthetic queries, observes an active Parquet worker, and confirms
 the service joins its query supervisor before exiting. The smoke makes no provider, OAuth, Drive, or
 broker calls; it reports host/runtime architecture and glibc versions. It verifies only that a

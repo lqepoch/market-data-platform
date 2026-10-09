@@ -54,6 +54,15 @@ those belong to `broker-connectors`.
   existing staging root; never create or chmod that root. Serialize readers sharing that root with
   its persistent owner-only `.pair-readback-budget.lock`, acquired before the staging-budget scan
   and held through private run-directory cleanup; lock contention fails closed.
+- The optional HTTP `GET /v2/local-test/capture-pairs/{receipt_sha256}/verify` route is Linux-only
+  and is mounted only when `mdp serve` receives `--local-test-root`, `--pair-state-dir`, and
+  `--pair-staging-dir`. Accept only the canonical lowercase SHA-256 path value and construct its
+  receipt basename internally. Reuse the existing Pair reader through the existing HTTP query
+  supervisor; do not create a second queue or scan receipts. Authorize `market:read` before any
+  receipt/object access and retain `no-store`. Return the compact single-chunk summary only, with
+  `unknown` entitlement and `NOT_ASSERTED`; never return rows, raw payloads, local paths, or imply
+  capture completeness. The service entrypoint uses `current_exe` for the bounded worker and is
+  CLI-owned; do not use it from an embedding application's executable.
 - `archive::LocalRawFrameSpoolFactory` implements the broker's two-stage raw-frame sink on Linux.
   Persist exact payload bytes and the full source-local identity before predecode ACK, then persist
   the matching finalization summary before final ACK. Cancellation, ambiguous I/O, sequence gaps,
@@ -98,7 +107,9 @@ those belong to `broker-connectors`.
   process-group termination is unsupported.
 - Run `cargo +1.98.1 fmt --all -- --check`, `CARGO_BUILD_JOBS=2 cargo +1.98.1 clippy --offline
   --all-targets -- -D warnings`, and `CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline` for Rust
-  changes. Keep shared-schema golden tests and the synthetic CLI replay passing.
+  changes. Also run `CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline --features
+  offline-capture-synthetic --lib` for the feature-gated Pair HTTP route tests. Keep shared-schema
+  golden tests and the synthetic CLI replay passing.
 - `scripts/container_smoke.sh` is an offline LocalTest-only container smoke. It requires an already
   cached immutable Linux runtime image ID in `MDP_RUNTIME_IMAGE_ID`, copies the host-built binary
   after an exact SHA-256 comparison, and must never pull images or build Rust inside Docker. This

@@ -141,6 +141,36 @@ fn local_transport_rejects_oversized_download_without_partial_file() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn local_pair_copy_cancellation_removes_a_partially_copied_private_file() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temporary = tempfile::tempdir().unwrap();
+    let private_run = temporary.path().join("pair-readback-1");
+    fs::create_dir(&private_run).unwrap();
+    fs::set_permissions(&private_run, fs::Permissions::from_mode(0o700)).unwrap();
+    let source_path = temporary.path().join("source.bin");
+    fs::write(&source_path, vec![0x5a; 256 * 1024]).unwrap();
+    let destination = private_run.join("object-0.parquet");
+    let cancellation = crate::cancellation::CancellationToken::new();
+    let worker_cancellation = cancellation.clone();
+    let result = copy_open_file_limited_private_with_progress(
+        File::open(source_path).unwrap(),
+        &destination,
+        512 * 1024,
+        &cancellation,
+        move || worker_cancellation.cancel(),
+    );
+
+    assert!(matches!(
+        result,
+        Err(MarketDataError::Storage(StorageFailure::Cancelled))
+    ));
+    assert!(!destination.exists());
+    assert_eq!(fs::read_dir(private_run).unwrap().count(), 0);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn decode_worker_memory_bomb_is_contained_and_reaped() {
     let _worker_guard = crate::parquet_worker::serialize_worker_test();
     let temp = tempfile::tempdir().unwrap();

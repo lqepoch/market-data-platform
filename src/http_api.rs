@@ -1,6 +1,6 @@
 //! Bounded, read-only HTTP facade for the existing verified archive query path.
 
-use std::{future::Future, io, net::SocketAddr, sync::Arc, time::Duration};
+use std::{future::Future, io, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use axum::{
     Json, Router,
@@ -14,6 +14,10 @@ use axum::{
 use market_contracts::EntitlementState;
 use serde::{Deserialize, Serialize};
 
+#[cfg(target_os = "linux")]
+use crate::archive::capture_pair_v2::reader::{
+    LocalCapturePairV2Reader, VerifiedCapturePairChunkV2,
+};
 use crate::{
     MarketDataError,
     aggregate::TradeMinuteBarV1,
@@ -39,6 +43,16 @@ struct ServiceState {
     auth_configured: bool,
     query_client: QueryClient,
     reader: Arc<RemoteArchiveReader>,
+    pair_query_available: bool,
+}
+
+/// Operator-supplied LocalTest roots used to enable the single-chunk Pair verification route.
+/// These paths are startup configuration and are never accepted or returned over HTTP.
+#[derive(Clone)]
+pub struct LocalTestPairReadConfig {
+    pub local_test_root: PathBuf,
+    pub state_dir: PathBuf,
+    pub staging_dir: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -124,15 +138,60 @@ pub async fn serve(
     auth: Option<AuthConfig>,
     graceful_shutdown: impl Future<Output = io::Result<()>> + Send + 'static,
 ) -> crate::Result<()> {
+    serve_with_pair_read_config(bind, reader, auth, None, graceful_shutdown).await
+}
+
+/// Starts the read-only HTTP service, optionally enabling a LocalTest-only one-chunk Pair route.
+/// Pair filesystem roots are explicit operator startup configuration, never request parameters.
+///
+/// This function launches the bounded Parquet worker through `current_exe`; call it only from the
+/// matching `market-data-platform` CLI process, not from an embedding application's executable.
+pub async fn serve_with_pair_read_config(
+    bind: SocketAddr,
+    reader: Arc<RemoteArchiveReader>,
+    auth: Option<AuthConfig>,
+    pair_config: Option<LocalTestPairReadConfig>,
+    graceful_shutdown: impl Future<Output = io::Result<()>> + Send + 'static,
+) -> crate::Result<()> {
     if !bind.ip().is_loopback() && auth.is_none() {
         return Err(MarketDataError::InvalidInput);
     }
+    if pair_config.is_some() && reader.transport_kind() != TransportKind::LocalTest {
+        return Err(MarketDataError::PublicationNotAuthorized);
+    }
+    #[cfg(target_os = "linux")]
+    let pair_reader = pair_config
+        .map(|config| {
+            LocalCapturePairV2Reader::local_test(
+                config.local_test_root,
+                config.state_dir,
+                config.staging_dir,
+                crate::archive::ArchiveLimits::default(),
+            )
+            .map(Arc::new)
+        })
+        .transpose()?;
+    #[cfg(not(target_os = "linux"))]
+    let pair_reader = {
+        if pair_config.is_some() {
+            return Err(MarketDataError::Storage(
+                crate::error::StorageFailure::Unsupported,
+            ));
+        }
+        None::<Arc<()>>
+    };
     let listener = tokio::net::TcpListener::bind(bind).await?;
-    let (mut query_supervisor, query_client) = QuerySupervisor::start(Arc::clone(&reader));
+    let pair_query_available = pair_reader.is_some();
+    let (mut query_supervisor, query_client) = QuerySupervisor::start(
+        Arc::clone(&reader),
+        #[cfg(target_os = "linux")]
+        pair_reader,
+    );
     let state = Arc::new(ServiceState {
         auth_configured: auth.is_some(),
         query_client,
         reader,
+        pair_query_available,
     });
     let app = app_router(state, auth);
     let shutdown_signal = query_supervisor.shutdown_signal();
@@ -159,9 +218,16 @@ pub async fn serve(
 }
 
 fn app_router(state: Arc<ServiceState>, auth: Option<AuthConfig>) -> Router {
-    let protected_routes = Router::new()
-        .route("/v1/datasets/{dataset_id}/bars", get(get_bars))
-        .route_layer(middleware::from_fn_with_state(auth, require_market_read));
+    let mut protected_routes = Router::new().route("/v1/datasets/{dataset_id}/bars", get(get_bars));
+    #[cfg(target_os = "linux")]
+    if state.pair_query_available {
+        protected_routes = protected_routes.route(
+            "/v2/local-test/capture-pairs/{receipt_sha256}/verify",
+            get(verify_local_test_pair),
+        );
+    }
+    let protected_routes =
+        protected_routes.route_layer(middleware::from_fn_with_state(auth, require_market_read));
     Router::new()
         .route("/healthz", get(liveness))
         .route("/readyz", get(readiness))
@@ -273,6 +339,52 @@ async fn get_bars(
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response
+}
+
+#[cfg(target_os = "linux")]
+async fn verify_local_test_pair(
+    State(state): State<Arc<ServiceState>>,
+    Path(receipt_sha256): Path<String>,
+) -> Response {
+    if !valid_lower_sha256(&receipt_sha256) {
+        return api_error(ApiError::InvalidRequest);
+    }
+    let receipt_name = format!("chunk-{receipt_sha256}.receipt.json");
+    let summary = match state.query_client.verify_pair(receipt_name).await {
+        Ok(summary) => summary,
+        Err(QueryFailure::Timeout) => return api_error(ApiError::Timeout),
+        Err(QueryFailure::Unavailable) => return api_error(ApiError::Unavailable),
+        Err(QueryFailure::Data(error)) => return api_error(map_data_error(error)),
+    };
+    pair_summary_response(&summary)
+}
+
+#[cfg(target_os = "linux")]
+fn pair_summary_response(summary: &VerifiedCapturePairChunkV2) -> Response {
+    let mut bytes = Vec::with_capacity(4096);
+    let mut writer = BoundedWriter::new(&mut bytes);
+    if serde_json::to_writer(&mut writer, summary).is_err() {
+        return api_error(if writer.exceeded {
+            ApiError::TooLarge
+        } else {
+            ApiError::Unavailable
+        });
+    }
+    let mut response = Response::new(Body::from(bytes));
+    *response.status_mut() = StatusCode::OK;
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    response
+}
+
+#[cfg(target_os = "linux")]
+fn valid_lower_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn map_data_error(error: MarketDataError) -> ApiError {

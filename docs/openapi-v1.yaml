@@ -6,6 +6,9 @@ info:
     Read-only authenticated access to verified MDP datasets. Bars are the existing
     lqepoch.us_equity_trade_bar_1m.v1 contract. They do not carry DatasetManifestV2
     completion evidence. A future BarV2 response must use a separately versioned contract. The
+    optional Linux LocalTest Pair route verifies one exact existing chunk and does not establish a
+    capture rollup or provider completeness. It is mounted only when explicit LocalTest state and
+    staging roots are configured at startup. The
     router adds Cache-Control: no-store to every response, including authorization, extractor,
     fallback, and overload errors; an existing Cache-Control value is preserved.
 servers:
@@ -61,7 +64,8 @@ paths:
         The JWT is checked before any request-level storage access or query. LocalTest transport
         serves only the diagnostic namespace and always reports synthetic/synthetic/unknown
         provenance. Curated reads require an independently authorized archive. No capture, upload,
-        account, or order operation is exposed.
+        account, or order operation is exposed by this bars route. A separate optional LocalTest
+        chunk-verification route does not publish or ingest data.
       security:
         - mdpDelegation: []
       parameters:
@@ -150,6 +154,96 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /v2/local-test/capture-pairs/{receipt_sha256}/verify:
+    get:
+      operationId: verifyOneLocalTestCapturePairChunkV2
+      summary: Verify one explicitly named LocalTest Pair chunk
+      description: >-
+        This Linux-only route is mounted only when the service starts with an existing LocalTest
+        root plus explicit Pair state and staging roots. Authentication is checked before the
+        receipt or archive is accessed. The canonical receipt basename is constructed from the
+        lowercase SHA-256 path value; request paths and receipt directory scans are never accepted.
+        The bounded worker verifies exactly one receipt, both manifests and objects, and the Core
+        raw/event join. The compact response contains no rows, raw payloads, or local paths. It
+        preserves one validated provider/feed pair (alpaca/opra or synthetic/synthetic) and always reports
+        source_completeness NOT_ASSERTED. A verified chunk is not a complete capture, provider
+        entitlement, freshness, Drive durability, or historical batch.
+      security:
+        - mdpDelegation: []
+      parameters:
+        - name: receipt_sha256
+          in: path
+          required: true
+          description: Lowercase hexadecimal SHA-256 of one existing canonical chunk receipt.
+          schema:
+            type: string
+            minLength: 64
+            maxLength: 64
+            pattern: "^[0-9a-f]{64}$"
+      responses:
+        "200":
+          description: Exact readback verification of one local chunk only.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocalCapturePairChunkSummaryV2"
+        "400":
+          description: Receipt hash is not canonical lowercase SHA-256.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid market:read delegation.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Pair verification is not authorized for the configured transport.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: Receipt or artifacts exceed the bounded verifier limits.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Pair verification failed, storage lock is busy, or the service is at capacity.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "504":
+          description: Request deadline expired and owned worker cancellation is supervised.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   headers:
     NoStore:
@@ -206,6 +300,98 @@ components:
           maxItems: 390
           items:
             $ref: "#/components/schemas/TradeMinuteBarV1"
+    LocalCapturePairChunkSummaryV2:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - verification_scope
+        - source_completeness
+        - pair_verification
+        - pair_verification_version
+        - transport
+        - provider
+        - feed
+        - entitlement
+        - capture_instance_id
+        - source_generation
+        - canonical_generation
+        - first_source_frame_sequence
+        - last_source_frame_sequence
+        - raw_frame_count
+        - normalized_event_count
+        - input_payload_bytes
+        - input_chunk_sha256
+        - manifest_input_sha256
+        - raw_dataset_id
+        - raw_manifest_sha256
+        - raw_object_sha256
+        - raw_schema_id
+        - raw_row_count
+        - event_dataset_id
+        - event_manifest_sha256
+        - event_object_sha256
+        - event_schema_id
+        - event_row_count
+      properties:
+        status: {type: string, const: VERIFIED_LOCAL_TEST_CHUNK_ONLY}
+        verification_scope: {type: string, const: SINGLE_CHUNK_LOCAL_READBACK}
+        source_completeness: {type: string, const: NOT_ASSERTED}
+        pair_verification:
+          type: string
+          const: EXACT_RAW_EVENT_ARTIFACT_READBACK_MATCH_LOCAL_ONLY
+        pair_verification_version: {type: integer, const: 1}
+        transport: {type: string, const: local_test}
+        provider: {type: string, enum: [alpaca, synthetic]}
+        feed: {type: string, enum: [opra, synthetic]}
+        entitlement: {type: string, const: unknown}
+        capture_instance_id:
+          type: string
+          pattern: "^[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}$"
+        source_generation: {$ref: "#/components/schemas/WireU64"}
+        canonical_generation: {$ref: "#/components/schemas/WireU64"}
+        first_source_frame_sequence: {$ref: "#/components/schemas/WireU64"}
+        last_source_frame_sequence: {$ref: "#/components/schemas/WireU64"}
+        raw_frame_count:
+          type: integer
+          minimum: 1
+          maximum: 1024
+          description: Exact raw frame rows in this chunk; raw_row_count has the same value.
+        normalized_event_count:
+          type: integer
+          minimum: 0
+          maximum: 524288
+          description: Exact normalized event rows in this chunk; event_row_count has the same value.
+        input_payload_bytes:
+          allOf:
+            - $ref: "#/components/schemas/WireU64"
+          description: Sum of the exact ordered captured raw payload byte lengths.
+        input_chunk_sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: Metadata-rich MDP chunk identity digest, distinct from the manifest payload-only input hash.
+        manifest_input_sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: Core finite-batch SHA-256 of the exact ordered raw payload byte concatenation.
+        raw_dataset_id: {type: string}
+        raw_manifest_sha256: {type: string, pattern: "^[0-9a-f]{64}$"}
+        raw_object_sha256: {type: string, pattern: "^[0-9a-f]{64}$"}
+        raw_schema_id: {type: string, enum: [lqepoch.market_raw_frame.v2, lqepoch.market_raw_json_frame.v2]}
+        raw_row_count: {$ref: "#/components/schemas/WireU64"}
+        event_dataset_id: {type: string}
+        event_manifest_sha256: {type: string, pattern: "^[0-9a-f]{64}$"}
+        event_object_sha256: {type: string, pattern: "^[0-9a-f]{64}$"}
+        event_schema_id: {type: string, const: lqepoch.market_event.v3}
+        event_row_count: {$ref: "#/components/schemas/WireU64"}
+      allOf:
+        - oneOf:
+            - properties:
+                provider: {const: alpaca}
+                feed: {const: opra}
+            - properties:
+                provider: {const: synthetic}
+                feed: {const: synthetic}
     RemoteQuerySummary:
       type: object
       required:

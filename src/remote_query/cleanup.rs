@@ -62,8 +62,8 @@ impl RemoteCacheCleaner {
 
         for (namespace, dataset_id, cache_dir) in candidates {
             report.scanned += 1;
-            let lock_file = match try_lock_dataset(&self.cache_root, namespace, &dataset_id) {
-                Ok(Some(file)) => file,
+            let dataset_lock = match try_lock_dataset(&self.cache_root, namespace, &dataset_id) {
+                Ok(Some(lock)) => lock,
                 Ok(None) => {
                     report.active_skipped += 1;
                     continue;
@@ -76,14 +76,14 @@ impl RemoteCacheCleaner {
 
             if validate_cache_layout(&cache_dir, &dataset_id).is_err() {
                 report.unknown_preserved += 1;
-                drop(lock_file);
+                drop(dataset_lock);
                 continue;
             }
             let receipt = match read_cache_receipt(&cache_dir, namespace, &dataset_id) {
                 Ok(receipt) => receipt,
                 Err(_) => {
                     report.unknown_preserved += 1;
-                    drop(lock_file);
+                    drop(dataset_lock);
                     continue;
                 }
             };
@@ -98,7 +98,7 @@ impl RemoteCacheCleaner {
                 Ok(cache) => cache,
                 Err(_) => {
                     report.unknown_preserved += 1;
-                    drop(lock_file);
+                    drop(dataset_lock);
                     continue;
                 }
             };
@@ -108,20 +108,20 @@ impl RemoteCacheCleaner {
                 None => {
                     report.unknown_preserved += 1;
                     drop(verified);
-                    drop(lock_file);
+                    drop(dataset_lock);
                     continue;
                 }
             };
             if age < self.limits.ttl.as_secs() {
                 report.fresh += 1;
                 drop(verified);
-                drop(lock_file);
+                drop(dataset_lock);
                 continue;
             }
             report.expired_verified += 1;
             if !apply {
                 drop(verified);
-                drop(lock_file);
+                drop(dataset_lock);
                 continue;
             }
 
@@ -130,7 +130,7 @@ impl RemoteCacheCleaner {
                 Ok(file) => file,
                 Err(error) => {
                     drop(verified);
-                    drop(lock_file);
+                    drop(dataset_lock);
                     return Err(error);
                 }
             };
@@ -153,7 +153,7 @@ impl RemoteCacheCleaner {
                     drop(current);
                     drop(verified);
                     drop(budget_lock);
-                    drop(lock_file);
+                    drop(dataset_lock);
                     continue;
                 }
             };
@@ -165,7 +165,7 @@ impl RemoteCacheCleaner {
                 drop(current);
                 drop(verified);
                 drop(budget_lock);
-                drop(lock_file);
+                drop(dataset_lock);
                 continue;
             }
             let bytes = match directory_bytes_bounded(&cache_dir) {
@@ -175,7 +175,7 @@ impl RemoteCacheCleaner {
                     drop(current);
                     drop(verified);
                     drop(budget_lock);
-                    drop(lock_file);
+                    drop(dataset_lock);
                     continue;
                 }
             };
@@ -194,7 +194,7 @@ impl RemoteCacheCleaner {
                 .checked_add(bytes)
                 .ok_or(MarketDataError::InputLimit)?;
             drop(budget_lock);
-            drop(lock_file);
+            drop(dataset_lock);
         }
         Ok(report)
     }
@@ -249,7 +249,7 @@ impl RemoteCacheCleaner {
         Ok((candidates, scan_limited))
     }
 
-    fn lock_cache_budget(&self) -> Result<File> {
+    fn lock_cache_budget(&self) -> Result<CacheLockGuard> {
         let lock_dir = self.cache_root.join(".locks");
         fs::create_dir_all(&lock_dir)?;
         require_plain_dir(&lock_dir)?;
@@ -260,9 +260,7 @@ impl RemoteCacheCleaner {
             .create(true)
             .truncate(false)
             .open(path)?;
-        file.try_lock_exclusive()
-            .map_err(|_| MarketDataError::LockHeld)?;
-        Ok(file)
+        CacheLockGuard::try_lock_exclusive(file)
     }
 }
 
@@ -287,7 +285,7 @@ fn try_lock_dataset(
     cache_root: &Path,
     namespace: DatasetNamespace,
     dataset_id: &str,
-) -> Result<Option<File>> {
+) -> Result<Option<CacheLockGuard>> {
     if !safe_component(dataset_id)
         || dataset_id.starts_with('.')
         || dataset_id.ends_with('.')
@@ -306,7 +304,7 @@ fn try_lock_dataset(
         .truncate(false)
         .open(path)?;
     match file.try_lock_exclusive() {
-        Ok(()) => Ok(Some(file)),
+        Ok(()) => Ok(Some(CacheLockGuard(file))),
         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
         Err(error) => Err(MarketDataError::Io(error)),
     }

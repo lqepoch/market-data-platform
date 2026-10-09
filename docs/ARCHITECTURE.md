@@ -246,9 +246,9 @@ separate remote folders. Misses hold a cross-process cache-budget lock through b
 downloads and verification; each download is capped at the observed remote size and inherits the
 rclone total operation deadline. Queries never evict expired entries. The local
 remote-query dataset lock remains held through cache verification and the full query/export
-operation. Remote-query dataset and cache-budget locks use an RAII guard that explicitly unlocks
-before closing the file descriptor, so a child forked before `exec` cannot extend a completed
-operation's lock lifetime. The `cleanup-remote-cache` command defaults to report-only; `--apply`
+operation. Query and cleanup dataset/cache-budget locks use the same RAII guard, which explicitly
+unlocks before closing the file descriptor, so a child forked before `exec` cannot extend a
+completed operation's lock lifetime. The `cleanup-remote-cache` command defaults to report-only; `--apply`
 removes an expired entry only when
 the private receipt, exact cache layout, manifest bytes, SHA-256, trusted Parquet schema/footer, and
 decoded row facts all verify. It holds the per-dataset lock and global cache-budget lock, skips active
@@ -256,15 +256,29 @@ datasets, and preserves unknown, malformed, incomplete, or unverified directorie
 does not load rclone configuration or contact Drive. Browser access remains behind an authenticated
 BFF.
 
-The HTTP service is a read-only facade over this same query path. Its only data route is
+The HTTP service is a read-only facade over the verified query path. The regular bars route is
 `GET /v1/datasets/{dataset_id}/bars`, with required `namespace` and `symbol` query parameters. The
 JSON response is `{summary: ..., rows: TradeMinuteBarV1[]}` and uses the existing V1 bar
 contract. The HTTP summary preserves `RemoteQuerySummary` fields but projects `row_count` and
 `returned_rows` as canonical decimal strings; CLI JSON keeps numeric values. It does not attach or
 imply core DatasetManifestV2 completion evidence. The
 hand-maintained OpenAPI description is `docs/openapi-v1.yaml`, and schema goldens remain the type
-authority. LocalTest service instances accept only `diagnostic` and preserve
-`synthetic/synthetic/unknown` provenance. There is no route for capture, upload, accounts, or orders.
+authority. LocalTest service instances accept only `diagnostic` on the bars route and preserve
+`synthetic/synthetic/unknown` provenance.
+
+On Linux only, an operator may mount
+`GET /v2/local-test/capture-pairs/{receipt_sha256}/verify` by supplying all three explicit startup
+roots: `--local-test-root`, `--pair-state-dir`, and `--pair-staging-dir`. This route validates one
+lowercase SHA-256 and constructs the receipt basename; it never accepts a path or lists receipts.
+It sends verification through the same bounded HTTP supervisor and `LocalCapturePairV2Reader`,
+which reuses the Core manifest, raw/event join, and hash validators with the existing isolated
+Parquet worker. The response is a compact verification summary with LocalTest transport, the
+validated receipt provider/feed pair, unknown entitlement, and `NOT_ASSERTED` completeness. It
+contains no rows, raw payloads, or local paths.
+One chunk does not prove a complete capture, provider entitlement, freshness, or Drive durability.
+Authentication still precedes receipt and object access, every result is `no-store`, and request
+drop, deadline, or shutdown cancels and joins the worker before releasing query capacity. The
+service does not start capture ingestion or expose upload, account, or order operations.
 
 The HTTP verifier requires an independent JWT key pair and audience. It accepts HS256 only, requires
 exactly `scope=["market:read"]`, an `lqepoch-market-data` audience, a lifetime no longer than 60
@@ -285,8 +299,8 @@ joins its query supervisor before exiting. Successful startup and HTTP probes es
 compatibility only with that local runtime image; this is not a container source build or production
 deployment validation. Production images must use a separately reviewed immutable registry digest.
 
-HTTP queries run through a service-owned supervisor, not Tokio's async executor. At most two
-blocking query jobs are active and two more can wait. The 120-second request deadline and dropped
+HTTP queries and optional LocalTest Pair verification run through one service-owned supervisor, not
+Tokio's async executor. At most two blocking jobs are active and two more can wait. The 120-second request deadline and dropped
 request cancel the shared token; the supervisor keeps job capacity until all owned children are
 killed and reaped. Shutdown cancels and joins active jobs before returning. On Unix the service
 registers SIGINT and SIGTERM before binding and routes both to the same shutdown path; registration

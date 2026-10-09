@@ -23,6 +23,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     MarketDataError, Result,
+    cancellation::CancellationToken,
     config::DriveConfig,
     error::StorageFailure,
     parquet_store::{self, ParquetVerification},
@@ -647,6 +648,54 @@ impl ArchivePublisher {
         Ok(())
     }
 
+    /// Checks an already-opened LocalTest staging directory without creating or reopening it by
+    /// pathname. The descriptor is retained by the caller's budget-lock guard for the full run.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn preflight_existing_replay_staging(
+        root_directory: &File,
+        limits: &ArchiveLimits,
+        cancellation: &CancellationToken,
+    ) -> Result<()> {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        limits.validate()?;
+        ensure_archive_scan_active(cancellation)?;
+        let root_metadata = root_directory.metadata()?;
+        if !root_metadata.file_type().is_dir()
+            || root_metadata.uid() != rustix::process::geteuid().as_raw()
+            || root_metadata.permissions().mode() & 0o022 != 0
+        {
+            return Err(MarketDataError::PublicationNotAuthorized);
+        }
+        let root = PathBuf::from(format!("/proc/self/fd/{}", root_directory.as_raw_fd()));
+        let path_metadata = fs::metadata(&root)?;
+        if path_metadata.dev() != root_metadata.dev() || path_metadata.ino() != root_metadata.ino()
+        {
+            return Err(MarketDataError::PublicationNotAuthorized);
+        }
+        let total = directory_bytes_bounded_cancellable(
+            &root,
+            cancellation,
+            MAX_REPLAY_STAGING_SCAN_ENTRIES,
+        )?;
+        ensure_archive_scan_active(cancellation)?;
+        let reserve = limits.replay_staging_reserve()?;
+        if total
+            .checked_add(reserve)
+            .is_none_or(|required| required > limits.max_staging_bytes)
+        {
+            return Err(MarketDataError::InputLimit);
+        }
+        let final_metadata = fs::metadata(&root)?;
+        if final_metadata.dev() != root_metadata.dev()
+            || final_metadata.ino() != root_metadata.ino()
+        {
+            return Err(MarketDataError::PublicationNotAuthorized);
+        }
+        Ok(())
+    }
+
     pub fn cleanup_staging(
         state_dir: &Path,
         staging_dir: &Path,
@@ -898,16 +947,54 @@ fn valid_committed_manifest(
 }
 
 fn directory_bytes_bounded(root: &Path) -> Result<u64> {
+    directory_bytes_bounded_inner(root, None, None, |_| {})
+}
+
+#[cfg(target_os = "linux")]
+const MAX_REPLAY_STAGING_SCAN_ENTRIES: usize = 100_000;
+
+#[cfg(target_os = "linux")]
+fn directory_bytes_bounded_cancellable(
+    root: &Path,
+    cancellation: &CancellationToken,
+    maximum_entries: usize,
+) -> Result<u64> {
+    directory_bytes_bounded_inner(root, Some(cancellation), Some(maximum_entries), |_| {})
+}
+
+fn directory_bytes_bounded_inner(
+    root: &Path,
+    cancellation: Option<&CancellationToken>,
+    maximum_entries: Option<usize>,
+    mut on_entry: impl FnMut(usize),
+) -> Result<u64> {
     let mut total = 0_u64;
     let mut pending = vec![root.to_path_buf()];
     let mut visited = 0usize;
+    let mut entries_seen = 0usize;
     while let Some(path) = pending.pop() {
+        if let Some(cancellation) = cancellation {
+            ensure_archive_scan_active(cancellation)?;
+        }
         visited += 1;
         if visited > 100_000 {
             return Err(MarketDataError::InputLimit);
         }
         for entry in fs::read_dir(path)? {
+            if let Some(cancellation) = cancellation {
+                ensure_archive_scan_active(cancellation)?;
+            }
             let entry = entry?;
+            entries_seen = entries_seen
+                .checked_add(1)
+                .ok_or(MarketDataError::InputLimit)?;
+            if maximum_entries.is_some_and(|maximum| entries_seen > maximum) {
+                return Err(MarketDataError::InputLimit);
+            }
+            on_entry(entries_seen);
+            if let Some(cancellation) = cancellation {
+                ensure_archive_scan_active(cancellation)?;
+            }
             let file_type = entry.file_type()?;
             if file_type.is_symlink() {
                 return Err(MarketDataError::InvalidInput);
@@ -922,6 +1009,14 @@ fn directory_bytes_bounded(root: &Path) -> Result<u64> {
         }
     }
     Ok(total)
+}
+
+fn ensure_archive_scan_active(cancellation: &CancellationToken) -> Result<()> {
+    if cancellation.is_cancelled() {
+        Err(MarketDataError::Storage(StorageFailure::Cancelled))
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug)]
