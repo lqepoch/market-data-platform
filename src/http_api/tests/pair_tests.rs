@@ -23,9 +23,7 @@ use crate::{
 
 use super::{assert_no_store, request};
 use crate::http_api::{
-    AuthConfig, ServiceState, app_router,
-    auth::test_support,
-    supervisor::{QueryClient, QuerySupervisor},
+    AuthConfig, ServiceState, app_router, auth::test_support, supervisor::QuerySupervisor,
 };
 
 async fn make_reviewed_pair(output_root: &Path) -> String {

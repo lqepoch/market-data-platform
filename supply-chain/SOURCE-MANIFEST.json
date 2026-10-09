@@ -1813,7 +1813,7 @@
       },
       {
         "path": "src/http_api/tests/pair_tests.rs",
-        "sha256": "1b1f13877987212c2a9b08d0641af5a77aa297588cf5e20b015e4375974028f5"
+        "sha256": "179d3812ba8e1a525aca8d5fca49e0449e44730ea221a8374bd862cee81c5ae7"
       },
       {
         "path": "src/lib.rs",
@@ -1940,7 +1940,7 @@
         "sha256": "2a363162ec994b56cf22bc87a84e92405c82337ed28103a39fbcc12591426b53"
       }
     ],
-    "sha256": "fd001196339af970c5c75ed39bc1de2641b23f3367b2503e584a6d71e21465c2"
+    "sha256": "a81b928c1d0698c2ea312600308b1eb1bc929e748e0305af3a13333868f4f2b4"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
