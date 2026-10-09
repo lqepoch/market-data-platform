@@ -1,6 +1,9 @@
 use super::*;
 use std::sync::atomic::AtomicUsize;
 
+#[cfg(target_os = "linux")]
+mod lock_lifetime;
+
 use crate::storage::LocalTestTransport;
 use market_contracts::{
     DatasetCompletionEvidenceV1, DatasetManifestV1, DatasetObjectV1, DatasetTransportV1,
