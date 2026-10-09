@@ -436,8 +436,8 @@ fn local_test_reader_rejects_linked_artifacts_and_budget_lock_paths() {
     fs::set_permissions(&staging_root, fs::Permissions::from_mode(0o700)).unwrap();
 
     let external_object = temporary.path().join("external-object-target");
-    let external_object_bytes = b"external object target must remain unchanged";
-    fs::write(&external_object, external_object_bytes).unwrap();
+    let external_object_bytes = event_object_bytes.clone();
+    fs::write(&external_object, &external_object_bytes).unwrap();
     for link_kind in ["symlink", "hardlink"] {
         fs::remove_file(&event_object).unwrap();
         match link_kind {

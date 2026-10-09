@@ -1925,7 +1925,7 @@
       },
       {
         "path": "tests/offline_capture_cli.rs",
-        "sha256": "36ab8e8843eb4b9ce7a28fce8a90a96770f056d86ce855748e62d6d5fb511a43"
+        "sha256": "f793179a44b9de002a5bdddabe319015616b04703f9db672d87bd8e43f687a08"
       },
       {
         "path": "tests/parquet_worker_cli.rs",
@@ -1936,7 +1936,7 @@
         "sha256": "2a363162ec994b56cf22bc87a84e92405c82337ed28103a39fbcc12591426b53"
       }
     ],
-    "sha256": "29393e23aace15fa603dd8d4612cca5110d9076d4c3da4c0169e047fc96b9660"
+    "sha256": "d3014eb420c703eda33754a7ab10b494e031b1bc79ce3ff08ea1ac4f2e35ff74"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
