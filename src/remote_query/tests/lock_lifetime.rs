@@ -111,7 +111,6 @@ impl Drop for ForkExecLockGate {
 #[derive(Clone, Copy, Debug)]
 struct LockAttempt {
     blocked: bool,
-    kind: Option<io::ErrorKind>,
     raw_os_error: Option<i32>,
 }
 
@@ -120,12 +119,10 @@ impl LockAttempt {
         match result {
             Ok(()) => Self {
                 blocked: false,
-                kind: None,
                 raw_os_error: None,
             },
             Err(error) => Self {
                 blocked: error.kind() == io::ErrorKind::WouldBlock,
-                kind: Some(error.kind()),
                 raw_os_error: error.raw_os_error(),
             },
         }
@@ -246,14 +243,13 @@ fn io_error_from_errno(error: Errno) -> io::Error {
     io::Error::from_raw_os_error(error.raw_os_error())
 }
 
-fn assert_active_query_excluded_second_lock(attempt: Option<LockAttempt>, path: &Path) {
+fn assert_active_query_excluded_second_lock(attempt: Option<LockAttempt>) {
     let attempt = attempt.expect("transport must probe the active dataset lock");
     assert!(
         attempt.blocked,
-        "active query must keep dataset lock exclusive: path={}, error_kind={:?}, raw_os_error={:?}",
-        path.display(),
-        attempt.kind,
-        attempt.raw_os_error
+        "active query must keep dataset lock exclusive: blocked={}, lock_errno={}",
+        attempt.blocked,
+        attempt.raw_os_error.unwrap_or(0)
     );
 }
 
@@ -284,9 +280,11 @@ async fn completed_query_releases_dataset_lock_before_inherited_child_execs() {
     let active_attempt = *active_lock_attempt
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    assert_active_query_excluded_second_lock(active_attempt, &lock_path);
+    assert_active_query_excluded_second_lock(active_attempt);
 
     let second = reader.query_bars(DatasetNamespace::Diagnostic, DATASET_ID, None);
+    let second_succeeded = second.is_ok();
+    let second_cache_hit = matches!(second.as_ref(), Ok((_, summary)) if summary.cache_hit);
     let inherited_lock_attempt = LockAttempt::from_result(lock_probe(&lock_path));
     let release = gate
         .lock()
@@ -294,21 +292,26 @@ async fn completed_query_releases_dataset_lock_before_inherited_child_execs() {
         .release_and_join();
     let lock_after_child_exit = lock_probe(&lock_path);
 
-    assert!(release.is_ok(), "gated child cleanup failed: {release:?}");
+    assert!(release.is_ok(), "gated child cleanup failed");
+    let lock_after_child_exit_available = lock_after_child_exit.is_ok();
     assert!(
-        lock_after_child_exit.is_ok(),
-        "dataset lock must be available after child exit: path={}, error_kind={:?}, raw_os_error={:?}",
-        lock_path.display(),
-        lock_after_child_exit.as_ref().err().map(io::Error::kind),
+        lock_after_child_exit_available,
+        "dataset lock must be available after child exit: available={}, lock_errno={}",
+        lock_after_child_exit_available,
         lock_after_child_exit
-            .as_ref()
             .err()
-            .and_then(io::Error::raw_os_error)
+            .and_then(|error| error.raw_os_error())
+            .unwrap_or(0)
     );
     assert!(
-        matches!(second, Ok((_, ref summary)) if summary.cache_hit),
-        "completed cache-hit query must reacquire dataset lock while inherited child waits before exec: path={}, active_probe={active_attempt:?}, child_wait_probe={inherited_lock_attempt:?}, second_query={second:?}",
-        lock_path.display()
+        second_succeeded && second_cache_hit,
+        "completed cache-hit query classification mismatch: query_succeeded={}, cache_hit={}, active_lock_errno={}, inherited_child_lock_errno={}",
+        second_succeeded,
+        second_cache_hit,
+        active_attempt
+            .and_then(|attempt| attempt.raw_os_error)
+            .unwrap_or(0),
+        inherited_lock_attempt.raw_os_error.unwrap_or(0)
     );
 }
 
@@ -339,9 +342,11 @@ async fn failed_query_releases_dataset_lock_before_inherited_child_execs() {
     let active_attempt = *active_lock_attempt
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    assert_active_query_excluded_second_lock(active_attempt, &lock_path);
+    assert_active_query_excluded_second_lock(active_attempt);
 
     let retry = reader.query_bars(DatasetNamespace::Diagnostic, DATASET_ID, None);
+    let retry_succeeded = retry.is_ok();
+    let retry_cache_hit = matches!(retry.as_ref(), Ok((_, summary)) if summary.cache_hit);
     let inherited_lock_attempt = LockAttempt::from_result(lock_probe(&lock_path));
     let release = gate
         .lock()
@@ -349,11 +354,25 @@ async fn failed_query_releases_dataset_lock_before_inherited_child_execs() {
         .release_and_join();
     let lock_after_child_exit = lock_probe(&lock_path);
 
-    assert!(release.is_ok(), "gated child cleanup failed: {release:?}");
-    assert!(lock_after_child_exit.is_ok());
+    assert!(release.is_ok(), "gated child cleanup failed");
+    let lock_after_child_exit_available = lock_after_child_exit.is_ok();
     assert!(
-        matches!(retry, Ok((_, ref summary)) if !summary.cache_hit),
-        "retry after failed query must reacquire dataset lock while inherited child waits before exec: path={}, active_probe={active_attempt:?}, child_wait_probe={inherited_lock_attempt:?}, retry={retry:?}",
-        lock_path.display()
+        lock_after_child_exit_available,
+        "dataset lock must be available after child exit: available={}, lock_errno={}",
+        lock_after_child_exit_available,
+        lock_after_child_exit
+            .err()
+            .and_then(|error| error.raw_os_error())
+            .unwrap_or(0)
+    );
+    assert!(
+        retry_succeeded && !retry_cache_hit,
+        "failed-query retry classification mismatch: query_succeeded={}, cache_hit={}, active_lock_errno={}, inherited_child_lock_errno={}",
+        retry_succeeded,
+        retry_cache_hit,
+        active_attempt
+            .and_then(|attempt| attempt.raw_os_error)
+            .unwrap_or(0),
+        inherited_lock_attempt.raw_os_error.unwrap_or(0)
     );
 }

@@ -1889,7 +1889,7 @@
       },
       {
         "path": "src/remote_query/tests/lock_lifetime.rs",
-        "sha256": "88e35fddb558c55d927789a8ae70be142310fe7c6f063ef183cdb7ab88480d68"
+        "sha256": "881420addbe2aa8a6c66a9c1e414ae08f3108db5b3f14ef7977d96ba3c125bf2"
       },
       {
         "path": "src/schema.rs",
@@ -1928,7 +1928,7 @@
         "sha256": "2a363162ec994b56cf22bc87a84e92405c82337ed28103a39fbcc12591426b53"
       }
     ],
-    "sha256": "195907d2cf97b19ec3546c1b755dba40e03ce82bae85e7ab0d26a25d56635f9f"
+    "sha256": "da17c8d306f327cc4b795341e8fcf183480f1b18c39ec1a1382965baf254229d"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
