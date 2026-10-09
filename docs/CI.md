@@ -43,7 +43,9 @@ they do not establish provider entitlement, remote archive access, or publicatio
 The `offline_capture_cli` integration test also exercises the exact single-receipt LocalTest
 pair verifier through the CLI, including missing/tampered inputs and a permissive-umask run; it
 checks that staging is private per invocation, shared-budget lock contention fails closed and
-recovers after unlock, and only the persistent owner-only lock remains after per-run cleanup.
+recovers after unlock, and only the persistent owner-only lock remains after per-run cleanup. It
+also rejects symlink and hardlink archive objects and budget-lock paths without changing their
+external targets or leaving a private run directory behind.
 
 ## Optional offline HTTP container smoke
 

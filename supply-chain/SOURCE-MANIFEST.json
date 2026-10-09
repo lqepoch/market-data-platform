@@ -1,7 +1,7 @@
 {
   "artifacts": {
-    "supply-chain/NOTICE.txt": "0f9015a0d0c8b7f3964f99821ddc13b13abc5d72ce9f94b149415bf6e9b0126c",
-    "supply-chain/market-data-platform.cdx.json": "7ce680c4abc4460e6c0275633035352410fbd7d135e01358c6574564ac669a0e"
+    "supply-chain/NOTICE.txt": "40ac33bca3cca847d894083b6e42572c7b7c216095a408601209468412376773",
+    "supply-chain/market-data-platform.cdx.json": "cdedabb41622a49364b13345f62ce424a236035e9b6fcdb111e9aa4272889721"
   },
   "component": {
     "license": "MIT",
@@ -15,7 +15,7 @@
         "alpaca-stream",
         "broker-ports"
       ],
-      "rev": "dc9255b68a0d6380623c14adea8cc977d3504b12"
+      "rev": "a6a864701f39f25b6b1d757cbd8a5bb918678b99"
     },
     {
       "origin": "https://github.com/lqepoch/trading-core",
@@ -24,17 +24,17 @@
         "exact-decimal",
         "market-contracts"
       ],
-      "rev": "23a87d5b5a549e4489c1a2844c4132c43148fe6b"
+      "rev": "22315511e084050c2ec037fa36c5d07a0bc6606e"
     }
   ],
   "inputs": [
     {
       "path": "Cargo.toml",
-      "sha256": "ab3187dc265990f51f52e5e4bcb865194c1eb10358c022fcfe5ccbefa9d4ab7c"
+      "sha256": "381373a1a94cdd1ea64df92156009b082b4efe4bbf520b392ccb86f9c6559673"
     },
     {
       "path": "Cargo.lock",
-      "sha256": "8401957755550951d934e44c542af72d4f37263312a42eb62eec102983017e44"
+      "sha256": "f69a14a42893107f5bf945814a5a050899f023a0be1bfe353f5c252a52b48739"
     },
     {
       "path": "Dockerfile",
@@ -50,7 +50,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "f4e7d4f13b20a9b1607647a4342d49accccc1c24ecf0d08c635056b521c287d2"
+      "sha256": "39fc581da820850be85826f67e828d6d1734ec4da6ffa3793a1d9d6363775555"
     },
     {
       "path": "AGENTS.md",
@@ -62,7 +62,7 @@
     },
     {
       "path": "docs/CI.md",
-      "sha256": "6b3bd31eaab6ec27bf420d9f09a9d6c659e69db6ad389242be566f7bfd78e197"
+      "sha256": "d1f73426a3a1c422c04e78fa9d584a98c3951cebf35e93722bab3f9f4c909108"
     },
     {
       "path": "docs/ARCHITECTURE.md",
@@ -106,7 +106,7 @@
     },
     {
       "path": "supply-chain/git-source-pins.json",
-      "sha256": "5f4b66acfb4c06300620cb42da08767d9e7cd7950f849b6649797a8c8786e624"
+      "sha256": "31424943842605637199b73d441ba93ce8d72e756d863b110d4106553ed44f51"
     },
     {
       "path": "scripts/supply_chain.py",
@@ -140,7 +140,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "alpaca-stream",
-      "source": "git+https://github.com/lqepoch/broker-connectors?rev=dc9255b68a0d6380623c14adea8cc977d3504b12#dc9255b68a0d6380623c14adea8cc977d3504b12",
+      "source": "git+https://github.com/lqepoch/broker-connectors?rev=a6a864701f39f25b6b1d757cbd8a5bb918678b99#a6a864701f39f25b6b1d757cbd8a5bb918678b99",
       "version": "0.1.0"
     },
     {
@@ -315,7 +315,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "broker-ports",
-      "source": "git+https://github.com/lqepoch/broker-connectors?rev=dc9255b68a0d6380623c14adea8cc977d3504b12#dc9255b68a0d6380623c14adea8cc977d3504b12",
+      "source": "git+https://github.com/lqepoch/broker-connectors?rev=a6a864701f39f25b6b1d757cbd8a5bb918678b99#a6a864701f39f25b6b1d757cbd8a5bb918678b99",
       "version": "0.1.0"
     },
     {
@@ -497,7 +497,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "domain",
-      "source": "git+https://github.com/lqepoch/trading-core?rev=23a87d5b5a549e4489c1a2844c4132c43148fe6b#23a87d5b5a549e4489c1a2844c4132c43148fe6b",
+      "source": "git+https://github.com/lqepoch/trading-core?rev=22315511e084050c2ec037fa36c5d07a0bc6606e#22315511e084050c2ec037fa36c5d07a0bc6606e",
       "version": "0.1.0"
     },
     {
@@ -518,7 +518,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "exact-decimal",
-      "source": "git+https://github.com/lqepoch/trading-core?rev=23a87d5b5a549e4489c1a2844c4132c43148fe6b#23a87d5b5a549e4489c1a2844c4132c43148fe6b",
+      "source": "git+https://github.com/lqepoch/trading-core?rev=22315511e084050c2ec037fa36c5d07a0bc6606e#22315511e084050c2ec037fa36c5d07a0bc6606e",
       "version": "0.1.0"
     },
     {
@@ -805,7 +805,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "market-contracts",
-      "source": "git+https://github.com/lqepoch/trading-core?rev=23a87d5b5a549e4489c1a2844c4132c43148fe6b#23a87d5b5a549e4489c1a2844c4132c43148fe6b",
+      "source": "git+https://github.com/lqepoch/trading-core?rev=22315511e084050c2ec037fa36c5d07a0bc6606e#22315511e084050c2ec037fa36c5d07a0bc6606e",
       "version": "0.1.0"
     },
     {
@@ -1925,7 +1925,7 @@
       },
       {
         "path": "tests/offline_capture_cli.rs",
-        "sha256": "4c284aa875c2dbaa1c2a03f13c927d74d6760bb13c1e0ea5ac36bc35e42fd418"
+        "sha256": "36ab8e8843eb4b9ce7a28fce8a90a96770f056d86ce855748e62d6d5fb511a43"
       },
       {
         "path": "tests/parquet_worker_cli.rs",
@@ -1936,7 +1936,7 @@
         "sha256": "2a363162ec994b56cf22bc87a84e92405c82337ed28103a39fbcc12591426b53"
       }
     ],
-    "sha256": "0a3135b76cd20d4b8e02458005dd088d24ba20bacd0312b65656b3bf594c3235"
+    "sha256": "29393e23aace15fa603dd8d4612cca5110d9076d4c3da4c0169e047fc96b9660"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",

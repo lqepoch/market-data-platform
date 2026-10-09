@@ -2,7 +2,7 @@
 
 use std::{
     fs::{self, File, OpenOptions},
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt, symlink},
     path::{Path, PathBuf},
     process::Command,
 };
@@ -99,7 +99,11 @@ fn fixed_fake_wire_runs_through_cli_spool_pair_and_independent_readback() {
     let chunk_receipt_entry = fs::read_dir(output_root.join("archive-state/capture-pair-v2"))
         .unwrap()
         .filter_map(std::result::Result::ok)
-        .find(|entry| entry.file_name().to_string_lossy().starts_with("chunk-"))
+        .find(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with("chunk-") && name.ends_with(".receipt.json")
+        })
         .unwrap();
     let chunk_receipt_path = chunk_receipt_entry.path();
     let chunk_receipt_name = chunk_receipt_entry.file_name().into_string().unwrap();
@@ -129,6 +133,7 @@ fn fixed_fake_wire_runs_through_cli_spool_pair_and_independent_readback() {
         "staging budget lock did not fail closed"
     );
     budget_lock.unlock().unwrap();
+    drop(budget_lock);
     let verified_pair = run_pair_verifier_with_permissive_umask(
         &archive,
         &output_root,
@@ -391,6 +396,119 @@ fn fixed_fake_wire_runs_through_cli_spool_pair_and_independent_readback() {
     assert_eq!(fs::read(receipt_path).unwrap(), receipt_bytes);
 }
 
+#[test]
+fn local_test_reader_rejects_linked_artifacts_and_budget_lock_paths() {
+    let temporary = tempfile::tempdir().unwrap();
+    let output_root = temporary.path().join("capture-output");
+    let output = Command::new(env!("CARGO_BIN_EXE_market-data-platform"))
+        .env_clear()
+        .args([
+            "capture-synthetic",
+            "--output",
+            output_root.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let archive = output_root.join("local-test-archive");
+    let state_root = output_root.join("archive-state");
+    let receipt_directory = state_root.join("capture-pair-v2");
+    let chunk_receipt_entry = fs::read_dir(&receipt_directory)
+        .unwrap()
+        .filter_map(std::result::Result::ok)
+        .find(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with("chunk-") && name.ends_with(".receipt.json")
+        })
+        .unwrap();
+    let chunk_receipt_name = chunk_receipt_entry.file_name().into_string().unwrap();
+    let chunk_receipt: Value =
+        serde_json::from_slice(&fs::read(chunk_receipt_entry.path()).unwrap()).unwrap();
+    let event_artifact = &chunk_receipt["normalized_events"];
+    let event_object = archive
+        .join(event_artifact["dataset_id"].as_str().unwrap())
+        .join(event_artifact["object_name"].as_str().unwrap());
+    let event_object_bytes = fs::read(&event_object).unwrap();
+    let staging_root = temporary.path().join("readback-staging");
+    fs::create_dir(&staging_root).unwrap();
+    fs::set_permissions(&staging_root, fs::Permissions::from_mode(0o700)).unwrap();
+
+    let external_object = temporary.path().join("external-object-target");
+    let external_object_bytes = b"external object target must remain unchanged";
+    fs::write(&external_object, external_object_bytes).unwrap();
+    for link_kind in ["symlink", "hardlink"] {
+        fs::remove_file(&event_object).unwrap();
+        match link_kind {
+            "symlink" => symlink(&external_object, &event_object).unwrap(),
+            "hardlink" => fs::hard_link(&external_object, &event_object).unwrap(),
+            _ => unreachable!(),
+        }
+
+        let rejected =
+            run_pair_verifier(&archive, &output_root, &staging_root, &chunk_receipt_name);
+        assert!(
+            !rejected.status.success(),
+            "LocalTest opener accepted an artifact {link_kind}"
+        );
+        assert_eq!(fs::read(&external_object).unwrap(), external_object_bytes);
+        assert_staging_has_only_budget_lock(&staging_root);
+
+        fs::remove_file(&event_object).unwrap();
+        fs::write(&event_object, &event_object_bytes).unwrap();
+    }
+
+    let budget_lock_path = staging_root.join(".pair-readback-budget.lock");
+    let external_lock_target = temporary.path().join("external-budget-lock-target");
+    let external_lock_bytes = b"external lock target must remain unchanged";
+    fs::write(&external_lock_target, external_lock_bytes).unwrap();
+    fs::set_permissions(&external_lock_target, fs::Permissions::from_mode(0o600)).unwrap();
+
+    for link_kind in ["symlink", "hardlink"] {
+        fs::remove_file(&budget_lock_path).unwrap();
+        match link_kind {
+            "symlink" => symlink(&external_lock_target, &budget_lock_path).unwrap(),
+            "hardlink" => fs::hard_link(&external_lock_target, &budget_lock_path).unwrap(),
+            _ => unreachable!(),
+        }
+
+        let rejected =
+            run_pair_verifier(&archive, &output_root, &staging_root, &chunk_receipt_name);
+        assert!(
+            !rejected.status.success(),
+            "staging budget lock accepted a {link_kind}"
+        );
+        assert_eq!(
+            fs::read(&external_lock_target).unwrap(),
+            external_lock_bytes
+        );
+        assert_staging_has_only_lock_entry(
+            &staging_root,
+            link_kind == "symlink",
+            if link_kind == "hardlink" { 2 } else { 0 },
+        );
+    }
+
+    fs::remove_file(&budget_lock_path).unwrap();
+    let restored_lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&budget_lock_path)
+        .unwrap();
+    drop(restored_lock);
+    let recovered = run_pair_verifier(&archive, &output_root, &staging_root, &chunk_receipt_name);
+    assert!(recovered.status.success());
+    assert_eq!(fs::read(&external_object).unwrap(), external_object_bytes);
+    assert_eq!(
+        fs::read(&external_lock_target).unwrap(),
+        external_lock_bytes
+    );
+    assert_staging_has_only_budget_lock(&staging_root);
+}
+
 fn run_pair_verifier(
     archive: &Path,
     output_root: &Path,
@@ -444,8 +562,16 @@ fn assert_json_field(value: &Value, key: &str, expected: Value, message: &'stati
 }
 
 fn assert_staging_has_only_budget_lock(path: &Path) {
+    assert_staging_has_only_lock_entry(path, false, 1);
+}
+
+fn assert_staging_has_only_lock_entry(path: &Path, expect_symlink: bool, expected_nlink: u64) {
     let entries: Vec<_> = fs::read_dir(path).unwrap().collect();
-    assert_eq!(entries.len(), 1, "readback staging was not cleaned");
+    assert_eq!(
+        entries.len(),
+        1,
+        "readback staging retained private run files"
+    );
     let entry = entries[0].as_ref().unwrap();
     assert_eq!(
         entry.file_name(),
@@ -453,8 +579,15 @@ fn assert_staging_has_only_budget_lock(path: &Path) {
         "unexpected readback staging artifact"
     );
     let metadata = fs::symlink_metadata(entry.path()).unwrap();
+    assert_eq!(metadata.file_type().is_symlink(), expect_symlink);
+    if expect_symlink {
+        return;
+    }
     assert!(metadata.file_type().is_file());
-    assert_eq!(metadata.permissions().mode() & 0o7777, 0o600);
+    assert_eq!(metadata.nlink(), expected_nlink);
+    if expected_nlink == 1 {
+        assert_eq!(metadata.permissions().mode() & 0o7777, 0o600);
+    }
 }
 
 fn hash_ordered_raw_payloads(path: &Path) -> (String, u64) {
