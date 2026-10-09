@@ -262,6 +262,59 @@ fn core_raw_frame_v2_and_event_v3_roundtrip_capture_key_and_validate_exact_pair(
             event_rows: 1,
         }
     );
+
+    let mut wrong_ordinal = event_v3_row(&frame);
+    wrong_ordinal
+        .raw_frame_reference
+        .as_mut()
+        .unwrap()
+        .raw_frame_event_ordinal = 2;
+    wrong_ordinal
+        .raw_frame_reference
+        .as_mut()
+        .unwrap()
+        .raw_frame_event_count = 2;
+    let wrong_ordinal_path = temp.path().join("wrong-ordinal.parquet");
+    write_event_v3_with_limit(
+        &wrong_ordinal_path,
+        std::slice::from_ref(&wrong_ordinal),
+        1024 * 1024,
+    )
+    .unwrap();
+    assert!(
+        verify_capture_pair_v2(
+            &raw_path,
+            crate::schema::RAW_FRAME_SCHEMA_V2_ID,
+            &wrong_ordinal_path,
+            1024 * 1024,
+        )
+        .is_err()
+    );
+
+    let mut wrong_capture_key = event_v3_row(&frame);
+    wrong_capture_key
+        .raw_frame_reference
+        .as_mut()
+        .unwrap()
+        .raw_frame_capture_instance_id =
+        market_contracts::RawFrameCaptureInstanceIdV2::parse("10112233445546778899aabbccddeeff")
+            .unwrap();
+    let wrong_capture_key_path = temp.path().join("wrong-capture-key.parquet");
+    write_event_v3_with_limit(
+        &wrong_capture_key_path,
+        std::slice::from_ref(&wrong_capture_key),
+        1024 * 1024,
+    )
+    .unwrap();
+    assert!(
+        verify_capture_pair_v2(
+            &raw_path,
+            crate::schema::RAW_FRAME_SCHEMA_V2_ID,
+            &wrong_capture_key_path,
+            1024 * 1024,
+        )
+        .is_err()
+    );
 }
 
 #[test]

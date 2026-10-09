@@ -43,6 +43,17 @@ those belong to `broker-connectors`.
   `FixtureEnd` control marker is never provider or watermark evidence; ordinary EOF, timeout, or
   cancellation cannot complete a capture. Never add arbitrary fixture bytes, provider credentials,
   or a live-capture path to this feature.
+- CLI `verify-capture-pair-v2` accepts one explicit `chunk-<sha256>.receipt.json` basename and
+  only the existing LocalTest archive/state. Its crate-private reader reuses the Core raw/event
+  validators, artifact readback, and bounded Linux Parquet worker. The current-executable worker
+  wrapper is CLI-owned, not a general embedded-library reader. Do not scan receipt directories,
+  return raw rows, or imply that one verified chunk is a complete capture. Keep entitlement
+  `unknown` and source completeness `NOT_ASSERTED`. The verifier is unsupported outside Linux;
+  preserve existing `LocalTestTransport::new` behavior on other platforms. Temporary Parquet
+  copies use a fresh private `0700` run directory and create-only `0600` files under the caller's
+  existing staging root; never create or chmod that root. Serialize readers sharing that root with
+  its persistent owner-only `.pair-readback-budget.lock`, acquired before the staging-budget scan
+  and held through private run-directory cleanup; lock contention fails closed.
 - `archive::LocalRawFrameSpoolFactory` implements the broker's two-stage raw-frame sink on Linux.
   Persist exact payload bytes and the full source-local identity before predecode ACK, then persist
   the matching finalization summary before final ACK. Cancellation, ambiguous I/O, sequence gaps,

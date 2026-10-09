@@ -246,6 +246,47 @@ async fn synthetic_fake_wire_flows_through_durable_spool_parquet_pair_and_local_
     );
 
     let archive_root = temp.path().join("local-test-archive");
+    let readback_staging = temp.path().join("staging");
+    let chunk_receipt_name = receipt_file.file_name().to_string_lossy().to_string();
+    let reader = crate::archive::capture_pair_v2::reader::LocalCapturePairV2Reader::local_test(
+        &archive_root,
+        temp.path().join("archive-state"),
+        &readback_staging,
+        ArchiveLimits::default(),
+    )
+    .unwrap();
+    let verified = reader.verify_chunk(&chunk_receipt_name).unwrap();
+    let verified_json = serde_json::to_value(verified).unwrap();
+    assert!(
+        verified_json["status"] == "VERIFIED_LOCAL_TEST_CHUNK_ONLY",
+        "unexpected verified pair status"
+    );
+    assert!(
+        verified_json["source_completeness"] == "NOT_ASSERTED",
+        "unexpected source completeness label"
+    );
+    assert!(
+        verified_json["entitlement"] == "unknown",
+        "unexpected entitlement label"
+    );
+
+    let tight_manifest_limits = ArchiveLimits {
+        max_manifest_bytes: 1,
+        ..ArchiveLimits::default()
+    };
+    let capped_reader =
+        crate::archive::capture_pair_v2::reader::LocalCapturePairV2Reader::local_test(
+            &archive_root,
+            temp.path().join("archive-state"),
+            &readback_staging,
+            tight_manifest_limits,
+        )
+        .unwrap();
+    assert!(matches!(
+        capped_reader.verify_chunk(&chunk_receipt_name),
+        Err(crate::MarketDataError::InputLimit)
+    ));
+
     let exact_payload_bytes = [CONTROL_WIRE, WIRE].concat();
     let exact_payload_sha256 = hex::encode(Sha256::digest(&exact_payload_bytes));
     for artifact in [&receipt.raw_frames, &receipt.normalized_events] {
@@ -288,9 +329,15 @@ async fn synthetic_fake_wire_flows_through_durable_spool_parquet_pair_and_local_
             artifact.parquet_schema_sha256
         );
     }
+    let staging_entries: Vec<_> = fs::read_dir(temp.path().join("staging")).unwrap().collect();
+    assert_eq!(staging_entries.len(), 1);
     assert_eq!(
-        fs::read_dir(temp.path().join("staging")).unwrap().count(),
-        0
+        staging_entries[0]
+            .as_ref()
+            .unwrap()
+            .file_name()
+            .to_string_lossy(),
+        ".pair-readback-budget.lock"
     );
     spool_factory.shutdown().await;
 }

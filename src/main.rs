@@ -116,6 +116,19 @@ enum Command {
         #[arg(long, value_enum)]
         schema: SchemaArg,
     },
+    /// Verify one explicitly named LocalTest V2 capture-pair receipt and its raw/event objects.
+    VerifyCapturePairV2 {
+        #[arg(long)]
+        local_test_root: PathBuf,
+        #[arg(long)]
+        state_dir: PathBuf,
+        /// Existing owner-controlled staging root for private temporary readback files.
+        #[arg(long)]
+        staging_dir: PathBuf,
+        /// Receipt basename only: chunk-<sha256>.receipt.json.
+        #[arg(long)]
+        receipt: String,
+    },
     /// Query the bounded one-minute trade-bar Parquet object and optionally export JSONL.
     QueryBars {
         #[arg(long)]
@@ -145,6 +158,18 @@ enum Command {
         max_rows: usize,
         #[arg(long, default_value_t = DEFAULT_MAX_QUERY_RESULT_BYTES)]
         max_result_bytes: u64,
+        #[arg(long)]
+        pair_receipt: Option<PathBuf>,
+        #[arg(long)]
+        raw_manifest: Option<PathBuf>,
+        #[arg(long)]
+        event_manifest: Option<PathBuf>,
+        #[arg(long)]
+        event_parquet: Option<PathBuf>,
+        #[arg(long)]
+        receipt_name: Option<String>,
+        #[arg(long, default_value_t = DEFAULT_MAX_MANIFEST_BYTES)]
+        max_manifest_bytes: u64,
     },
     /// Read a manifest and Parquet object from rclone, verify them, then query/export locally.
     RemoteQueryBars {
@@ -241,6 +266,7 @@ enum NamespaceArg {
 enum ParquetWorkerAction {
     Verify,
     QueryBars,
+    VerifyCapturePairV2,
 }
 
 impl NamespaceArg {
@@ -365,6 +391,21 @@ async fn run(command: Command) -> Result<()> {
                 parquet_worker::verify(&parquet, schema.schema_id(), DEFAULT_MAX_OBJECT_BYTES)?;
             print_json(&verification)
         }
+        Command::VerifyCapturePairV2 {
+            local_test_root,
+            state_dir,
+            staging_dir,
+            receipt,
+        } => {
+            let summary = parquet_worker::cli_verify_local_test_capture_pair_v2(
+                local_test_root,
+                state_dir,
+                staging_dir,
+                ArchiveLimits::default(),
+                &receipt,
+            )?;
+            print_json_compact(&summary)
+        }
         Command::QueryBars {
             parquet,
             symbol,
@@ -405,6 +446,12 @@ async fn run(command: Command) -> Result<()> {
             symbol,
             max_rows,
             max_result_bytes,
+            pair_receipt,
+            raw_manifest,
+            event_manifest,
+            event_parquet,
+            receipt_name,
+            max_manifest_bytes,
         } => match action {
             ParquetWorkerAction::Verify => {
                 let schema_id = schema_id.ok_or(MarketDataError::InvalidInput)?;
@@ -429,6 +476,32 @@ async fn run(command: Command) -> Result<()> {
                 use std::io::Write;
                 output.flush()?;
                 Ok(())
+            }
+            ParquetWorkerAction::VerifyCapturePairV2 => {
+                let request = parquet_worker::CapturePairV2WorkerRequest {
+                    receipt_path: pair_receipt
+                        .as_deref()
+                        .ok_or(MarketDataError::InvalidInput)?,
+                    raw_manifest_path: raw_manifest
+                        .as_deref()
+                        .ok_or(MarketDataError::InvalidInput)?,
+                    raw_parquet_path: &parquet,
+                    event_manifest_path: event_manifest
+                        .as_deref()
+                        .ok_or(MarketDataError::InvalidInput)?,
+                    event_parquet_path: event_parquet
+                        .as_deref()
+                        .ok_or(MarketDataError::InvalidInput)?,
+                    raw_schema_id: schema_id.as_deref().ok_or(MarketDataError::InvalidInput)?,
+                    receipt_name: receipt_name
+                        .as_deref()
+                        .ok_or(MarketDataError::InvalidInput)?,
+                    max_manifest_bytes,
+                    max_object_bytes,
+                };
+                print_json(&parquet_worker::cli_worker_verify_capture_pair_v2(
+                    &request,
+                )?)
             }
         },
         Command::RemoteQueryBars {
@@ -560,5 +633,10 @@ fn read_session_config(path: &Path) -> Result<ReplaySessionConfig> {
 
 fn print_json(value: &impl serde::Serialize) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
+    Ok(())
+}
+
+fn print_json_compact(value: &impl serde::Serialize) -> Result<()> {
+    println!("{}", serde_json::to_string(value)?);
     Ok(())
 }

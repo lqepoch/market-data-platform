@@ -57,15 +57,22 @@ broker runner; it does not connect to a live SIP/OPRA feed.
 ## Local commands
 
 Use Rust 1.98.1 from `rust-toolchain.toml`.
-The shared contracts are pinned to trading-core revision
-`23a87d5b5a549e4489c1a2844c4132c43148fe6b` in `Cargo.toml` and `Cargo.lock`. The read-only Alpaca
-port and stream crates are pinned to `broker-connectors` revision
-`dc9255b68a0d6380623c14adea8cc977d3504b12`.
+The shared contracts and read-only Alpaca port/stream crates are pinned in `Cargo.toml` and
+`Cargo.lock` to one compatible dependency graph: `trading-core` revision
+`22315511e084050c2ec037fa36c5d07a0bc6606e` and `broker-connectors` revision
+`a8eea66a967f2d40cf726344b46e229ffee6f41b`. The broker revision pins its `domain` and
+`market-contracts` dependencies to that same `trading-core` commit.
 
 ```sh
 cargo +1.98.1 run --offline -- synthetic --output /tmp/mdp-demo
 cargo +1.98.1 run --offline --features offline-capture-synthetic -- capture-synthetic \
   --output /tmp/mdp-alpaca-offline-fixture
+# Replace the placeholder with the exact chunk-<sha256>.receipt.json basename in archive-state/capture-pair-v2.
+cargo +1.98.1 run --offline -- verify-capture-pair-v2 \
+  --local-test-root /tmp/mdp-alpaca-offline-fixture/local-test-archive \
+  --state-dir /tmp/mdp-alpaca-offline-fixture/archive-state \
+  --staging-dir /tmp/mdp-alpaca-offline-fixture/staging \
+  --receipt 'chunk-<sha256>.receipt.json'
 cargo +1.98.1 run --offline -- verify \
   --parquet /tmp/mdp-demo/staging/synthetic-2026-10-08-four-bars-parquet-v3-events-v1.parquet \
   --schema market-events-v1
@@ -101,6 +108,23 @@ records `SYNTHETIC_REPLAY_FIXTURE` and `NOT_ASSERTED`. CLI output explicitly say
 `SYNTHETIC_NOT_REAL_OPRA_NOT_LIVE`. The SDK's fixed freshness clock is only a fixture cutoff;
 received timestamps remain the runner's actual local receive times. None of these fields asserts
 provider access, entitlement, completeness, or live freshness.
+
+`verify-capture-pair-v2` reads exactly one existing `chunk-<sha256>.receipt.json` basename from
+the private pair-state directory and its two named objects from an existing LocalTest archive. It
+does not scan for receipts, create or mutate archive state, accept rclone/Drive settings, or return
+Parquet rows. On Linux it checks both canonical Core manifests, artifact hashes and object IDs,
+schema fingerprints, row counts, and the Core V2 raw-frame/V3 event-key join in the existing
+isolated worker (1 GiB address-space, 60 CPU-second, 120-second wall limit, two active workers,
+64 KiB result cap). The CLI prints only a compact pair summary with `entitlement=unknown` and
+`source_completeness=NOT_ASSERTED`; it verifies one chunk and does not claim capture rollup or
+provider completeness. Other operating systems return `Unsupported`. The existing
+`LocalTestTransport::new` behavior is unchanged; the CLI-owned verifier uses its stricter
+read-only opener. It launches its bounded worker through the current executable and is not a
+general embedded-library reader. Temporary Parquet readback files live only in a unique owner-only
+`0700` run directory below the supplied existing staging root, with create-only owner-only `0600`
+files; the command does not create or change permissions on that staging root. A persistent
+owner-only `.pair-readback-budget.lock` serializes readers sharing the staging budget; contention
+returns `LockHeld`, and the lock remains after all per-run files are removed.
 
 For the cross-repository adapter fixture, use a separate immutable dataset identity:
 
