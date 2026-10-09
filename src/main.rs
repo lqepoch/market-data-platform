@@ -224,7 +224,7 @@ enum Command {
         #[arg(long)]
         apply: bool,
     },
-    /// Start the authenticated read-only V1 HTTP API.
+    /// Start the authenticated read-only HTTP API; optional LocalTest Pair verification is one chunk only.
     Serve {
         #[arg(long, default_value = http_api::DEFAULT_BIND)]
         bind: SocketAddr,
@@ -242,6 +242,22 @@ enum Command {
         rclone_config: Option<PathBuf>,
         #[arg(long)]
         cache_dir: PathBuf,
+        /// Enable the one-chunk LocalTest Pair route with this existing private receipt root.
+        #[arg(
+            long,
+            requires = "pair_staging_dir",
+            requires = "local_test_root",
+            conflicts_with = "rclone_config"
+        )]
+        pair_state_dir: Option<PathBuf>,
+        /// Existing owner-controlled staging root for private Pair readback files.
+        #[arg(
+            long,
+            requires = "pair_state_dir",
+            requires = "local_test_root",
+            conflicts_with = "rclone_config"
+        )]
+        pair_staging_dir: Option<PathBuf>,
     },
 }
 
@@ -585,6 +601,8 @@ async fn run(command: Command) -> Result<()> {
             local_test_root,
             rclone_config,
             cache_dir,
+            pair_state_dir,
+            pair_staging_dir,
         } => {
             let shutdown_signal = install_shutdown_signal()?;
             let auth = AuthConfig::from_environment()?;
@@ -595,6 +613,17 @@ async fn run(command: Command) -> Result<()> {
                 max_query_rows: http_api::HTTP_MAX_QUERY_ROWS,
                 max_query_result_bytes: http_api::HTTP_MAX_QUERY_RESULT_BYTES,
                 ..RemoteCacheLimits::default()
+            };
+            let pair_config = match (pair_state_dir, pair_staging_dir) {
+                (None, None) => None,
+                (Some(state_dir), Some(staging_dir)) => Some(http_api::LocalTestPairReadConfig {
+                    local_test_root: local_test_root
+                        .clone()
+                        .ok_or(MarketDataError::InvalidInput)?,
+                    state_dir,
+                    staging_dir,
+                }),
+                _ => return Err(MarketDataError::InvalidInput),
             };
             let reader = match (local_test_root, rclone_config) {
                 (Some(root), None) => RemoteArchiveReader::local_test_isolated(
@@ -609,7 +638,14 @@ async fn run(command: Command) -> Result<()> {
                 )?,
                 _ => return Err(MarketDataError::InvalidInput),
             };
-            http_api::serve(bind, Arc::new(reader), auth, shutdown_signal).await
+            http_api::serve_with_pair_read_config(
+                bind,
+                Arc::new(reader),
+                auth,
+                pair_config,
+                shutdown_signal,
+            )
+            .await
         }
     }
 }

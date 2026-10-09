@@ -20,6 +20,9 @@ use super::{
     supervisor::{QueryClient, QuerySupervisor},
 };
 
+#[cfg(all(target_os = "linux", feature = "offline-capture-synthetic"))]
+mod pair_tests;
+
 const DATASET_ID: &str = "synthetic-2026-10-08-four-bars-parquet-v3-bars-1m-v1";
 
 async fn synthetic_remote_root(root: &std::path::Path) -> std::path::PathBuf {
@@ -44,11 +47,16 @@ fn service(
         )
         .unwrap(),
     );
-    let (supervisor, query_client) = QuerySupervisor::start(Arc::clone(&reader));
+    let (supervisor, query_client) = QuerySupervisor::start(
+        Arc::clone(&reader),
+        #[cfg(target_os = "linux")]
+        None,
+    );
     let state = Arc::new(ServiceState {
         auth_configured: auth.is_some(),
         query_client,
         reader,
+        pair_query_available: false,
     });
     (app_router(state, auth), supervisor)
 }
@@ -150,6 +158,7 @@ async fn no_key_loopback_profile_exposes_liveness_but_never_readiness_or_data() 
     assert_eq!(readiness.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_no_store(&readiness);
     let protected = app
+        .clone()
         .oneshot(request(
             &format!("/v1/datasets/{DATASET_ID}/bars?namespace=diagnostic&symbol=QQQ"),
             None,
@@ -158,6 +167,15 @@ async fn no_key_loopback_profile_exposes_liveness_but_never_readiness_or_data() 
         .unwrap();
     assert_eq!(protected.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_no_store(&protected);
+    let pair_route = app
+        .oneshot(request(
+            &format!("/v2/local-test/capture-pairs/{}/verify", "0".repeat(64)),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(pair_route.status(), StatusCode::NOT_FOUND);
+    assert_no_store(&pair_route);
     supervisor.shutdown().await.unwrap();
 }
 
@@ -320,6 +338,7 @@ async fn cache_policy_covers_query_supervisor_overload() {
         auth_configured: true,
         query_client,
         reader,
+        pair_query_available: false,
     });
     let app = app_router(state, Some(test_support::auth_config()));
     let token = test_support::terminal_token("market:read");

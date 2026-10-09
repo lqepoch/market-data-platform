@@ -19,7 +19,10 @@ use std::{
 use fs2::FileExt;
 
 #[cfg(target_os = "linux")]
-use crate::{MarketDataError, Result, archive::ArchiveLimits, storage::LocalTestTransport};
+use crate::{
+    MarketDataError, Result, archive::ArchiveLimits, cancellation::CancellationToken,
+    error::StorageFailure, storage::LocalTestTransport,
+};
 use market_contracts::EntitlementState;
 use serde::{Deserialize, Serialize};
 
@@ -105,6 +108,8 @@ pub(crate) struct LocalCapturePairV2Reader {
     transport: LocalTestTransport,
     state_root: PathBuf,
     staging_root: PathBuf,
+    staging_device: u64,
+    staging_inode: u64,
     limits: ArchiveLimits,
 }
 
@@ -157,6 +162,8 @@ impl LocalCapturePairV2Reader {
             transport: LocalTestTransport::open_existing(local_test_root)?,
             state_root: state_root.into(),
             staging_root: canonical_staging,
+            staging_device: metadata.dev(),
+            staging_inode: metadata.ino(),
             limits,
         })
     }
@@ -167,14 +174,45 @@ impl LocalCapturePairV2Reader {
     /// does not search the receipt directory or interpret a capture rollup.
     #[cfg(target_os = "linux")]
     pub(crate) fn verify_chunk(&self, receipt_name: &str) -> Result<VerifiedCapturePairChunkV2> {
+        self.verify_chunk_cancellable(receipt_name, &CancellationToken::new())
+    }
+
+    /// Verifies one explicit chunk while propagating request cancellation through exact local
+    /// reads, private staging copies, and the isolated Parquet worker.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn verify_chunk_cancellable(
+        &self,
+        receipt_name: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<VerifiedCapturePairChunkV2> {
+        ensure_not_cancelled(cancellation)?;
         if !valid_chunk_receipt_name(receipt_name) {
             return Err(MarketDataError::InvalidInput);
         }
-        let _budget_lock = StagingBudgetLock::acquire(&self.staging_root)?;
-        ArchivePublisher::preflight_replay_staging(&self.staging_root, &self.limits)?;
-        let mut staging = PrivateStagingRun::create(&self.staging_root)?;
+        let _budget_lock = StagingBudgetLock::acquire(
+            &self.staging_root,
+            self.staging_device,
+            self.staging_inode,
+            cancellation,
+        )?;
+        ensure_not_cancelled(cancellation)?;
+        ArchivePublisher::preflight_existing_replay_staging(
+            &_budget_lock.root_directory,
+            &self.limits,
+            cancellation,
+        )?;
+        ensure_not_cancelled(cancellation)?;
+        let mut staging = PrivateStagingRun::create(
+            &self.staging_root,
+            &_budget_lock.root_directory,
+            self.staging_device,
+            self.staging_inode,
+            cancellation,
+        )?;
+        ensure_not_cancelled(cancellation)?;
         let receipt_directory = open_private_pair_directory(&self.state_root, false)?;
-        let (receipt, receipt_bytes) = read_private_pair_receipt(&receipt_directory, receipt_name)?;
+        let (receipt, receipt_bytes) =
+            read_private_pair_receipt(&receipt_directory, receipt_name, cancellation)?;
         receipt.validate().map_err(map_pair_error)?;
 
         let raw = stage_artifact(
@@ -184,6 +222,7 @@ impl LocalCapturePairV2Reader {
             self.limits.max_object_bytes,
             &mut staging,
             "raw",
+            cancellation,
         )?;
         let events = stage_artifact(
             &self.transport,
@@ -192,7 +231,9 @@ impl LocalCapturePairV2Reader {
             self.limits.max_object_bytes,
             &mut staging,
             "events",
+            cancellation,
         )?;
+        ensure_not_cancelled(cancellation)?;
         let staged_receipt = staging.create_bytes(&receipt_bytes, "receipt", "json")?;
 
         let request = parquet_worker::CapturePairV2WorkerRequest {
@@ -206,28 +247,42 @@ impl LocalCapturePairV2Reader {
             max_manifest_bytes: self.limits.max_manifest_bytes,
             max_object_bytes: self.limits.max_object_bytes,
         };
-        parquet_worker::verify_capture_pair_v2(&request)
+        parquet_worker::verify_capture_pair_v2_cancellable(&request, cancellation.clone())
     }
 }
 
 #[cfg(target_os = "linux")]
-struct StagingBudgetLock(File);
+struct StagingBudgetLock {
+    root_directory: File,
+    lock_file: File,
+}
 
 #[cfg(target_os = "linux")]
 impl StagingBudgetLock {
-    fn acquire(root: &Path) -> Result<Self> {
+    fn acquire(
+        root: &Path,
+        expected_device: u64,
+        expected_inode: u64,
+        cancellation: &CancellationToken,
+    ) -> Result<Self> {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
+        ensure_not_cancelled(cancellation)?;
         const LOCK_NAME: &str = ".pair-readback-budget.lock";
         let supplied_metadata = fs::symlink_metadata(root)?;
         if !supplied_metadata.file_type().is_dir()
             || supplied_metadata.uid() != rustix::process::geteuid().as_raw()
             || supplied_metadata.permissions().mode() & 0o022 != 0
+            || supplied_metadata.dev() != expected_device
+            || supplied_metadata.ino() != expected_inode
         {
             return Err(MarketDataError::PublicationNotAuthorized);
         }
         let canonical_root = fs::canonicalize(root)?;
-        let parent = File::from(
+        if canonical_root != root {
+            return Err(MarketDataError::PublicationNotAuthorized);
+        }
+        let root_directory = File::from(
             rustix::fs::open(
                 &canonical_root,
                 rustix::fs::OFlags::RDONLY
@@ -238,7 +293,7 @@ impl StagingBudgetLock {
             )
             .map_err(|_| MarketDataError::PublicationNotAuthorized)?,
         );
-        let opened_root = parent.metadata()?;
+        let opened_root = root_directory.metadata()?;
         if opened_root.dev() != supplied_metadata.dev()
             || opened_root.ino() != supplied_metadata.ino()
             || opened_root.uid() != rustix::process::geteuid().as_raw()
@@ -247,7 +302,7 @@ impl StagingBudgetLock {
         }
         let lock_file = File::from(
             rustix::fs::openat(
-                &parent,
+                &root_directory,
                 LOCK_NAME,
                 rustix::fs::OFlags::RDWR
                     | rustix::fs::OFlags::CREATE
@@ -265,6 +320,7 @@ impl StagingBudgetLock {
         {
             return Err(MarketDataError::PublicationNotAuthorized);
         }
+        ensure_not_cancelled(cancellation)?;
         lock_file.try_lock_exclusive().map_err(|error| {
             if error.kind() == std::io::ErrorKind::WouldBlock {
                 MarketDataError::LockHeld
@@ -272,14 +328,17 @@ impl StagingBudgetLock {
                 MarketDataError::Io(error)
             }
         })?;
-        Ok(Self(lock_file))
+        Ok(Self {
+            root_directory,
+            lock_file,
+        })
     }
 }
 
 #[cfg(target_os = "linux")]
 impl Drop for StagingBudgetLock {
     fn drop(&mut self) {
-        let _ = self.0.unlock();
+        let _ = self.lock_file.unlock();
     }
 }
 
@@ -297,7 +356,9 @@ fn stage_artifact(
     max_object_bytes: u64,
     staging: &mut PrivateStagingRun,
     label: &str,
+    cancellation: &CancellationToken,
 ) -> Result<StagedArtifact> {
+    ensure_not_cancelled(cancellation)?;
     if receipt.transport != market_contracts::DatasetTransportV1::LocalTest
         || receipt.manifest_size_bytes > max_manifest_bytes
         || receipt.size_bytes > max_object_bytes
@@ -305,11 +366,17 @@ fn stage_artifact(
         return Err(MarketDataError::InputLimit);
     }
     let manifest_object = transport
-        .lookup(&receipt.dataset_id, &receipt.manifest_object_name)?
+        .lookup_cancellable(
+            &receipt.dataset_id,
+            &receipt.manifest_object_name,
+            cancellation,
+        )?
         .ok_or(MarketDataError::IncompleteWindow)?;
+    ensure_not_cancelled(cancellation)?;
     let parquet_object = transport
-        .lookup(&receipt.dataset_id, &receipt.object_name)?
+        .lookup_cancellable(&receipt.dataset_id, &receipt.object_name, cancellation)?
         .ok_or(MarketDataError::IncompleteWindow)?;
+    ensure_not_cancelled(cancellation)?;
     if !same_remote_object(
         &manifest_object,
         &receipt.manifest_object_id,
@@ -327,18 +394,20 @@ fn stage_artifact(
     }
 
     let manifest_path = staging.new_path(label, "manifest")?;
-    transport.download_private_with_limit(
+    transport.download_private_with_limit_cancellable(
         &receipt.dataset_id,
         &receipt.manifest_object_name,
         &manifest_path,
         max_manifest_bytes,
+        cancellation,
     )?;
     let object_path = staging.new_path(label, "parquet")?;
-    transport.download_private_with_limit(
+    transport.download_private_with_limit_cancellable(
         &receipt.dataset_id,
         &receipt.object_name,
         &object_path,
         max_object_bytes,
+        cancellation,
     )?;
     Ok(StagedArtifact {
         manifest_path,
@@ -374,9 +443,11 @@ fn valid_chunk_receipt_name(name: &str) -> bool {
 fn read_private_pair_receipt(
     directory: &File,
     name: &str,
+    cancellation: &CancellationToken,
 ) -> Result<(LocalCapturePairChunkReceiptV2, Vec<u8>)> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
+    ensure_not_cancelled(cancellation)?;
     let fd = rustix::fs::openat(
         directory,
         name,
@@ -396,8 +467,16 @@ fn read_private_pair_receipt(
         return Err(MarketDataError::InputLimit);
     }
     let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.take(MAX_PAIR_RECEIPT_BYTES + 1)
-        .read_to_end(&mut bytes)?;
+    let mut reader = file.take(MAX_PAIR_RECEIPT_BYTES + 1);
+    let mut buffer = [0_u8; 16 * 1024];
+    loop {
+        ensure_not_cancelled(cancellation)?;
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buffer[..count]);
+    }
     if bytes.len() as u64 != metadata.len() || bytes.len() as u64 > MAX_PAIR_RECEIPT_BYTES {
         return Err(MarketDataError::InputLimit);
     }
@@ -407,6 +486,15 @@ fn read_private_pair_receipt(
         return Err(MarketDataError::IncompleteWindow);
     }
     Ok((receipt, bytes))
+}
+
+#[cfg(target_os = "linux")]
+fn ensure_not_cancelled(cancellation: &CancellationToken) -> Result<()> {
+    if cancellation.is_cancelled() {
+        Err(MarketDataError::Storage(StorageFailure::Cancelled))
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -420,34 +508,55 @@ struct PrivateStagingRun {
 
 #[cfg(target_os = "linux")]
 impl PrivateStagingRun {
-    fn create(root: &Path) -> Result<Self> {
+    fn create(
+        root: &Path,
+        root_directory: &File,
+        expected_device: u64,
+        expected_inode: u64,
+        cancellation: &CancellationToken,
+    ) -> Result<Self> {
+        Self::create_with_hook(
+            root,
+            root_directory,
+            expected_device,
+            expected_inode,
+            cancellation,
+            || {},
+        )
+    }
+
+    fn create_with_hook(
+        root: &Path,
+        root_directory: &File,
+        expected_device: u64,
+        expected_inode: u64,
+        cancellation: &CancellationToken,
+        mut after_directory_created: impl FnMut(),
+    ) -> Result<Self> {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
+        ensure_not_cancelled(cancellation)?;
         let root_metadata = fs::symlink_metadata(root)?;
         if !root_metadata.file_type().is_dir()
             || root_metadata.uid() != rustix::process::geteuid().as_raw()
             || root_metadata.permissions().mode() & 0o022 != 0
+            || root_metadata.dev() != expected_device
+            || root_metadata.ino() != expected_inode
         {
             return Err(MarketDataError::PublicationNotAuthorized);
         }
         let canonical_root = fs::canonicalize(root)?;
-        let parent = File::from(
-            rustix::fs::open(
-                &canonical_root,
-                rustix::fs::OFlags::RDONLY
-                    | rustix::fs::OFlags::DIRECTORY
-                    | rustix::fs::OFlags::NOFOLLOW
-                    | rustix::fs::OFlags::CLOEXEC,
-                rustix::fs::Mode::empty(),
-            )
-            .map_err(|_| MarketDataError::PublicationNotAuthorized)?,
-        );
+        if canonical_root != root {
+            return Err(MarketDataError::PublicationNotAuthorized);
+        }
+        let parent = root_directory.try_clone()?;
         let opened_root = parent.metadata()?;
-        if opened_root.dev() != root_metadata.dev() || opened_root.ino() != root_metadata.ino() {
+        if opened_root.dev() != expected_device || opened_root.ino() != expected_inode {
             return Err(MarketDataError::PublicationNotAuthorized);
         }
 
         for _ in 0..8 {
+            ensure_not_cancelled(cancellation)?;
             let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
             let directory_name = format!("pair-readback-{}-{sequence}", std::process::id());
             match rustix::fs::mkdirat(
@@ -455,7 +564,7 @@ impl PrivateStagingRun {
                 directory_name.as_str(),
                 rustix::fs::Mode::from_raw_mode(PRIVATE_STAGING_DIRECTORY_MODE),
             ) {
-                Ok(()) => {}
+                Ok(()) => after_directory_created(),
                 Err(error) if error == rustix::io::Errno::EXIST => continue,
                 Err(_) => return Err(MarketDataError::PublicationNotAuthorized),
             }
@@ -596,6 +705,54 @@ impl Drop for PrivateStagingRun {
             self.directory_name.as_str(),
             rustix::fs::AtFlags::REMOVEDIR,
         );
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod staging_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn cancellation_after_private_run_directory_creation_still_drops_cleanup_guard() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().join("staging");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let root = fs::canonicalize(root).unwrap();
+        let root_directory = File::from(
+            rustix::fs::open(
+                &root,
+                rustix::fs::OFlags::RDONLY
+                    | rustix::fs::OFlags::DIRECTORY
+                    | rustix::fs::OFlags::NOFOLLOW
+                    | rustix::fs::OFlags::CLOEXEC,
+                rustix::fs::Mode::empty(),
+            )
+            .unwrap(),
+        );
+        let metadata = root_directory.metadata().unwrap();
+        let cancellation = CancellationToken::new();
+        let cancel_after_mkdir = cancellation.clone();
+
+        let result = (|| {
+            let staging = PrivateStagingRun::create_with_hook(
+                &root,
+                &root_directory,
+                metadata.dev(),
+                metadata.ino(),
+                &cancellation,
+                move || cancel_after_mkdir.cancel(),
+            )?;
+            ensure_not_cancelled(&cancellation)?;
+            Ok::<_, MarketDataError>(staging)
+        })();
+
+        assert!(matches!(
+            result,
+            Err(MarketDataError::Storage(StorageFailure::Cancelled))
+        ));
+        assert_eq!(fs::read_dir(root).unwrap().count(), 0);
     }
 }
 

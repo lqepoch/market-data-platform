@@ -31,6 +31,7 @@ cargo +1.98.1 fmt --all -- --check
 CARGO_BUILD_JOBS=2 cargo +1.98.1 clippy --offline --all-targets -- -D warnings
 CARGO_BUILD_JOBS=2 cargo +1.98.1 clippy --offline --all-targets --features offline-capture-synthetic -- -D warnings
 CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline
+CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline --features offline-capture-synthetic --lib
 CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline --features offline-capture-synthetic --test offline_capture_cli
 cargo +1.98.1 deny --all-features check all
 python3 -m unittest discover -s tests -p 'test_supply_chain.py'
@@ -46,6 +47,10 @@ checks that staging is private per invocation, shared-budget lock contention fai
 recovers after unlock, and only the persistent owner-only lock remains after per-run cleanup. It
 also rejects symlink and hardlink archive objects and budget-lock paths without changing their
 external targets or leaving a private run directory behind.
+The feature-gated library tests also exercise the conditional one-chunk HTTP Pair route through the
+same query supervisor, including authorization before storage access, compact/no-store responses,
+tamper rejection, deadline/drop/shutdown cancellation, worker reap, staging cleanup, and capacity
+recovery. They do not establish a capture rollup or provider completeness.
 
 ## Optional offline HTTP container smoke
 

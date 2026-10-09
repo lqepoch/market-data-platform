@@ -770,6 +770,41 @@ fn replay_preflight_accounts_for_existing_files_and_peak_readback_reserve() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn existing_staging_scan_checks_cancellation_between_entries_and_caps_total_entries() {
+    let temporary = tempdir().unwrap();
+    for name in ["one", "two", "three"] {
+        fs::write(temporary.path().join(name), b"bounded").unwrap();
+    }
+
+    let cancellation = CancellationToken::new();
+    let cancel_after_first_entry = cancellation.clone();
+    let cancelled = directory_bytes_bounded_inner(
+        temporary.path(),
+        Some(&cancellation),
+        Some(8),
+        move |entry_number| {
+            if entry_number == 1 {
+                cancel_after_first_entry.cancel();
+            }
+        },
+    );
+    assert!(matches!(
+        cancelled,
+        Err(MarketDataError::Storage(StorageFailure::Cancelled))
+    ));
+
+    let bounded =
+        directory_bytes_bounded_cancellable(temporary.path(), &CancellationToken::new(), 2);
+    assert!(matches!(bounded, Err(MarketDataError::InputLimit)));
+    assert_eq!(
+        fs::read_dir(temporary.path()).unwrap().count(),
+        3,
+        "scan cancellation must not change the existing staging root"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn staging_cleanup_dry_run_and_apply_preserve_active_locked_and_unknown_state() {
     let temp = tempdir().unwrap();
     let state = temp.path().join("state");

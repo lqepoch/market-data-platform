@@ -8,6 +8,10 @@ use tokio::{
     task::{Id, JoinHandle, JoinSet},
 };
 
+#[cfg(target_os = "linux")]
+use crate::archive::capture_pair_v2::reader::{
+    LocalCapturePairV2Reader, VerifiedCapturePairChunkV2,
+};
 use crate::{
     MarketDataError,
     aggregate::TradeMinuteBarV1,
@@ -30,10 +34,13 @@ pub(super) struct QuerySupervisor {
 #[derive(Clone)]
 pub(super) struct QueryClient {
     sender: mpsc::Sender<SupervisorMessage>,
+    deadline: std::time::Duration,
 }
 
 enum SupervisorMessage {
     Query(QueryJob),
+    #[cfg(target_os = "linux")]
+    VerifyPair(PairVerifyJob),
 }
 
 struct QueryJob {
@@ -44,6 +51,13 @@ struct QueryJob {
     response: oneshot::Sender<crate::Result<(Vec<TradeMinuteBarV1>, RemoteQuerySummary)>>,
 }
 
+#[cfg(target_os = "linux")]
+struct PairVerifyJob {
+    receipt_name: String,
+    cancellation: CancellationToken,
+    response: oneshot::Sender<crate::Result<VerifiedCapturePairChunkV2>>,
+}
+
 #[derive(Debug)]
 pub(super) enum QueryFailure {
     Timeout,
@@ -52,7 +66,37 @@ pub(super) enum QueryFailure {
 }
 
 impl QuerySupervisor {
-    pub(super) fn start(reader: Arc<RemoteArchiveReader>) -> (Self, QueryClient) {
+    pub(super) fn start(
+        reader: Arc<RemoteArchiveReader>,
+        #[cfg(target_os = "linux")] pair_reader: Option<Arc<LocalCapturePairV2Reader>>,
+    ) -> (Self, QueryClient) {
+        Self::start_with_deadline(
+            reader,
+            #[cfg(target_os = "linux")]
+            pair_reader,
+            QUERY_DEADLINE,
+        )
+    }
+
+    #[cfg(test)]
+    pub(super) fn start_with_deadline_for_test(
+        reader: Arc<RemoteArchiveReader>,
+        #[cfg(target_os = "linux")] pair_reader: Option<Arc<LocalCapturePairV2Reader>>,
+        deadline: std::time::Duration,
+    ) -> (Self, QueryClient) {
+        Self::start_with_deadline(
+            reader,
+            #[cfg(target_os = "linux")]
+            pair_reader,
+            deadline,
+        )
+    }
+
+    fn start_with_deadline(
+        reader: Arc<RemoteArchiveReader>,
+        #[cfg(target_os = "linux")] pair_reader: Option<Arc<LocalCapturePairV2Reader>>,
+        deadline: std::time::Duration,
+    ) -> (Self, QueryClient) {
         let (sender, receiver) = mpsc::channel(QUERY_QUEUE_CAPACITY);
         let (shutdown, shutdown_receiver) = watch::channel(false);
         let cancellations = Arc::new(Mutex::new(HashMap::new()));
@@ -60,6 +104,8 @@ impl QuerySupervisor {
             receiver,
             shutdown_receiver,
             reader,
+            #[cfg(target_os = "linux")]
+            pair_reader,
             Arc::clone(&cancellations),
         ));
         (
@@ -68,7 +114,7 @@ impl QuerySupervisor {
                 owner: Some(owner),
                 cancellations,
             },
-            QueryClient { sender },
+            QueryClient { sender, deadline },
         )
     }
 
@@ -117,10 +163,39 @@ impl QueryClient {
             tracing::warn!("MDP query supervisor is unavailable or at capacity");
             return Err(QueryFailure::Unavailable);
         }
-        match tokio::time::timeout(QUERY_DEADLINE, receiver).await {
+        match tokio::time::timeout(self.deadline, receiver).await {
             Err(_) => Err(QueryFailure::Timeout),
             Ok(Err(_)) => {
                 tracing::error!("MDP query worker ended without a response");
+                Err(QueryFailure::Unavailable)
+            }
+            Ok(Ok(Err(error))) => Err(QueryFailure::Data(error)),
+            Ok(Ok(Ok(result))) => Ok(result),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) async fn verify_pair(
+        &self,
+        receipt_name: String,
+    ) -> std::result::Result<VerifiedCapturePairChunkV2, QueryFailure> {
+        let cancellation = CancellationToken::new();
+        let _cancel_on_drop = CancelOnDrop(cancellation.clone());
+        let (response, receiver) = oneshot::channel();
+        let job = PairVerifyJob {
+            receipt_name,
+            cancellation,
+            response,
+        };
+        if let Err(error) = self.sender.try_send(SupervisorMessage::VerifyPair(job)) {
+            drop(error);
+            tracing::warn!("MDP query supervisor is unavailable or at capacity");
+            return Err(QueryFailure::Unavailable);
+        }
+        match tokio::time::timeout(self.deadline, receiver).await {
+            Err(_) => Err(QueryFailure::Timeout),
+            Ok(Err(_)) => {
+                tracing::error!("MDP pair verifier ended without a response");
                 Err(QueryFailure::Unavailable)
             }
             Ok(Ok(Err(error))) => Err(QueryFailure::Data(error)),
@@ -153,7 +228,10 @@ impl QueryClient {
             );
         }
         (
-            Self { sender },
+            Self {
+                sender,
+                deadline: QUERY_DEADLINE,
+            },
             HeldFullQueryQueue {
                 _receiver: receiver,
             },
@@ -173,6 +251,7 @@ async fn run_owner(
     mut receiver: mpsc::Receiver<SupervisorMessage>,
     mut shutdown: watch::Receiver<bool>,
     reader: Arc<RemoteArchiveReader>,
+    #[cfg(target_os = "linux")] pair_reader: Option<Arc<LocalCapturePairV2Reader>>,
     cancellations: CancellationRegistry,
 ) {
     let mut active = JoinSet::new();
@@ -196,6 +275,21 @@ async fn run_owner(
                                 Some(&symbol),
                                 &job_cancellation,
                             );
+                            let _ = response.send(result);
+                        });
+                        registry_lock(&cancellations).insert(abort.id(), cancellation);
+                    }
+                    #[cfg(target_os = "linux")]
+                    Some(SupervisorMessage::VerifyPair(job)) => {
+                        let PairVerifyJob { receipt_name, cancellation, response } = job;
+                        let job_cancellation = cancellation.clone();
+                        let job_reader = pair_reader.clone();
+                        let abort = active.spawn_blocking(move || {
+                            let result = job_reader.ok_or(MarketDataError::PublicationNotAuthorized)
+                                .and_then(|reader| reader.verify_chunk_cancellable(
+                                    &receipt_name,
+                                    &job_cancellation,
+                                ));
                             let _ = response.send(result);
                         });
                         registry_lock(&cancellations).insert(abort.id(), cancellation);
@@ -242,8 +336,8 @@ async fn cancel_and_join(
     while let Some(joined) = active.join_next_with_id().await {
         remove_finished(Some(joined), cancellations);
     }
-    while let Ok(SupervisorMessage::Query(job)) = receiver.try_recv() {
-        drop(job);
+    while let Ok(message) = receiver.try_recv() {
+        drop(message);
     }
     registry_lock(cancellations).clear();
 }
@@ -275,6 +369,7 @@ mod tests {
         let (sender, mut receiver) = mpsc::channel(QUERY_QUEUE_CAPACITY);
         let client = QueryClient {
             sender: sender.clone(),
+            deadline: QUERY_DEADLINE,
         };
         for _ in 0..QUERY_QUEUE_CAPACITY {
             let (response, _receiver) = oneshot::channel();

@@ -256,20 +256,23 @@ impl LocalTestTransport {
     /// This path is intentionally Linux-only and separate from the legacy ObjectTransport
     /// download behavior so existing V1 callers retain their established permissions.
     #[cfg(target_os = "linux")]
-    pub(crate) fn download_private_with_limit(
+    pub(crate) fn download_private_with_limit_cancellable(
         &self,
         dataset_id: &str,
         object_name: &str,
         destination: &Path,
         max_bytes: u64,
+        cancellation: &CancellationToken,
     ) -> Result<()> {
+        ensure_not_cancelled(cancellation)?;
         if !self.no_follow {
             return Err(MarketDataError::PublicationNotAuthorized);
         }
         let source = self
             .open_object(dataset_id, object_name)?
             .ok_or(MarketDataError::Storage(StorageFailure::ReadbackFailed))?;
-        copy_open_file_limited_private(source, destination, max_bytes)
+        ensure_not_cancelled(cancellation)?;
+        copy_open_file_limited_private(source, destination, max_bytes, cancellation)
     }
 
     #[cfg(unix)]
@@ -705,9 +708,27 @@ fn copy_open_file_limited(
 
 #[cfg(target_os = "linux")]
 fn copy_open_file_limited_private(
+    source: File,
+    destination: &Path,
+    max_bytes: u64,
+    cancellation: &CancellationToken,
+) -> Result<()> {
+    copy_open_file_limited_private_with_progress(
+        source,
+        destination,
+        max_bytes,
+        cancellation,
+        || {},
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn copy_open_file_limited_private_with_progress(
     mut source: File,
     destination: &Path,
     max_bytes: u64,
+    cancellation: &CancellationToken,
+    mut after_chunk: impl FnMut(),
 ) -> Result<()> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
@@ -786,6 +807,7 @@ fn copy_open_file_limited_private(
     let mut copied = 0_u64;
     let mut buffer = [0_u8; 64 * 1024];
     loop {
+        ensure_not_cancelled(cancellation)?;
         let count = source.read(&mut buffer)?;
         if count == 0 {
             break;
@@ -797,7 +819,9 @@ fn copy_open_file_limited_private(
             return Err(MarketDataError::InputLimit);
         }
         target.write_all(&buffer[..count])?;
+        after_chunk();
     }
+    ensure_not_cancelled(cancellation)?;
     target.sync_all()?;
     cleanup.active = false;
     Ok(())

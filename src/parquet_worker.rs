@@ -35,8 +35,9 @@ pub struct CapturePairV2WorkerRequest<'a> {
 }
 
 /// Verify one raw/event pair using the same bounded Linux worker as other Parquet reads.
-pub(crate) fn verify_capture_pair_v2(
+pub(crate) fn verify_capture_pair_v2_cancellable(
     request: &CapturePairV2WorkerRequest<'_>,
+    cancellation: CancellationToken,
 ) -> Result<VerifiedCapturePairChunkV2> {
     #[cfg(target_os = "linux")]
     {
@@ -70,6 +71,10 @@ pub(crate) fn verify_capture_pair_v2(
                 "MDP_TEST_WORKER_MAX_OBJECT_BYTES",
                 request.max_object_bytes.to_string(),
             );
+        #[cfg(test)]
+        if let Some(delay_ms) = test_support::pair_worker_delay_ms(request.receipt_name) {
+            command.env("MDP_TEST_WORKER_DELAY_MS", delay_ms.to_string());
+        }
         #[cfg(not(test))]
         command
             .arg("verify-capture-pair-v2")
@@ -91,7 +96,12 @@ pub(crate) fn verify_capture_pair_v2(
             .arg(request.max_manifest_bytes.to_string())
             .arg("--max-object-bytes")
             .arg(request.max_object_bytes.to_string());
-        let output = run_decode_worker(command, PAIR_VERIFY_OUTPUT_BYTES, WORKER_WALL_TIMEOUT)?;
+        let output = run_decode_worker_cancellable(
+            command,
+            PAIR_VERIFY_OUTPUT_BYTES,
+            WORKER_WALL_TIMEOUT,
+            cancellation,
+        )?;
         #[cfg(test)]
         let output = output
             .split(|byte| *byte == b'\n')
@@ -387,6 +397,11 @@ mod tests {
         {
             std::fs::write(pid_file, std::process::id().to_string()).unwrap();
         }
+        if let Ok(delay_ms) = std::env::var("MDP_TEST_WORKER_DELAY_MS")
+            && let Ok(delay_ms) = delay_ms.parse::<u64>()
+        {
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        }
         match action.as_str() {
             "verify" => {
                 let path = std::env::var_os("MDP_TEST_WORKER_PARQUET").unwrap();
@@ -461,9 +476,46 @@ mod tests {
 }
 
 #[cfg(test)]
-mod test_support {
+pub(crate) mod test_support {
     use std::sync::{Mutex, OnceLock};
 
     pub(super) static PID_FILE: OnceLock<Mutex<Option<std::path::PathBuf>>> = OnceLock::new();
     pub(super) static SERIAL: OnceLock<Mutex<()>> = OnceLock::new();
+    static PAIR_WORKER_DELAY: OnceLock<Mutex<Option<(String, u64)>>> = OnceLock::new();
+
+    pub(crate) struct PairWorkerDelayGuard(String);
+
+    pub(crate) fn hold_pair_worker_for_test(
+        receipt_name: &str,
+        delay_ms: u64,
+    ) -> PairWorkerDelayGuard {
+        let mut delay = PAIR_WORKER_DELAY
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *delay = Some((receipt_name.to_owned(), delay_ms));
+        PairWorkerDelayGuard(receipt_name.to_owned())
+    }
+
+    pub(super) fn pair_worker_delay_ms(receipt_name: &str) -> Option<u64> {
+        PAIR_WORKER_DELAY
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .filter(|(name, _)| name == receipt_name)
+            .map(|(_, delay_ms)| *delay_ms)
+    }
+
+    impl Drop for PairWorkerDelayGuard {
+        fn drop(&mut self) {
+            let mut delay = PAIR_WORKER_DELAY
+                .get_or_init(Default::default)
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if delay.as_ref().is_some_and(|(name, _)| name == &self.0) {
+                *delay = None;
+            }
+        }
+    }
 }
