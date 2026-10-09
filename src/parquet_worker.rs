@@ -357,11 +357,20 @@ pub(crate) fn track_worker_pid(path: &Path) -> WorkerPidFileGuard {
 }
 
 #[cfg(test)]
-pub(crate) fn serialize_worker_test() -> std::sync::MutexGuard<'static, ()> {
+pub(crate) fn serialize_worker_test() -> tokio::sync::OwnedMutexGuard<()> {
     test_support::SERIAL
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap()
+        .get_or_init(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+        .blocking_lock_owned()
+}
+
+#[cfg(all(test, feature = "offline-capture-synthetic", target_os = "linux"))]
+pub(crate) async fn serialize_worker_test_async() -> tokio::sync::OwnedMutexGuard<()> {
+    test_support::SERIAL
+        .get_or_init(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
+        .clone()
+        .lock_owned()
+        .await
 }
 
 #[cfg(test)]
@@ -477,10 +486,10 @@ mod tests {
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{Arc, Mutex, OnceLock};
 
     pub(super) static PID_FILE: OnceLock<Mutex<Option<std::path::PathBuf>>> = OnceLock::new();
-    pub(super) static SERIAL: OnceLock<Mutex<()>> = OnceLock::new();
+    pub(super) static SERIAL: OnceLock<Arc<tokio::sync::Mutex<()>>> = OnceLock::new();
     #[cfg(all(test, feature = "offline-capture-synthetic", target_os = "linux"))]
     static PAIR_WORKER_DELAY: OnceLock<Mutex<Option<(String, u64)>>> = OnceLock::new();
 

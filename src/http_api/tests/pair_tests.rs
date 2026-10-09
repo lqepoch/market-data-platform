@@ -275,7 +275,7 @@ async fn wait_for_reap(pid: u32) {
 
 #[tokio::test]
 async fn market_read_verifies_one_local_pair_and_never_reads_before_auth() {
-    let _worker_guard = crate::parquet_worker::serialize_worker_test();
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let temporary = tempfile::tempdir().unwrap();
     let output_root = temporary.path().join("offline-pair");
     let receipt_sha = make_reviewed_pair(&output_root).await;
@@ -340,7 +340,7 @@ async fn market_read_verifies_one_local_pair_and_never_reads_before_auth() {
 
 #[tokio::test]
 async fn pair_route_preserves_the_other_validated_synthetic_source_pair() {
-    let _worker_guard = crate::parquet_worker::serialize_worker_test();
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let temporary = tempfile::tempdir().unwrap();
     let output_root = temporary.path().join("synthetic-provider-pair");
     let receipt_sha = make_synthetic_provider_pair(&output_root).await;
@@ -373,7 +373,7 @@ async fn pair_route_preserves_the_other_validated_synthetic_source_pair() {
 
 #[tokio::test]
 async fn pair_route_reuses_shared_staging_lock_and_rejects_tampered_artifacts() {
-    let _worker_guard = crate::parquet_worker::serialize_worker_test();
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let temporary = tempfile::tempdir().unwrap();
     let output_root = temporary.path().join("offline-pair");
     let receipt_sha = make_reviewed_pair(&output_root).await;
@@ -456,7 +456,7 @@ async fn pair_route_reuses_shared_staging_lock_and_rejects_tampered_artifacts() 
 
 #[tokio::test]
 async fn pair_reader_rejects_replaced_startup_staging_root_without_recreating_or_forking_it() {
-    let _worker_guard = crate::parquet_worker::serialize_worker_test();
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let temporary = tempfile::tempdir().unwrap();
     let output_root = temporary.path().join("offline-pair");
     let receipt_sha = make_reviewed_pair(&output_root).await;
@@ -502,7 +502,7 @@ async fn pair_reader_rejects_replaced_startup_staging_root_without_recreating_or
 
 #[tokio::test]
 async fn dropping_pair_request_kills_and_reaps_worker_then_restores_capacity() {
-    let _worker_guard = crate::parquet_worker::serialize_worker_test();
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let temporary = tempfile::tempdir().unwrap();
     let output_root = temporary.path().join("offline-pair");
     let receipt_sha = make_reviewed_pair(&output_root).await;
@@ -547,7 +547,7 @@ async fn dropping_pair_request_kills_and_reaps_worker_then_restores_capacity() {
 
 #[tokio::test]
 async fn pair_http_deadline_cancels_worker_and_cleans_private_staging() {
-    let _worker_guard = crate::parquet_worker::serialize_worker_test();
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let temporary = tempfile::tempdir().unwrap();
     let output_root = temporary.path().join("offline-pair");
     let receipt_sha = make_reviewed_pair(&output_root).await;
@@ -580,7 +580,7 @@ async fn pair_http_deadline_cancels_worker_and_cleans_private_staging() {
 
 #[tokio::test]
 async fn pair_supervisor_shutdown_cancels_and_joins_active_worker() {
-    let _worker_guard = crate::parquet_worker::serialize_worker_test();
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let temporary = tempfile::tempdir().unwrap();
     let output_root = temporary.path().join("offline-pair");
     let receipt_sha = make_reviewed_pair(&output_root).await;
