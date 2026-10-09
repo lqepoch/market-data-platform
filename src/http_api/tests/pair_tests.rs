@@ -422,15 +422,7 @@ async fn pair_route_reuses_shared_staging_lock_and_rejects_tampered_artifacts() 
     staging_contains_only_budget_lock(&staging_root);
 
     let state_root = output_root.join("archive-state/capture-pair-v2");
-    let receipt_path = fs::read_dir(&state_root)
-        .unwrap()
-        .filter_map(std::result::Result::ok)
-        .map(|entry| entry.path())
-        .find(|path| {
-            let name = path.file_name().unwrap().to_string_lossy();
-            name.starts_with("chunk-") && name.ends_with(".receipt.json")
-        })
-        .unwrap();
+    let receipt_path = state_root.join(format!("chunk-{receipt_sha}.receipt.json"));
     let receipt: Value = serde_json::from_slice(&fs::read(receipt_path).unwrap()).unwrap();
     let event_artifact = &receipt["normalized_events"];
     let event_manifest = output_root
