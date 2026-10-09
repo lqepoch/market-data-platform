@@ -60,7 +60,7 @@ Use Rust 1.98.1 from `rust-toolchain.toml`.
 The shared contracts and read-only Alpaca port/stream crates are pinned in `Cargo.toml` and
 `Cargo.lock` to one compatible dependency graph: `trading-core` revision
 `22315511e084050c2ec037fa36c5d07a0bc6606e` and `broker-connectors` revision
-`a6a864701f39f25b6b1d757cbd8a5bb918678b99`. The broker revision pins its `domain` and
+`a8eea66a967f2d40cf726344b46e229ffee6f41b`. The broker revision pins its `domain` and
 `market-contracts` dependencies to that same `trading-core` commit.
 
 ```sh

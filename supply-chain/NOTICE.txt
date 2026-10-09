@@ -10,7 +10,7 @@ including build and development dependencies, against deny.toml.
 | --- | --- | --- | --- |
 | ahash | 0.8.12 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | aho-corasick | 1.1.5 | Unlicense OR MIT | registry+https://github.com/rust-lang/crates.io-index |
-| alpaca-stream | 0.1.0 | MIT OR Apache-2.0 | git+https://github.com/lqepoch/broker-connectors?rev=a6a864701f39f25b6b1d757cbd8a5bb918678b99#a6a864701f39f25b6b1d757cbd8a5bb918678b99 |
+| alpaca-stream | 0.1.0 | MIT OR Apache-2.0 | git+https://github.com/lqepoch/broker-connectors?rev=a8eea66a967f2d40cf726344b46e229ffee6f41b#a8eea66a967f2d40cf726344b46e229ffee6f41b |
 | android_system_properties | 0.1.6 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | anstream | 0.6.21 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | anstyle | 1.0.14 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
@@ -35,7 +35,7 @@ including build and development dependencies, against deny.toml.
 | bitflags | 2.13.2 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | block-buffer | 0.10.4 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | block-buffer | 0.12.1 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
-| broker-ports | 0.1.0 | MIT OR Apache-2.0 | git+https://github.com/lqepoch/broker-connectors?rev=a6a864701f39f25b6b1d757cbd8a5bb918678b99#a6a864701f39f25b6b1d757cbd8a5bb918678b99 |
+| broker-ports | 0.1.0 | MIT OR Apache-2.0 | git+https://github.com/lqepoch/broker-connectors?rev=a8eea66a967f2d40cf726344b46e229ffee6f41b#a8eea66a967f2d40cf726344b46e229ffee6f41b |
 | bumpalo | 3.20.3 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | bytes | 1.12.1 | MIT | registry+https://github.com/rust-lang/crates.io-index |
 | cc | 1.6.0 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
@@ -178,7 +178,7 @@ including build and development dependencies, against deny.toml.
 | thiserror-impl | 2.0.21 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | thread_local | 1.1.10 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | tiny-keccak | 2.0.2 | CC0-1.0 | registry+https://github.com/rust-lang/crates.io-index |
-| tokio | 1.53.1 | MIT | registry+https://github.com/rust-lang/crates.io-index |
+| tokio | 1.53.2 | MIT | registry+https://github.com/rust-lang/crates.io-index |
 | tokio-macros | 2.7.2 | MIT | registry+https://github.com/rust-lang/crates.io-index |
 | tokio-rustls | 0.26.6 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | tokio-tungstenite | 0.30.0 | MIT | registry+https://github.com/rust-lang/crates.io-index |
@@ -228,7 +228,7 @@ including build and development dependencies, against deny.toml.
 | wit-bindgen | 0.57.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | registry+https://github.com/rust-lang/crates.io-index |
 | zerocopy | 0.8.61 | BSD-2-Clause OR Apache-2.0 OR MIT | registry+https://github.com/rust-lang/crates.io-index |
 | zerocopy-derive | 0.8.61 | BSD-2-Clause OR Apache-2.0 OR MIT | registry+https://github.com/rust-lang/crates.io-index |
-| zeroize | 1.9.0 | Apache-2.0 OR MIT | registry+https://github.com/rust-lang/crates.io-index |
+| zeroize | 1.9.1 | Apache-2.0 OR MIT | registry+https://github.com/rust-lang/crates.io-index |
 | zmij | 1.0.23 | MIT | registry+https://github.com/rust-lang/crates.io-index |
 | zstd | 0.14.0 | BSD-3-Clause | registry+https://github.com/rust-lang/crates.io-index |
 | zstd-safe | 8.0.0 | BSD-3-Clause | registry+https://github.com/rust-lang/crates.io-index |

@@ -3,7 +3,7 @@
   "sources": [
     {
       "origin": "https://github.com/lqepoch/broker-connectors",
-      "rev": "a6a864701f39f25b6b1d757cbd8a5bb918678b99",
+      "rev": "a8eea66a967f2d40cf726344b46e229ffee6f41b",
       "packages": [
         "alpaca-stream",
         "broker-ports"
