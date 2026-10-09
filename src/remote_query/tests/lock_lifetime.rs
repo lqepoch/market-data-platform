@@ -1,4 +1,4 @@
-use super::seed_synthetic_archive;
+use super::{CountingTransport, reader_with_clock, seed_synthetic_archive};
 use crate::{
     MarketDataError, Result,
     archive::TransportKind,
@@ -14,13 +14,13 @@ use std::{
     process::{Command, ExitStatus, Stdio},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     thread::{self, JoinHandle},
     time::Duration,
 };
 
-use super::super::{DatasetNamespace, RemoteArchiveReader, RemoteCacheLimits};
+use super::super::{DatasetNamespace, RemoteArchiveReader, RemoteCacheCleaner, RemoteCacheLimits};
 
 const DATASET_ID: &str = "synthetic-2026-10-08-four-bars-parquet-v3-bars-1m-v1";
 const PRE_EXEC_TIMEOUT: Duration = Duration::from_secs(8);
@@ -375,4 +375,124 @@ async fn failed_query_releases_dataset_lock_before_inherited_child_execs() {
             .unwrap_or(0),
         inherited_lock_attempt.raw_os_error.unwrap_or(0)
     );
+}
+
+#[tokio::test]
+async fn cache_cleanup_releases_dataset_and_budget_locks_before_inherited_child_execs() {
+    let temp = tempfile::tempdir().unwrap();
+    let remote_root = seed_synthetic_archive(&temp.path().join("remote")).await;
+    let cache_root = temp.path().join("cache");
+    let now = Arc::new(AtomicU64::new(1_000));
+    let downloads = Arc::new(AtomicUsize::new(0));
+    let reader = reader_with_clock(
+        CountingTransport {
+            inner: LocalTestTransport::new(remote_root).unwrap(),
+            downloads: Arc::clone(&downloads),
+            lookups: Arc::new(AtomicUsize::new(0)),
+        },
+        cache_root.clone(),
+        Arc::clone(&now),
+        RemoteCacheLimits::default(),
+    );
+    let (_, first) = reader
+        .query_bars(DatasetNamespace::Diagnostic, DATASET_ID, None)
+        .unwrap();
+    assert!(!first.cache_hit);
+    now.fetch_add(
+        super::super::DEFAULT_REMOTE_CACHE_TTL.as_secs() + 1,
+        Ordering::Relaxed,
+    );
+
+    let lock_root = fs::canonicalize(&cache_root).unwrap().join(".locks");
+    let dataset_lock_path = lock_root.join(format!("diagnostic-{DATASET_ID}.lock"));
+    let budget_lock_path = lock_root.join("cache-budget.lock");
+    let gate = Arc::new(Mutex::new(ForkExecLockGate::new().unwrap()));
+    let gate_started = Arc::new(AtomicBool::new(false));
+    let clock_calls = Arc::new(AtomicUsize::new(0));
+    let active_lock_attempts = Arc::new(Mutex::new(None));
+    let cleaner_now = Arc::clone(&now);
+    let cleaner_gate = Arc::clone(&gate);
+    let cleaner_gate_started = Arc::clone(&gate_started);
+    let cleaner_clock_calls = Arc::clone(&clock_calls);
+    let cleaner_active_lock_attempts = Arc::clone(&active_lock_attempts);
+    let cleaner_dataset_lock_path = dataset_lock_path.clone();
+    let cleaner_budget_lock_path = budget_lock_path.clone();
+    let cleaner = RemoteCacheCleaner::with_clock(
+        cache_root.clone(),
+        RemoteCacheLimits::default(),
+        Arc::new(move || {
+            // The first clock read validates the expired candidate while the dataset
+            // lock is held. The second happens after the global budget lock is also held.
+            if cleaner_clock_calls.fetch_add(1, Ordering::AcqRel) == 1 {
+                let started = cleaner_gate
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .start_and_wait_for_pre_exec();
+                assert!(
+                    started.is_ok(),
+                    "cleaner lock inheritance gate did not start"
+                );
+                let dataset_attempt =
+                    LockAttempt::from_result(lock_probe(&cleaner_dataset_lock_path));
+                let budget_attempt =
+                    LockAttempt::from_result(lock_probe(&cleaner_budget_lock_path));
+                *cleaner_active_lock_attempts
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    Some((dataset_attempt, budget_attempt));
+                cleaner_gate_started.store(true, Ordering::Release);
+            }
+            cleaner_now.load(Ordering::Relaxed)
+        }),
+    )
+    .unwrap();
+
+    let report = cleaner.cleanup_expired(true).unwrap();
+    assert_eq!(report.evicted, 1);
+    assert!(gate_started.load(Ordering::Acquire));
+
+    let active_attempts = *active_lock_attempts
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dataset_lock = LockAttempt::from_result(lock_probe(&dataset_lock_path));
+    let budget_lock = LockAttempt::from_result(lock_probe(&budget_lock_path));
+    let refreshed = reader.query_bars(DatasetNamespace::Diagnostic, DATASET_ID, None);
+    let refreshed_succeeded = refreshed.is_ok();
+    let refreshed_was_cache_hit =
+        matches!(refreshed.as_ref(), Ok((_, summary)) if summary.cache_hit);
+
+    let release = gate
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .release_and_join();
+    assert!(release.is_ok(), "gated child cleanup failed");
+    let (active_dataset_lock, active_budget_lock) =
+        active_attempts.expect("cleaner must probe both locks while held");
+    assert!(
+        active_dataset_lock.blocked && active_budget_lock.blocked,
+        "cleaner must hold both locks while verifying for eviction: dataset_blocked={}, dataset_errno={}, budget_blocked={}, budget_errno={}",
+        active_dataset_lock.blocked,
+        active_dataset_lock.raw_os_error.unwrap_or(0),
+        active_budget_lock.blocked,
+        active_budget_lock.raw_os_error.unwrap_or(0)
+    );
+    let dataset_lock_available = !dataset_lock.blocked && dataset_lock.raw_os_error.is_none();
+    let budget_lock_available = !budget_lock.blocked && budget_lock.raw_os_error.is_none();
+    assert!(
+        dataset_lock_available && budget_lock_available,
+        "cleaner must release both locks before inherited child execs: dataset_available={}, dataset_blocked={}, dataset_errno={}, budget_available={}, budget_blocked={}, budget_errno={}",
+        dataset_lock_available,
+        dataset_lock.blocked,
+        dataset_lock.raw_os_error.unwrap_or(0),
+        budget_lock_available,
+        budget_lock.blocked,
+        budget_lock.raw_os_error.unwrap_or(0)
+    );
+    assert!(
+        refreshed_succeeded && !refreshed_was_cache_hit,
+        "query after cleanup must refresh the evicted cache: query_succeeded={}, cache_hit={}",
+        refreshed_succeeded,
+        refreshed_was_cache_hit
+    );
+    assert_eq!(downloads.load(Ordering::Relaxed), 4);
 }

@@ -246,9 +246,9 @@ separate remote folders. Misses hold a cross-process cache-budget lock through b
 downloads and verification; each download is capped at the observed remote size and inherits the
 rclone total operation deadline. Queries never evict expired entries. The local
 remote-query dataset lock remains held through cache verification and the full query/export
-operation. Remote-query dataset and cache-budget locks use an RAII guard that explicitly unlocks
-before closing the file descriptor, so a child forked before `exec` cannot extend a completed
-operation's lock lifetime. The `cleanup-remote-cache` command defaults to report-only; `--apply`
+operation. Query and cleanup dataset/cache-budget locks use the same RAII guard, which explicitly
+unlocks before closing the file descriptor, so a child forked before `exec` cannot extend a
+completed operation's lock lifetime. The `cleanup-remote-cache` command defaults to report-only; `--apply`
 removes an expired entry only when
 the private receipt, exact cache layout, manifest bytes, SHA-256, trusted Parquet schema/footer, and
 decoded row facts all verify. It holds the per-dataset lock and global cache-budget lock, skips active
