@@ -78,7 +78,7 @@ impl QuerySupervisor {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "offline-capture-synthetic", target_os = "linux"))]
     pub(super) fn start_with_deadline_for_test(
         reader: Arc<RemoteArchiveReader>,
         #[cfg(target_os = "linux")] pair_reader: Option<Arc<LocalCapturePairV2Reader>>,

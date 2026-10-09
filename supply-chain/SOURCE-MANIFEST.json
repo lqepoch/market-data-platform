@@ -1805,7 +1805,7 @@
       },
       {
         "path": "src/http_api/supervisor.rs",
-        "sha256": "f7535702398dd4253f6bd6aae3876ae1935ba5fda3ae4dde72a732283805fd71"
+        "sha256": "ecb511ff234f4fb0ea61f54fd75e90369e6a04ad24b1feb992a010acea90cb0e"
       },
       {
         "path": "src/http_api/tests.rs",
@@ -1865,7 +1865,7 @@
       },
       {
         "path": "src/parquet_worker.rs",
-        "sha256": "c2d802698db5b6cce6a8d9ca9ab65d198ded25a04f08f5d6773b441a71aa2eb1"
+        "sha256": "f32fcc366aedca6b0a5cd9030027accfc0b0f1cb8cadf1d2911c3e644bbe1604"
       },
       {
         "path": "src/pipeline.rs",
@@ -1940,7 +1940,7 @@
         "sha256": "2a363162ec994b56cf22bc87a84e92405c82337ed28103a39fbcc12591426b53"
       }
     ],
-    "sha256": "445cdeb378fa55bb3989721edf97e0e4de595c1e03d1975e158b08d7836f177f"
+    "sha256": "5d584d24c76420dba3c3c5186502ed9f98200787f795a0643bf1283120ae88c6"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",

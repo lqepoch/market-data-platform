@@ -71,7 +71,7 @@ pub(crate) fn verify_capture_pair_v2_cancellable(
                 "MDP_TEST_WORKER_MAX_OBJECT_BYTES",
                 request.max_object_bytes.to_string(),
             );
-        #[cfg(test)]
+        #[cfg(all(test, feature = "offline-capture-synthetic", target_os = "linux"))]
         if let Some(delay_ms) = test_support::pair_worker_delay_ms(request.receipt_name) {
             command.env("MDP_TEST_WORKER_DELAY_MS", delay_ms.to_string());
         }
@@ -481,10 +481,13 @@ pub(crate) mod test_support {
 
     pub(super) static PID_FILE: OnceLock<Mutex<Option<std::path::PathBuf>>> = OnceLock::new();
     pub(super) static SERIAL: OnceLock<Mutex<()>> = OnceLock::new();
+    #[cfg(all(test, feature = "offline-capture-synthetic", target_os = "linux"))]
     static PAIR_WORKER_DELAY: OnceLock<Mutex<Option<(String, u64)>>> = OnceLock::new();
 
+    #[cfg(all(test, feature = "offline-capture-synthetic", target_os = "linux"))]
     pub(crate) struct PairWorkerDelayGuard(String);
 
+    #[cfg(all(test, feature = "offline-capture-synthetic", target_os = "linux"))]
     pub(crate) fn hold_pair_worker_for_test(
         receipt_name: &str,
         delay_ms: u64,
@@ -497,6 +500,7 @@ pub(crate) mod test_support {
         PairWorkerDelayGuard(receipt_name.to_owned())
     }
 
+    #[cfg(all(test, feature = "offline-capture-synthetic", target_os = "linux"))]
     pub(super) fn pair_worker_delay_ms(receipt_name: &str) -> Option<u64> {
         PAIR_WORKER_DELAY
             .get_or_init(Default::default)
@@ -507,6 +511,7 @@ pub(crate) mod test_support {
             .map(|(_, delay_ms)| *delay_ms)
     }
 
+    #[cfg(all(test, feature = "offline-capture-synthetic", target_os = "linux"))]
     impl Drop for PairWorkerDelayGuard {
         fn drop(&mut self) {
             let mut delay = PAIR_WORKER_DELAY
