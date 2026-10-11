@@ -62,7 +62,7 @@
     },
     {
       "path": "docs/CI.md",
-      "sha256": "db6c0abc5a0353cb9eb12cbad7e1fbe61a159cbf2ec01abfaa865a4e357654e5"
+      "sha256": "c00df0fb9bff1e6ea53b55737cc30f96aac60636393b204ab6e82ecf79524652"
     },
     {
       "path": "docs/ARCHITECTURE.md",
@@ -1809,7 +1809,7 @@
       },
       {
         "path": "src/http_api/tests.rs",
-        "sha256": "5c3f0b98f1901806f7c20e2c6113074944e32cb291c0667a5ef7749285c6e136"
+        "sha256": "0d7129639d5e4e6a359e2510483d6f327d078cf4767a5e74db3c4c08a0d312ee"
       },
       {
         "path": "src/http_api/tests/pair_tests.rs",
@@ -1865,7 +1865,7 @@
       },
       {
         "path": "src/parquet_worker.rs",
-        "sha256": "ae5fb59f86dabff51fba497e4f6d586c7bfbbfb0a412883e0b8e8863af9faa14"
+        "sha256": "2e836d3430cb9d16d2447e4a94ba5700ab6fa3d61d12d65d080b348bf0b055b4"
       },
       {
         "path": "src/pipeline.rs",
@@ -1940,7 +1940,7 @@
         "sha256": "2a363162ec994b56cf22bc87a84e92405c82337ed28103a39fbcc12591426b53"
       }
     ],
-    "sha256": "9bbe1eee1b86e73b665c4b6ba5bdab914960efca0fb0aea0d1100dd442613bb2"
+    "sha256": "86ef83039b9ac633ebe8dd532de1e4e0dcb5581b8f8e33195e37541bac7c9726"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",

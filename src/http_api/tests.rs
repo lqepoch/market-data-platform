@@ -355,6 +355,9 @@ async fn cache_policy_covers_query_supervisor_overload() {
 
 #[tokio::test]
 async fn terminal_and_research_delegations_read_only_synthetic_diagnostic_v1_bars() {
+    // Other tests intentionally exhaust the process-wide two-worker budget.
+    // Share their guard so this independent successful-query case is deterministic.
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let temp = tempfile::tempdir().unwrap();
     let remote = synthetic_remote_root(&temp.path().join("remote")).await;
     let diagnostic_reader = RemoteArchiveReader::local_test_isolated(
