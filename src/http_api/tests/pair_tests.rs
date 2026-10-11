@@ -200,6 +200,7 @@ fn pair_service_with_deadline(
         auth_configured: auth.is_some(),
         query_client,
         reader: query_reader,
+        #[cfg(target_os = "linux")]
         pair_query_available: true,
     });
     (app_router(state, auth), supervisor)

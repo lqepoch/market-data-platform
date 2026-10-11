@@ -5,19 +5,19 @@
 //! provider entitlement, capture completeness, or archive publication. A spool
 //! found after process restart is preserved as unknown and is never resumed.
 
-use std::{
-    fmt,
-    path::PathBuf,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+use std::{fmt, path::PathBuf, sync::Arc};
+
+#[cfg(target_os = "linux")]
+use std::sync::{
+    Mutex,
+    atomic::{AtomicBool, Ordering},
 };
 
 use broker_ports::{
     RawCaptureInstanceId, RawFrameCapture, RawFrameFinalization, RawFrameSinkError,
     RawFrameSinkFactory,
 };
+#[cfg(target_os = "linux")]
 use tokio::sync::watch;
 
 #[cfg(target_os = "linux")]
@@ -28,9 +28,13 @@ pub const DEFAULT_RAW_SPOOL_MAX_TOTAL_BYTES: u64 = 32 * 1024 * 1024 * 1024;
 pub const DEFAULT_RAW_SPOOL_MAX_FRAMES_PER_CAPTURE: u32 = 65_536;
 pub const DEFAULT_RAW_SPOOL_MAX_CAPTURE_IDENTITIES: u32 = 1_024;
 
+#[cfg(target_os = "linux")]
 const HARD_MAX_CAPTURE_BYTES: u64 = DEFAULT_RAW_SPOOL_MAX_CAPTURE_BYTES;
+#[cfg(target_os = "linux")]
 const HARD_MAX_TOTAL_BYTES: u64 = DEFAULT_RAW_SPOOL_MAX_TOTAL_BYTES;
+#[cfg(target_os = "linux")]
 const HARD_MAX_FRAMES_PER_CAPTURE: u32 = DEFAULT_RAW_SPOOL_MAX_FRAMES_PER_CAPTURE;
+#[cfg(target_os = "linux")]
 const HARD_MAX_CAPTURE_IDENTITIES: u32 = DEFAULT_RAW_SPOOL_MAX_CAPTURE_IDENTITIES;
 
 /// Fixed limits for a private local raw-frame spool.
@@ -54,6 +58,7 @@ impl Default for RawFrameSpoolLimits {
 }
 
 impl RawFrameSpoolLimits {
+    #[cfg(target_os = "linux")]
     fn valid(self) -> bool {
         self.max_capture_bytes > 0
             && self.max_capture_bytes <= HARD_MAX_CAPTURE_BYTES
@@ -186,16 +191,16 @@ impl RawFrameSpoolCaptureReader {
 }
 
 /// A test-only pause/failure point around spool record writes.
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RawSpoolTestPoint {
     AfterWriteBeforeSync,
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 pub(crate) type RawSpoolTestHook = Arc<dyn Fn(RawSpoolTestPoint) -> bool + Send + Sync>;
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 impl LocalRawFrameSpoolFactory {
     pub(crate) fn open_with_test_hook(
         root: impl Into<PathBuf>,
@@ -217,16 +222,19 @@ impl LocalRawFrameSpoolFactory {
 }
 
 /// Tracks blocking file operations so shutdown can close admission and wait for real completion.
+#[cfg(target_os = "linux")]
 pub(super) struct BlockingWorkerSupervisor {
     state: Mutex<BlockingWorkerState>,
     changed: watch::Sender<usize>,
 }
 
+#[cfg(target_os = "linux")]
 struct BlockingWorkerState {
     closing: bool,
     active: usize,
 }
 
+#[cfg(target_os = "linux")]
 impl BlockingWorkerSupervisor {
     pub(super) fn new() -> Arc<Self> {
         let (changed, _) = watch::channel(0);
@@ -292,11 +300,13 @@ impl BlockingWorkerSupervisor {
     }
 }
 
+#[cfg(target_os = "linux")]
 pub(super) struct BlockingWorkerGuard {
     supervisor: Arc<BlockingWorkerSupervisor>,
     completed: bool,
 }
 
+#[cfg(target_os = "linux")]
 impl BlockingWorkerGuard {
     pub(super) fn complete(&mut self) -> bool {
         self.finish()
@@ -318,6 +328,7 @@ impl BlockingWorkerGuard {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl Drop for BlockingWorkerGuard {
     fn drop(&mut self) {
         self.finish();
@@ -345,11 +356,13 @@ impl RawFrameSinkFactory for LocalRawFrameSpoolFactory {
 
 /// Makes a cancelled request poison its sink even while its blocking write is
 /// still owned by Tokio's blocking pool.
+#[cfg(target_os = "linux")]
 pub(super) struct PoisonOnDrop {
     poisoned: Arc<AtomicBool>,
     completed: bool,
 }
 
+#[cfg(target_os = "linux")]
 impl PoisonOnDrop {
     pub(super) fn new(poisoned: Arc<AtomicBool>) -> Self {
         Self {
@@ -363,6 +376,7 @@ impl PoisonOnDrop {
     }
 }
 
+#[cfg(target_os = "linux")]
 impl Drop for PoisonOnDrop {
     fn drop(&mut self) {
         if !self.completed {

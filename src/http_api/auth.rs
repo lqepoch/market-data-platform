@@ -231,6 +231,7 @@ pub(super) mod test_support {
         token(TERMINAL_ISSUER, TERMINAL_KID, TERMINAL_SECRET, scope)
     }
 
+    #[cfg(target_os = "linux")]
     pub(in crate::http_api) fn research_token(scope: &str) -> String {
         token(RESEARCH_ISSUER, RESEARCH_KID, RESEARCH_SECRET, scope)
     }

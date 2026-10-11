@@ -19,12 +19,14 @@ use crate::{
 use super::RemoveFileOnDrop;
 
 const MAX_ACTIVE_DECODE_WORKERS: usize = 2;
+#[cfg(target_os = "linux")]
 const DECODE_WORKER_MAX_ADDRESS_SPACE: u64 = 1024 * 1024 * 1024;
+#[cfg(target_os = "linux")]
 const DECODE_WORKER_CPU_SECONDS: u64 = 60;
 pub(crate) const MAX_DECODE_WORKER_OUTPUT_BYTES: usize = 256 * 1024 * 1024;
 static ACTIVE_DECODE_WORKERS: AtomicUsize = AtomicUsize::new(0);
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 pub(super) fn active_decode_worker_count() -> usize {
     ACTIVE_DECODE_WORKERS.load(Ordering::Acquire)
 }

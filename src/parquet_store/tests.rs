@@ -1,4 +1,5 @@
 use super::*;
+#[cfg(target_os = "linux")]
 use crate::queue::CollectionMessage;
 #[cfg(feature = "benchmark-snappy")]
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -63,6 +64,7 @@ fn valid_bar() -> TradeMinuteBarV1 {
     }
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn event_with_record_id(sequence: u64, source_record_id: String) -> CollectionMessage {
     let timestamp = UtcTimestamp::parse("2026-10-08T13:30:15Z").unwrap();
     let source = MarketDataSourceV1::new(

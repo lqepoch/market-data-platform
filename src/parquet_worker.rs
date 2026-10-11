@@ -16,6 +16,7 @@ use crate::{
 };
 
 const WORKER_WALL_TIMEOUT: Duration = Duration::from_secs(120);
+#[cfg(target_os = "linux")]
 const PAIR_VERIFY_OUTPUT_BYTES: usize = 64 * 1024;
 
 /// Paths and limits for verifying one explicit local capture-pair chunk in the isolated worker.
@@ -35,6 +36,7 @@ pub struct CapturePairV2WorkerRequest<'a> {
 }
 
 /// Verify one raw/event pair using the same bounded Linux worker as other Parquet reads.
+#[cfg(target_os = "linux")]
 pub(crate) fn verify_capture_pair_v2_cancellable(
     request: &CapturePairV2WorkerRequest<'_>,
     _cancellation: CancellationToken,
@@ -349,14 +351,14 @@ fn worker_command() -> Result<Command> {
     Ok(command)
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 pub(crate) fn track_worker_pid(path: &Path) -> WorkerPidFileGuard {
     let pid_file = test_support::PID_FILE.get_or_init(Default::default);
     *pid_file.lock().expect("worker pid marker mutex") = Some(path.to_owned());
     WorkerPidFileGuard(path.to_owned())
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 pub(crate) fn serialize_worker_test() -> tokio::sync::OwnedMutexGuard<()> {
     test_support::SERIAL
         .get_or_init(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
@@ -364,7 +366,7 @@ pub(crate) fn serialize_worker_test() -> tokio::sync::OwnedMutexGuard<()> {
         .blocking_lock_owned()
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 pub(crate) async fn serialize_worker_test_async() -> tokio::sync::OwnedMutexGuard<()> {
     test_support::SERIAL
         .get_or_init(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
@@ -373,10 +375,10 @@ pub(crate) async fn serialize_worker_test_async() -> tokio::sync::OwnedMutexGuar
         .await
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 pub(crate) struct WorkerPidFileGuard(std::path::PathBuf);
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 impl Drop for WorkerPidFileGuard {
     fn drop(&mut self) {
         let pid_file = test_support::PID_FILE.get_or_init(Default::default);
@@ -486,9 +488,12 @@ mod tests {
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    use std::sync::{Arc, Mutex, OnceLock};
+    #[cfg(target_os = "linux")]
+    use std::sync::Arc;
+    use std::sync::{Mutex, OnceLock};
 
     pub(super) static PID_FILE: OnceLock<Mutex<Option<std::path::PathBuf>>> = OnceLock::new();
+    #[cfg(target_os = "linux")]
     pub(super) static SERIAL: OnceLock<Arc<tokio::sync::Mutex<()>>> = OnceLock::new();
     #[cfg(all(test, feature = "offline-capture-synthetic", target_os = "linux"))]
     static PAIR_WORKER_DELAY: OnceLock<Mutex<Option<(String, u64)>>> = OnceLock::new();

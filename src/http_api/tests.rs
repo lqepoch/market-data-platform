@@ -56,6 +56,7 @@ fn service(
         auth_configured: auth.is_some(),
         query_client,
         reader,
+        #[cfg(target_os = "linux")]
         pair_query_available: false,
     });
     (app_router(state, auth), supervisor)
@@ -338,6 +339,7 @@ async fn cache_policy_covers_query_supervisor_overload() {
         auth_configured: true,
         query_client,
         reader,
+        #[cfg(target_os = "linux")]
         pair_query_available: false,
     });
     let app = app_router(state, Some(test_support::auth_config()));
