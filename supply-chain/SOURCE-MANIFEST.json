@@ -1741,7 +1741,7 @@
       },
       {
         "path": "src/archive/capture_pair_v2/publish.rs",
-        "sha256": "11aeabbff28e4d191a03219c2e193259324d4e5b3f37f321f15e3bb9ebb5f773"
+        "sha256": "1ae70fbeeaa8cb0e67eaf995b3f412f34ee2c820532f87f3a59bbf22cad8900a"
       },
       {
         "path": "src/archive/capture_pair_v2/reader.rs",
@@ -1940,7 +1940,7 @@
         "sha256": "2a363162ec994b56cf22bc87a84e92405c82337ed28103a39fbcc12591426b53"
       }
     ],
-    "sha256": "9ebe2fc7c937a22db7aa48b5f680a4e101e1b9bbf422a7eba6c9b84560d8ef27"
+    "sha256": "ed681dfda95bc67684a57a5f34c5936ca3c78822eb27baf322e8557b022986b6"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
