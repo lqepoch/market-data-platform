@@ -10,7 +10,7 @@ including build and development dependencies, against deny.toml.
 | --- | --- | --- | --- |
 | ahash | 0.8.12 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | aho-corasick | 1.1.5 | Unlicense OR MIT | registry+https://github.com/rust-lang/crates.io-index |
-| alpaca-stream | 0.1.0 | MIT OR Apache-2.0 | git+https://github.com/lqepoch/broker-connectors?rev=de121017b6698601c5720e705ce298683aa3fdff#de121017b6698601c5720e705ce298683aa3fdff |
+| alpaca-stream | 0.1.0 | MIT OR Apache-2.0 | git+https://github.com/lqepoch/broker-connectors?rev=2359bb2bde052d070174d650a14fe040b6cd1e84#2359bb2bde052d070174d650a14fe040b6cd1e84 |
 | android_system_properties | 0.1.6 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | anstream | 0.6.21 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | anstyle | 1.0.14 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
@@ -35,7 +35,7 @@ including build and development dependencies, against deny.toml.
 | bitflags | 2.13.2 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | block-buffer | 0.10.4 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | block-buffer | 0.12.1 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
-| broker-ports | 0.1.0 | MIT OR Apache-2.0 | git+https://github.com/lqepoch/broker-connectors?rev=de121017b6698601c5720e705ce298683aa3fdff#de121017b6698601c5720e705ce298683aa3fdff |
+| broker-ports | 0.1.0 | MIT OR Apache-2.0 | git+https://github.com/lqepoch/broker-connectors?rev=2359bb2bde052d070174d650a14fe040b6cd1e84#2359bb2bde052d070174d650a14fe040b6cd1e84 |
 | bumpalo | 3.20.3 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | bytes | 1.12.1 | MIT | registry+https://github.com/rust-lang/crates.io-index |
 | cc | 1.6.0 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
@@ -61,10 +61,10 @@ including build and development dependencies, against deny.toml.
 | data-encoding | 2.11.1 | MIT | registry+https://github.com/rust-lang/crates.io-index |
 | digest | 0.10.7 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | digest | 0.11.3 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
-| domain | 0.1.0 | MIT OR Apache-2.0 | git+https://github.com/lqepoch/trading-core?rev=95ef156e6c0693072fdaddbd27da4214089331ae#95ef156e6c0693072fdaddbd27da4214089331ae |
+| domain | 0.1.0 | MIT OR Apache-2.0 | git+https://github.com/lqepoch/trading-core?rev=7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2#7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2 |
 | dunce | 1.0.5 | CC0-1.0 OR MIT-0 OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | errno | 0.3.14 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
-| exact-decimal | 0.1.0 | MIT OR Apache-2.0 | git+https://github.com/lqepoch/trading-core?rev=95ef156e6c0693072fdaddbd27da4214089331ae#95ef156e6c0693072fdaddbd27da4214089331ae |
+| exact-decimal | 0.1.0 | MIT OR Apache-2.0 | git+https://github.com/lqepoch/trading-core?rev=7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2#7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2 |
 | fastrand | 2.5.0 | Apache-2.0 OR MIT | registry+https://github.com/rust-lang/crates.io-index |
 | find-msvc-tools | 0.1.14 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | flatbuffers | 25.12.19 | Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
@@ -105,7 +105,7 @@ including build and development dependencies, against deny.toml.
 | linux-raw-sys | 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | registry+https://github.com/rust-lang/crates.io-index |
 | lock_api | 0.4.14 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
 | log | 0.4.34 | MIT OR Apache-2.0 | registry+https://github.com/rust-lang/crates.io-index |
-| market-contracts | 0.1.0 | MIT OR Apache-2.0 | git+https://github.com/lqepoch/trading-core?rev=95ef156e6c0693072fdaddbd27da4214089331ae#95ef156e6c0693072fdaddbd27da4214089331ae |
+| market-contracts | 0.1.0 | MIT OR Apache-2.0 | git+https://github.com/lqepoch/trading-core?rev=7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2#7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2 |
 | matchers | 0.2.0 | MIT | registry+https://github.com/rust-lang/crates.io-index |
 | matchit | 0.8.4 | MIT AND BSD-3-Clause | registry+https://github.com/rust-lang/crates.io-index |
 | memchr | 2.8.3 | Unlicense OR MIT | registry+https://github.com/rust-lang/crates.io-index |

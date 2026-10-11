@@ -59,8 +59,8 @@ broker runner; it does not connect to a live SIP/OPRA feed.
 Use Rust 1.98.1 from `rust-toolchain.toml`.
 The shared contracts and read-only Alpaca port/stream crates are pinned in `Cargo.toml` and
 `Cargo.lock` to one compatible dependency graph: `trading-core` revision
-`95ef156e6c0693072fdaddbd27da4214089331ae` and `broker-connectors` revision
-`de121017b6698601c5720e705ce298683aa3fdff`. The broker revision pins its `domain` and
+`7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2` and `broker-connectors` revision
+`2359bb2bde052d070174d650a14fe040b6cd1e84`. The broker revision pins its `domain` and
 `market-contracts` dependencies to that same `trading-core` commit.
 
 ```sh
