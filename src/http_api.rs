@@ -43,6 +43,7 @@ struct ServiceState {
     auth_configured: bool,
     query_client: QueryClient,
     reader: Arc<RemoteArchiveReader>,
+    #[cfg(target_os = "linux")]
     pair_query_available: bool,
 }
 
@@ -172,15 +173,13 @@ pub async fn serve_with_pair_read_config(
         })
         .transpose()?;
     #[cfg(not(target_os = "linux"))]
-    let pair_reader = {
-        if pair_config.is_some() {
-            return Err(MarketDataError::Storage(
-                crate::error::StorageFailure::Unsupported,
-            ));
-        }
-        None::<Arc<()>>
-    };
+    if pair_config.is_some() {
+        return Err(MarketDataError::Storage(
+            crate::error::StorageFailure::Unsupported,
+        ));
+    }
     let listener = tokio::net::TcpListener::bind(bind).await?;
+    #[cfg(target_os = "linux")]
     let pair_query_available = pair_reader.is_some();
     let (mut query_supervisor, query_client) = QuerySupervisor::start(
         Arc::clone(&reader),
@@ -191,6 +190,7 @@ pub async fn serve_with_pair_read_config(
         auth_configured: auth.is_some(),
         query_client,
         reader,
+        #[cfg(target_os = "linux")]
         pair_query_available,
     });
     let app = app_router(state, auth);
@@ -218,14 +218,16 @@ pub async fn serve_with_pair_read_config(
 }
 
 fn app_router(state: Arc<ServiceState>, auth: Option<AuthConfig>) -> Router {
-    let mut protected_routes = Router::new().route("/v1/datasets/{dataset_id}/bars", get(get_bars));
+    let protected_routes = Router::new().route("/v1/datasets/{dataset_id}/bars", get(get_bars));
     #[cfg(target_os = "linux")]
-    if state.pair_query_available {
-        protected_routes = protected_routes.route(
+    let protected_routes = if state.pair_query_available {
+        protected_routes.route(
             "/v2/local-test/capture-pairs/{receipt_sha256}/verify",
             get(verify_local_test_pair),
-        );
-    }
+        )
+    } else {
+        protected_routes
+    };
     let protected_routes =
         protected_routes.route_layer(middleware::from_fn_with_state(auth, require_market_read));
     Router::new()

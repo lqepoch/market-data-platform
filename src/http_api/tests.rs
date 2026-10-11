@@ -56,6 +56,7 @@ fn service(
         auth_configured: auth.is_some(),
         query_client,
         reader,
+        #[cfg(target_os = "linux")]
         pair_query_available: false,
     });
     (app_router(state, auth), supervisor)
@@ -338,6 +339,7 @@ async fn cache_policy_covers_query_supervisor_overload() {
         auth_configured: true,
         query_client,
         reader,
+        #[cfg(target_os = "linux")]
         pair_query_available: false,
     });
     let app = app_router(state, Some(test_support::auth_config()));
@@ -354,6 +356,7 @@ async fn cache_policy_covers_query_supervisor_overload() {
 }
 
 #[tokio::test]
+#[cfg(target_os = "linux")]
 async fn terminal_and_research_delegations_read_only_synthetic_diagnostic_v1_bars() {
     // Other tests intentionally exhaust the process-wide two-worker budget.
     // Share their guard so this independent successful-query case is deterministic.
@@ -426,6 +429,31 @@ async fn terminal_and_research_delegations_read_only_synthetic_diagnostic_v1_bar
             .is_file()
     );
     supervisor.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+#[cfg(not(target_os = "linux"))]
+async fn isolated_query_fails_closed_without_the_linux_parquet_worker() {
+    let temp = tempfile::tempdir().unwrap();
+    let remote = synthetic_remote_root(&temp.path().join("remote")).await;
+    let reader = RemoteArchiveReader::local_test_isolated(
+        LocalTestTransport::new(remote).unwrap(),
+        temp.path().join("cache"),
+        RemoteCacheLimits {
+            max_query_rows: HTTP_MAX_QUERY_ROWS,
+            max_query_result_bytes: 1024 * 1024,
+            ..RemoteCacheLimits::default()
+        },
+    )
+    .unwrap();
+
+    let result = reader.query_bars(DatasetNamespace::Diagnostic, DATASET_ID, Some("QQQ"));
+    assert!(matches!(
+        result,
+        Err(crate::error::MarketDataError::Storage(
+            crate::error::StorageFailure::Unsupported
+        ))
+    ));
 }
 
 #[tokio::test]

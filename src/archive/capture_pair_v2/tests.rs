@@ -28,6 +28,7 @@ fn offline_input_identity_names_the_synthetic_fixture_without_relabeling_protoco
 }
 
 #[tokio::test]
+#[cfg(target_os = "linux")]
 async fn synthetic_fake_wire_flows_through_durable_spool_parquet_pair_and_local_readback() {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;

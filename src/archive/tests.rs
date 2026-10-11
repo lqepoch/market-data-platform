@@ -897,6 +897,7 @@ fn staging_cleanup_dry_run_and_apply_preserve_active_locked_and_unknown_state() 
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn cleanup_releases_only_temp_files_with_a_matching_committed_manifest() {
     let temp = tempdir().unwrap();
     let (publisher, _transport, request) = fixture(temp.path());
@@ -926,4 +927,27 @@ fn cleanup_releases_only_temp_files_with_a_matching_committed_manifest() {
     assert_eq!(result.removed_files, 0);
     assert_eq!(result.skipped_unresolved_receipt, 1);
     assert!(mismatched.exists());
+}
+
+#[test]
+#[cfg(not(target_os = "linux"))]
+fn cleanup_staging_preserves_files_when_owner_liveness_is_unknown() {
+    let temp = tempdir().unwrap();
+    let state = temp.path().join("state");
+    let staging = temp.path().join("staging");
+    fs::create_dir(&state).unwrap();
+    fs::create_dir(&staging).unwrap();
+    let candidate = staging.join(".synthetic-1-readback-4294967295-7.tmp");
+    fs::write(&candidate, b"owner liveness is unknown").unwrap();
+
+    let preview = ArchivePublisher::cleanup_staging(&state, &staging, false).unwrap();
+    assert!(preview.dry_run);
+    assert_eq!(preview.eligible_files, 0);
+    assert_eq!(preview.skipped_active_process, 1);
+    assert!(candidate.exists());
+
+    let applied = ArchivePublisher::cleanup_staging(&state, &staging, true).unwrap();
+    assert_eq!(applied.removed_files, 0);
+    assert_eq!(applied.skipped_active_process, 1);
+    assert!(candidate.exists());
 }

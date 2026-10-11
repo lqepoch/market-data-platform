@@ -1,4 +1,5 @@
 use super::*;
+#[cfg(target_os = "linux")]
 use crate::queue::CollectionMessage;
 #[cfg(feature = "benchmark-snappy")]
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -16,8 +17,10 @@ use sha2::{Digest, Sha256};
 use std::time::Instant;
 use tempfile::tempdir;
 
+#[cfg(target_os = "linux")]
 #[path = "../../tests/common/parquet_page_bomb.rs"]
 mod page_bomb_fixture;
+#[cfg(target_os = "linux")]
 pub(crate) use page_bomb_fixture::mutate_dictionary_page_to_memory_bomb;
 
 fn valid_bar() -> TradeMinuteBarV1 {
@@ -61,6 +64,7 @@ fn valid_bar() -> TradeMinuteBarV1 {
     }
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn event_with_record_id(sequence: u64, source_record_id: String) -> CollectionMessage {
     let timestamp = UtcTimestamp::parse("2026-10-08T13:30:15Z").unwrap();
     let source = MarketDataSourceV1::new(

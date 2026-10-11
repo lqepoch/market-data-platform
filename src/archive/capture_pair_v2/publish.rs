@@ -1079,7 +1079,7 @@ pub(super) fn open_private_pair_directory(state_root: &Path, create: bool) -> Re
         match rustix::fs::mkdirat(
             &parent,
             PRIVATE_PAIR_DIRECTORY,
-            rustix::fs::Mode::from_raw_mode(PRIVATE_DIRECTORY_MODE),
+            rustix::fs::Mode::from_raw_mode(PRIVATE_DIRECTORY_MODE as _),
         ) {
             Ok(()) | Err(rustix::io::Errno::EXIST) => {}
             Err(_) => return Err(MarketDataError::PublicationNotAuthorized),
@@ -1135,7 +1135,7 @@ fn write_private_create_only(directory: &File, name: &str, bytes: &[u8]) -> Resu
             | rustix::fs::OFlags::EXCL
             | rustix::fs::OFlags::NOFOLLOW
             | rustix::fs::OFlags::CLOEXEC,
-        rustix::fs::Mode::from_raw_mode(PRIVATE_FILE_MODE),
+        rustix::fs::Mode::from_raw_mode(PRIVATE_FILE_MODE as _),
     )
     .map_err(|error| {
         if error == rustix::io::Errno::EXIST {

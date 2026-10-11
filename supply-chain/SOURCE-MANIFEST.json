@@ -1,7 +1,7 @@
 {
   "artifacts": {
-    "supply-chain/NOTICE.txt": "efef38d124750566ff6cdaf67e494a0764971a4c820d4b6e606a2a8388dfbf7e",
-    "supply-chain/market-data-platform.cdx.json": "4d251679297cb7d4babe3040a133626f578c2b6cda4834bbdbc5724eb2c79117"
+    "supply-chain/NOTICE.txt": "6e047b591234c91d89ecfaa97d0d174a0d08a321dfc2479a52baed5532c0ca7e",
+    "supply-chain/market-data-platform.cdx.json": "b516bcce76bbd1ecfbdc117f1e5700c5daa26d4897dbbbf11397d2588fb317d9"
   },
   "component": {
     "license": "MIT",
@@ -15,7 +15,7 @@
         "alpaca-stream",
         "broker-ports"
       ],
-      "rev": "a8eea66a967f2d40cf726344b46e229ffee6f41b"
+      "rev": "2359bb2bde052d070174d650a14fe040b6cd1e84"
     },
     {
       "origin": "https://github.com/lqepoch/trading-core",
@@ -24,17 +24,17 @@
         "exact-decimal",
         "market-contracts"
       ],
-      "rev": "22315511e084050c2ec037fa36c5d07a0bc6606e"
+      "rev": "7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2"
     }
   ],
   "inputs": [
     {
       "path": "Cargo.toml",
-      "sha256": "0cc851aaccc943e3c3008c5cf032d42a0a6c80fed33b13e90ea5afccf9119f07"
+      "sha256": "a756d29e956a26be0392bd4848e88b7b8ebb74ae2e7a8b061793de708381d7d8"
     },
     {
       "path": "Cargo.lock",
-      "sha256": "804191a4f2f39816889ff854b3bb9340721654f2d9a4795e60f54126d456ae72"
+      "sha256": "c8dc97f5db54adde49d68efcb4e710a656d5a370c4e7ddae2e703a863b773645"
     },
     {
       "path": "Dockerfile",
@@ -50,7 +50,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "44c13399744a92c185afbbd9161428fe4dc22cce98a3849dd41a1fe534463151"
+      "sha256": "07aca11db99e26313168fa928597083b62aa04b8ad1843fbd4d218908ed881b7"
     },
     {
       "path": "AGENTS.md",
@@ -106,7 +106,7 @@
     },
     {
       "path": "supply-chain/git-source-pins.json",
-      "sha256": "9aeb7baf33f3547f282316aea5126b4c061bed4fd827e437e606c80a0f232f1c"
+      "sha256": "1fdda3e4e9521085eaf3cbf4a8621165670f9d61a4e41a88f20e35bca558392a"
     },
     {
       "path": "scripts/supply_chain.py",
@@ -140,7 +140,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "alpaca-stream",
-      "source": "git+https://github.com/lqepoch/broker-connectors?rev=a8eea66a967f2d40cf726344b46e229ffee6f41b#a8eea66a967f2d40cf726344b46e229ffee6f41b",
+      "source": "git+https://github.com/lqepoch/broker-connectors?rev=2359bb2bde052d070174d650a14fe040b6cd1e84#2359bb2bde052d070174d650a14fe040b6cd1e84",
       "version": "0.1.0"
     },
     {
@@ -315,7 +315,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "broker-ports",
-      "source": "git+https://github.com/lqepoch/broker-connectors?rev=a8eea66a967f2d40cf726344b46e229ffee6f41b#a8eea66a967f2d40cf726344b46e229ffee6f41b",
+      "source": "git+https://github.com/lqepoch/broker-connectors?rev=2359bb2bde052d070174d650a14fe040b6cd1e84#2359bb2bde052d070174d650a14fe040b6cd1e84",
       "version": "0.1.0"
     },
     {
@@ -497,7 +497,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "domain",
-      "source": "git+https://github.com/lqepoch/trading-core?rev=22315511e084050c2ec037fa36c5d07a0bc6606e#22315511e084050c2ec037fa36c5d07a0bc6606e",
+      "source": "git+https://github.com/lqepoch/trading-core?rev=7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2#7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2",
       "version": "0.1.0"
     },
     {
@@ -518,7 +518,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "exact-decimal",
-      "source": "git+https://github.com/lqepoch/trading-core?rev=22315511e084050c2ec037fa36c5d07a0bc6606e#22315511e084050c2ec037fa36c5d07a0bc6606e",
+      "source": "git+https://github.com/lqepoch/trading-core?rev=7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2#7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2",
       "version": "0.1.0"
     },
     {
@@ -805,7 +805,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "market-contracts",
-      "source": "git+https://github.com/lqepoch/trading-core?rev=22315511e084050c2ec037fa36c5d07a0bc6606e#22315511e084050c2ec037fa36c5d07a0bc6606e",
+      "source": "git+https://github.com/lqepoch/trading-core?rev=7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2#7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2",
       "version": "0.1.0"
     },
     {
@@ -1741,7 +1741,7 @@
       },
       {
         "path": "src/archive/capture_pair_v2/publish.rs",
-        "sha256": "a60779483d0faca3fbf4834173e958a0ff3569b850a5b02a71351e8e29190765"
+        "sha256": "1ae70fbeeaa8cb0e67eaf995b3f412f34ee2c820532f87f3a59bbf22cad8900a"
       },
       {
         "path": "src/archive/capture_pair_v2/reader.rs",
@@ -1757,11 +1757,11 @@
       },
       {
         "path": "src/archive/capture_pair_v2/tests.rs",
-        "sha256": "4d7997be2b42d141c94cb2b538b34fbfda8ae22adb2e66188d92d356b4ed3188"
+        "sha256": "94608af4e4247d10ca95b653bee209371b9aa4c0f932fb7e414e0878c0fb1d8c"
       },
       {
         "path": "src/archive/raw_spool.rs",
-        "sha256": "b0b4d18562976a3fb8b7880c4e762aa50d6ce6ebb365deb1288531f0c29978ba"
+        "sha256": "6a4ac480cddabb2b7f506c9424ed0769aa302b5c532552ede186b46fb06afcd5"
       },
       {
         "path": "src/archive/raw_spool/linux.rs",
@@ -1777,7 +1777,7 @@
       },
       {
         "path": "src/archive/tests.rs",
-        "sha256": "d0f549d0f627c829b0275c5ec016f27d26a252dfbedff6e2b5c022486ecb536d"
+        "sha256": "31972dfcb2e5ca6d19b7c23032e4e0d9ff74a801e930be215430e74fcc8fa403"
       },
       {
         "path": "src/cancellation.rs",
@@ -1785,7 +1785,7 @@
       },
       {
         "path": "src/capture_synthetic.rs",
-        "sha256": "dbc9af765a4747ee926843b09d51fbef1e463d603db9db84800eaa2c9d8b5b3a"
+        "sha256": "842d1f48f591d7af0a228a5f09948e3ea3b17c88de7bfd5b0f9d0cc805195a6a"
       },
       {
         "path": "src/config.rs",
@@ -1797,11 +1797,11 @@
       },
       {
         "path": "src/http_api.rs",
-        "sha256": "1be5f0b305bfeea62daf9361ab091d1064bf37a05c1d9ad252b7bb4bcb37006a"
+        "sha256": "f7b2dea48d016b49ddad49b26f89c8a1ed52960319d9d0c880bd37e9e0dc5968"
       },
       {
         "path": "src/http_api/auth.rs",
-        "sha256": "f25481675dd65d8ce4dc64d2312a70af1d9fa6c56752f276a55ca805d9693e7a"
+        "sha256": "a86926453eebf8fe61699360dd5b3eab66f0adb9cac220950ceb33eadd8f229f"
       },
       {
         "path": "src/http_api/supervisor.rs",
@@ -1809,11 +1809,11 @@
       },
       {
         "path": "src/http_api/tests.rs",
-        "sha256": "0d7129639d5e4e6a359e2510483d6f327d078cf4767a5e74db3c4c08a0d312ee"
+        "sha256": "db8aaa882dc4daa0512a62c9c1c8f35fa39680f64f3ec0371258f5078338a07a"
       },
       {
         "path": "src/http_api/tests/pair_tests.rs",
-        "sha256": "bd3634251200546cd024a7c57e9607051361dd2a7f455c7084813da154c7d71e"
+        "sha256": "ec62cc4594ce2533efb1d2569d39b5643345456658a812a7fd8f972bcca95f77"
       },
       {
         "path": "src/lib.rs",
@@ -1857,7 +1857,7 @@
       },
       {
         "path": "src/parquet_store/tests.rs",
-        "sha256": "976f51677341fcc6fc5e3914a7d88c4c248f5524351a67c5db1c01f4e5f7a63c"
+        "sha256": "27c617a7ef5e08f0dc442cb255b48424f53804410e64953ea725b07c58be1fc8"
       },
       {
         "path": "src/parquet_store/write_helpers.rs",
@@ -1865,7 +1865,7 @@
       },
       {
         "path": "src/parquet_worker.rs",
-        "sha256": "2e836d3430cb9d16d2447e4a94ba5700ab6fa3d61d12d65d080b348bf0b055b4"
+        "sha256": "9fe6048b6eefb3a6f724d68e64a426f3807d3f744952630206361f531138d593"
       },
       {
         "path": "src/pipeline.rs",
@@ -1897,7 +1897,7 @@
       },
       {
         "path": "src/remote_query/tests.rs",
-        "sha256": "1889ba5a8815a9c146e74b44c7ebfb81504b286c7f36648b13ea8e30dd84db1a"
+        "sha256": "ecdd3b3f153c15ce867e1294fce80e79fe0390186de86bd89e2d6139adbbca62"
       },
       {
         "path": "src/remote_query/tests/lock_lifetime.rs",
@@ -1913,11 +1913,11 @@
       },
       {
         "path": "src/storage/process.rs",
-        "sha256": "daf39a7ec3664d75b872261c2c2827e8e37cccbf477377ac41cead84100982c4"
+        "sha256": "150ef35026445579ebd92e30bf466fc32f89fc6d57c577d779e0d1cf4f92a6e1"
       },
       {
         "path": "src/storage/tests.rs",
-        "sha256": "0865128ab6d4888700e8061047c028ae686fc2429ef2fb350636d50ee409381f"
+        "sha256": "0080b3d4d04ec515c123e5ff25c3f7ba1709f0aef48b98d5503652035230e3bd"
       },
       {
         "path": "tests/common/parquet_page_bomb.rs",
@@ -1940,7 +1940,7 @@
         "sha256": "2a363162ec994b56cf22bc87a84e92405c82337ed28103a39fbcc12591426b53"
       }
     ],
-    "sha256": "86ef83039b9ac633ebe8dd532de1e4e0dcb5581b8f8e33195e37541bac7c9726"
+    "sha256": "f5393f74f0509020046810a80a12db5efc29255549e438209ee2cffdd7e89496"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",

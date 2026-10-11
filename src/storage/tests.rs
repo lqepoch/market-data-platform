@@ -365,12 +365,13 @@ fn decode_worker_wait_child() {
 #[cfg(unix)]
 fn wait_for_file(path: &Path) {
     let deadline = Instant::now() + Duration::from_secs(2);
-    while !path.exists() && Instant::now() < deadline {
+    while !path.metadata().is_ok_and(|metadata| metadata.len() > 0) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(5));
     }
     assert!(
-        path.is_file(),
-        "expected child PID marker at {}",
+        path.metadata()
+            .is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0),
+        "expected nonempty child PID marker at {}",
         path.display()
     );
 }

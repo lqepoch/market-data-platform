@@ -5,6 +5,7 @@ use std::sync::atomic::AtomicUsize;
 mod lock_lifetime;
 
 use crate::storage::LocalTestTransport;
+#[cfg(target_os = "linux")]
 use market_contracts::{
     DatasetCompletionEvidenceV1, DatasetManifestV1, DatasetObjectV1, DatasetTransportV1,
 };
