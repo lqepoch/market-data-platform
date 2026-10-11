@@ -63,7 +63,8 @@ paths:
       description: >-
         The JWT is checked before any request-level storage access or query. LocalTest transport
         serves only the diagnostic namespace and always reports synthetic/synthetic/unknown
-        provenance. Curated reads require an independently authorized archive. No capture, upload,
+        provenance. Curated reads require an independently authorized archive. Remote publication
+        is currently disabled pending a trusted source-admission issuer/verifier. No capture, upload,
         account, or order operation is exposed by this bars route. A separate optional LocalTest
         chunk-verification route does not publish or ingest data.
       security:

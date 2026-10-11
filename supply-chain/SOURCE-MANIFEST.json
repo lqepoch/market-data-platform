@@ -50,11 +50,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "38ac301c853ec2b97928c378baec9b936ce070f918014170595115b200840f54"
+      "sha256": "44c13399744a92c185afbbd9161428fe4dc22cce98a3849dd41a1fe534463151"
     },
     {
       "path": "AGENTS.md",
-      "sha256": "e905afb131ec34249e59fea6bc025b792b34ac57d8051a286644a54202549dfc"
+      "sha256": "ed49bd68ff25bf93242be9c6b50456295823d9cc51b5fbe078dc954b0dbf11df"
     },
     {
       "path": ".github/workflows/ci.yml",
@@ -66,7 +66,7 @@
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "sha256": "4b8f925d7f5f63a8b5cbcc0dda39c8a1fa3c7078f9836980b15eaece1b2bcc55"
+      "sha256": "fdf06bb01efe36a3a005fefe88c1c87aeb537d01b24c1135a8da7144b2dd974f"
     },
     {
       "path": "docs/CHG-2026-001-MDP-HTTP-PROVENANCE.md",
@@ -102,7 +102,7 @@
     },
     {
       "path": "docs/openapi-v1.yaml",
-      "sha256": "c321d08c7d3f6683f0281ab679a1e98e4baf9fde2c2e62e78ba3df358535b2a9"
+      "sha256": "ef506375ddf8bc02ea0131731a3f930f25578eba6165b4816dae247b94d6a8c1"
     },
     {
       "path": "supply-chain/git-source-pins.json",
@@ -1721,7 +1721,7 @@
       },
       {
         "path": "src/archive.rs",
-        "sha256": "6bf6971c9bd8d8862ab359869c0a11e144f4f555dbed9f111f58ec7919b8f95f"
+        "sha256": "8c3b6cffc43b19bf3cadf08a525ce8a186b36b96936e09e09670d1f1ceb3fed5"
       },
       {
         "path": "src/archive/capture_pair.rs",
@@ -1777,7 +1777,7 @@
       },
       {
         "path": "src/archive/tests.rs",
-        "sha256": "495a9efd8d99de749f4a052d8efcab8c40215c20827d717f2abab7c9a6313939"
+        "sha256": "d0f549d0f627c829b0275c5ec016f27d26a252dfbedff6e2b5c022486ecb536d"
       },
       {
         "path": "src/cancellation.rs",
@@ -1869,7 +1869,7 @@
       },
       {
         "path": "src/pipeline.rs",
-        "sha256": "15e1aebe6749c5bf3c8e14df24cebea9716971a8871d1eea8c0420325a7ea40d"
+        "sha256": "6cb227cf490cdb0ef22e1f7df9b00057e2d76daa427de28f612f3249a09c785f"
       },
       {
         "path": "src/protocol.rs",
@@ -1940,7 +1940,7 @@
         "sha256": "2a363162ec994b56cf22bc87a84e92405c82337ed28103a39fbcc12591426b53"
       }
     ],
-    "sha256": "6e1f559f25b42e93ac4d67706296e8fd4fe0a78a1aa298330687f900844989c5"
+    "sha256": "9bbe1eee1b86e73b665c4b6ba5bdab914960efca0fb0aea0d1100dd442613bb2"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",

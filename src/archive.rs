@@ -1148,33 +1148,13 @@ fn validate_request(
     }
     match (transport, request.purpose) {
         (TransportKind::RcloneGoogleDrive, PublicationPurpose::Curated) => {
-            let exact_numeric = matches!(
-                request.source.numeric_encoding,
-                market_contracts::NumericEncodingV1::DecimalToken
-                    | market_contracts::NumericEncodingV1::IntegerToken
-            );
-            if request.source.provider != "alpaca"
-                || !matches!(request.source.feed.as_str(), "sip" | "opra")
-                || request.source.entitlement != market_contracts::EntitlementState::Authorized
-                || !exact_numeric
-            {
-                return Err(MarketDataError::PublicationNotAuthorized);
-            }
+            // Source DTO fields are caller-controlled observations, not a
+            // trusted provider/entitlement attestation. No reviewed issuer is
+            // wired here yet, so they cannot authorize an external write.
+            return Err(MarketDataError::PublicationNotAuthorized);
         }
         (TransportKind::RcloneGoogleDrive, PublicationPurpose::Diagnostic) => {
-            let binary_projection = matches!(
-                request.source.numeric_encoding,
-                market_contracts::NumericEncodingV1::BinaryFloat32ShortestDecimal
-                    | market_contracts::NumericEncodingV1::BinaryFloat64ShortestDecimal
-            );
-            if request.schema_id != EVENT_SCHEMA_ID
-                || request.source.provider != "alpaca"
-                || request.source.feed != "opra"
-                || request.source.entitlement != market_contracts::EntitlementState::Authorized
-                || !binary_projection
-            {
-                return Err(MarketDataError::PublicationNotAuthorized);
-            }
+            return Err(MarketDataError::PublicationNotAuthorized);
         }
         (TransportKind::LocalTest, PublicationPurpose::Diagnostic)
             if !is_raw && (!is_event_v2 || allow_capture_component) => {}

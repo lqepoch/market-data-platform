@@ -17,6 +17,9 @@ those belong to `broker-connectors`.
 - External archive writes require separately reviewed source-admission evidence. Local-test objects
   are diagnostic only and must keep `local-test:` identities. Never run real OAuth or upload from
   tests or public CI.
+- Remote archive publication is currently rejected for both curated and diagnostic requests,
+  including locally asserted `Authorized` source DTOs. A trusted, exact-input-bound source-admission
+  issuer/verifier must be separately implemented and reviewed before this boundary can open.
 - Public PR checks must not use stored repository, organization, provider, or rclone credentials.
   Ordinary verification may use only the ephemeral read-only GitHub token needed to check out source;
   CodeQL may also use its narrowly scoped token to upload SARIF. Never connect to provider feeds,

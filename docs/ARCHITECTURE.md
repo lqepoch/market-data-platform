@@ -325,15 +325,17 @@ without equivalent process evidence preserve all PID-owned temps.
 
 ## Source admission and publication
 
-Local-test manifests carry a `local-test:` identity and are diagnostic only. Curated Drive
-publication has an explicit provider=`alpaca`, feed=`sip|opra`, authorized-entitlement, and exact-token
-numeric-encoding gate. These data fields are assertions consumed by the archive boundary, not
-cryptographic proof that an operator/provider actually granted entitlement. Production use remains
-blocked until the trusted source-admission path supplies separately verified entitlement, feed,
-capture-completeness, and licensing evidence. Readback never upgrades an UNKNOWN or unauthorized
-source. OPRA binary-float projections are eligible only for the Drive `diagnostic` namespace and
-only after explicit authorized-entitlement evidence; they are not source-exact and cannot be read as
-curated research data. Byte-exact raw MessagePack/event-v2 storage remains available through the
+Local-test manifests carry a `local-test:` identity and are diagnostic only. Remote publication is
+default-deny for both curated and diagnostic requests. Caller-supplied provider, feed, entitlement
+and exact-token encoding fields are observations and cannot authorize an external write, even when
+all fields assert Alpaca SIP/OPRA and Authorized. JSONL replay rejects remote output before reading
+input/configuration or creating output. The archive publisher independently rejects remote requests
+before Parquet reads, local publication state or any transport call. A separately reviewed trusted
+source-admission issuer/verifier, bound to exact input and provider/entitlement/completeness/licensing
+evidence, is required before a future change can open this boundary. Existing remote read/query
+paths remain read-only; readback never upgrades UNKNOWN or unauthorized provenance. Rollback must
+retain default-deny until that source-admission gate is verified. Byte-exact raw MessagePack/event-v2
+storage remains available through the
 original producer path. The additive raw-frame v2/event-v3 path preserves the full source capture
 key separately from canonical generation and is written by the LocalTest-only spool pair publisher.
 It is exercised with the fixed broker-owned synthetic fake-wire fixture, not a live provider capture

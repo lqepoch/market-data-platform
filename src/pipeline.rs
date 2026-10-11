@@ -208,6 +208,11 @@ pub async fn replay_file(
     transport: OutputTransport,
     options: &ReplayOptions,
 ) -> Result<ReplayReport> {
+    // A local JSONL envelope can assert Authorized, but cannot prove who
+    // granted entitlement. Reject before input/config reads or output writes.
+    if matches!(transport, OutputTransport::RcloneGoogleDrive { .. }) {
+        return Err(MarketDataError::PublicationNotAuthorized);
+    }
     if !safe_component(dataset_id)
         || !safe_component(&options.dataset_prefix)
         || !config
@@ -738,6 +743,54 @@ pub fn primary_feed(feed: AlpacaFeed) -> &'static str {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn remote_replay_denies_before_reading_input_config_or_creating_output() {
+        let temp = tempdir().unwrap();
+        let time = parse_time("2026-10-08T13:30:00Z").unwrap();
+        let config = ReplaySessionConfig {
+            window: SessionWindow {
+                trade_date: "2026-10-08".into(),
+                session_id: "synthetic-denial".into(),
+                timezone: "UTC".into(),
+                policy_id: "synthetic-test-only".into(),
+                policy_sha256: "a".repeat(64),
+                session_start: time.clone(),
+                session_end_exclusive: time.clone(),
+                window_start: time.clone(),
+                window_end_exclusive: time.clone(),
+                expected_symbols: vec!["QQQ".into()],
+            },
+            mode: CompletionMode::SyntheticEof,
+            source_is_paged: false,
+            source_pages_exhausted: None,
+            available_at: time,
+        };
+        let output = temp.path().join("must-not-exist");
+        let result = replay_file(
+            &temp.path().join("absent-input.jsonl"),
+            &output,
+            "synthetic-denial",
+            &config,
+            OutputTransport::RcloneGoogleDrive {
+                config: DriveConfig {
+                    remote: "unconfigured".into(),
+                    root_folder_id: "synthetic-test-only".into(),
+                    rclone_config: temp.path().join("absent-config"),
+                    dataset_prefix: "synthetic-test-only".into(),
+                    operation_timeout: Duration::from_secs(1),
+                },
+            },
+            &ReplayOptions::default(),
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(MarketDataError::PublicationNotAuthorized)
+        ));
+        assert!(!output.exists());
+        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 0);
+    }
 
     #[tokio::test]
     async fn synthetic_cli_path_runs_full_json_parquet_archive_query_export() {
