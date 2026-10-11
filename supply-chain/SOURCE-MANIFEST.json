@@ -1,7 +1,7 @@
 {
   "artifacts": {
-    "supply-chain/NOTICE.txt": "efef38d124750566ff6cdaf67e494a0764971a4c820d4b6e606a2a8388dfbf7e",
-    "supply-chain/market-data-platform.cdx.json": "4d251679297cb7d4babe3040a133626f578c2b6cda4834bbdbc5724eb2c79117"
+    "supply-chain/NOTICE.txt": "537624879c909d47b7b36c3e50c593571bc33d42d21c4402362393687128278e",
+    "supply-chain/market-data-platform.cdx.json": "3074f348d40042237fbc403bd5f5e051382111892bcdee1520579ec1d38b64f6"
   },
   "component": {
     "license": "MIT",
@@ -15,7 +15,7 @@
         "alpaca-stream",
         "broker-ports"
       ],
-      "rev": "a8eea66a967f2d40cf726344b46e229ffee6f41b"
+      "rev": "de121017b6698601c5720e705ce298683aa3fdff"
     },
     {
       "origin": "https://github.com/lqepoch/trading-core",
@@ -24,17 +24,17 @@
         "exact-decimal",
         "market-contracts"
       ],
-      "rev": "22315511e084050c2ec037fa36c5d07a0bc6606e"
+      "rev": "95ef156e6c0693072fdaddbd27da4214089331ae"
     }
   ],
   "inputs": [
     {
       "path": "Cargo.toml",
-      "sha256": "0cc851aaccc943e3c3008c5cf032d42a0a6c80fed33b13e90ea5afccf9119f07"
+      "sha256": "cebe5721a7599a538b378aeaff9ff962292df40e9111f8b4e41beb1abbee9b8d"
     },
     {
       "path": "Cargo.lock",
-      "sha256": "804191a4f2f39816889ff854b3bb9340721654f2d9a4795e60f54126d456ae72"
+      "sha256": "60c042f35ff905c5261bdb328b73decfca99a11ce710c2fa5f040943221588f4"
     },
     {
       "path": "Dockerfile",
@@ -50,7 +50,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "44c13399744a92c185afbbd9161428fe4dc22cce98a3849dd41a1fe534463151"
+      "sha256": "cbcfbd8b1c513ab8ba7fc8e2ab88db9c1233f283cec4d66db570a18a6603f143"
     },
     {
       "path": "AGENTS.md",
@@ -106,7 +106,7 @@
     },
     {
       "path": "supply-chain/git-source-pins.json",
-      "sha256": "9aeb7baf33f3547f282316aea5126b4c061bed4fd827e437e606c80a0f232f1c"
+      "sha256": "3e7db2dd6b233135e998a222685bbdedfd114fe12f6987fd23972279734ccd77"
     },
     {
       "path": "scripts/supply_chain.py",
@@ -140,7 +140,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "alpaca-stream",
-      "source": "git+https://github.com/lqepoch/broker-connectors?rev=a8eea66a967f2d40cf726344b46e229ffee6f41b#a8eea66a967f2d40cf726344b46e229ffee6f41b",
+      "source": "git+https://github.com/lqepoch/broker-connectors?rev=de121017b6698601c5720e705ce298683aa3fdff#de121017b6698601c5720e705ce298683aa3fdff",
       "version": "0.1.0"
     },
     {
@@ -315,7 +315,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "broker-ports",
-      "source": "git+https://github.com/lqepoch/broker-connectors?rev=a8eea66a967f2d40cf726344b46e229ffee6f41b#a8eea66a967f2d40cf726344b46e229ffee6f41b",
+      "source": "git+https://github.com/lqepoch/broker-connectors?rev=de121017b6698601c5720e705ce298683aa3fdff#de121017b6698601c5720e705ce298683aa3fdff",
       "version": "0.1.0"
     },
     {
@@ -497,7 +497,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "domain",
-      "source": "git+https://github.com/lqepoch/trading-core?rev=22315511e084050c2ec037fa36c5d07a0bc6606e#22315511e084050c2ec037fa36c5d07a0bc6606e",
+      "source": "git+https://github.com/lqepoch/trading-core?rev=95ef156e6c0693072fdaddbd27da4214089331ae#95ef156e6c0693072fdaddbd27da4214089331ae",
       "version": "0.1.0"
     },
     {
@@ -518,7 +518,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "exact-decimal",
-      "source": "git+https://github.com/lqepoch/trading-core?rev=22315511e084050c2ec037fa36c5d07a0bc6606e#22315511e084050c2ec037fa36c5d07a0bc6606e",
+      "source": "git+https://github.com/lqepoch/trading-core?rev=95ef156e6c0693072fdaddbd27da4214089331ae#95ef156e6c0693072fdaddbd27da4214089331ae",
       "version": "0.1.0"
     },
     {
@@ -805,7 +805,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "market-contracts",
-      "source": "git+https://github.com/lqepoch/trading-core?rev=22315511e084050c2ec037fa36c5d07a0bc6606e#22315511e084050c2ec037fa36c5d07a0bc6606e",
+      "source": "git+https://github.com/lqepoch/trading-core?rev=95ef156e6c0693072fdaddbd27da4214089331ae#95ef156e6c0693072fdaddbd27da4214089331ae",
       "version": "0.1.0"
     },
     {
