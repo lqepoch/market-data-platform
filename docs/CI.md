@@ -47,6 +47,8 @@ checks that staging is private per invocation, shared-budget lock contention fai
 recovers after unlock, and only the persistent owner-only lock remains after per-run cleanup. It
 also rejects symlink and hardlink archive objects and budget-lock paths without changing their
 external targets or leaving a private run directory behind.
+Worker-dependent success and intentional overload tests share the existing test-only mutex. This isolates independent cases while overload scenarios still verify the unchanged production two-worker cap, cancellation and reap behavior; no production retry or capacity widening is introduced.
+
 The feature-gated library tests also exercise the conditional one-chunk HTTP Pair route through the
 same query supervisor, including authorization before storage access, compact/no-store responses,
 tamper rejection, deadline/drop/shutdown cancellation, worker reap, staging cleanup, and capacity

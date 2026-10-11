@@ -364,7 +364,7 @@ pub(crate) fn serialize_worker_test() -> tokio::sync::OwnedMutexGuard<()> {
         .blocking_lock_owned()
 }
 
-#[cfg(all(test, feature = "offline-capture-synthetic", target_os = "linux"))]
+#[cfg(test)]
 pub(crate) async fn serialize_worker_test_async() -> tokio::sync::OwnedMutexGuard<()> {
     test_support::SERIAL
         .get_or_init(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
