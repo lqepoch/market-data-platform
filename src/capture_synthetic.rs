@@ -10,6 +10,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+#[cfg(target_os = "linux")]
 use alpaca_stream::offline_test_support::{ReviewedFixtureId, capture_reviewed_fixture};
 use broker_ports::{
     MarketDataItem, RawCaptureInstanceId, RawFrameSink, RawFrameSinkError, RawFrameSinkFactory,
@@ -21,9 +22,12 @@ use serde::Serialize;
 use crate::{
     MarketDataError, Result,
     archive::{
-        ArchiveLimits, ArchivePublisher, LocalRawFrameSpoolFactory, RawFrameSpoolLimits,
-        capture_pair_v2::offline_fixture::OfflineFixturePairSummaryV1,
+        LocalRawFrameSpoolFactory, capture_pair_v2::offline_fixture::OfflineFixturePairSummaryV1,
     },
+};
+#[cfg(target_os = "linux")]
+use crate::{
+    archive::{ArchiveLimits, ArchivePublisher, RawFrameSpoolLimits},
     storage::LocalTestTransport,
 };
 

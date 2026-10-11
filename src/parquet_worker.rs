@@ -37,7 +37,7 @@ pub struct CapturePairV2WorkerRequest<'a> {
 /// Verify one raw/event pair using the same bounded Linux worker as other Parquet reads.
 pub(crate) fn verify_capture_pair_v2_cancellable(
     request: &CapturePairV2WorkerRequest<'_>,
-    cancellation: CancellationToken,
+    _cancellation: CancellationToken,
 ) -> Result<VerifiedCapturePairChunkV2> {
     #[cfg(target_os = "linux")]
     {
@@ -100,7 +100,7 @@ pub(crate) fn verify_capture_pair_v2_cancellable(
             command,
             PAIR_VERIFY_OUTPUT_BYTES,
             WORKER_WALL_TIMEOUT,
-            cancellation,
+            _cancellation,
         )?;
         #[cfg(test)]
         let output = output

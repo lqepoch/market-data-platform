@@ -16,8 +16,10 @@ use sha2::{Digest, Sha256};
 use std::time::Instant;
 use tempfile::tempdir;
 
+#[cfg(target_os = "linux")]
 #[path = "../../tests/common/parquet_page_bomb.rs"]
 mod page_bomb_fixture;
+#[cfg(target_os = "linux")]
 pub(crate) use page_bomb_fixture::mutate_dictionary_page_to_memory_bomb;
 
 fn valid_bar() -> TradeMinuteBarV1 {
