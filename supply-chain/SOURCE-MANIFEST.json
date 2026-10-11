@@ -54,7 +54,7 @@
     },
     {
       "path": "AGENTS.md",
-      "sha256": "ed49bd68ff25bf93242be9c6b50456295823d9cc51b5fbe078dc954b0dbf11df"
+      "sha256": "8fb8fad94b62e48cea7a8866659829b80d075540c48bd8986769d8780e976253"
     },
     {
       "path": ".github/workflows/ci.yml",
