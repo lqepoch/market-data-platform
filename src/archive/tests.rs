@@ -322,7 +322,7 @@ fn drive_publication_requires_verified_entitled_exact_feed() {
 }
 
 #[test]
-fn drive_opra_binary_projection_is_diagnostic_only_and_paths_are_namespaced() {
+fn drive_opra_binary_projection_cannot_self_authorize_and_paths_are_namespaced() {
     let temp = tempdir().unwrap();
     let (_, _, mut request) = fixture(temp.path());
     request.purpose = PublicationPurpose::Diagnostic;
@@ -335,7 +335,10 @@ fn drive_opra_binary_projection_is_diagnostic_only_and_paths_are_namespaced() {
         None,
     )
     .unwrap();
-    assert!(validate_request(&request, TransportKind::RcloneGoogleDrive, false).is_ok());
+    assert!(matches!(
+        validate_request(&request, TransportKind::RcloneGoogleDrive, false),
+        Err(MarketDataError::PublicationNotAuthorized)
+    ));
     assert_eq!(
         namespaced_dataset_id("curated", "qqq-week-1").unwrap(),
         "curated-qqq-week-1"
@@ -354,6 +357,44 @@ fn drive_opra_binary_projection_is_diagnostic_only_and_paths_are_namespaced() {
     )
     .unwrap();
     assert!(validate_request(&request, TransportKind::RcloneGoogleDrive, false).is_err());
+}
+
+#[test]
+fn forged_authorized_source_cannot_publish_remote_or_touch_transport() {
+    for (feed, encoding, purpose) in [
+        (
+            "sip",
+            NumericEncodingV1::DecimalToken,
+            PublicationPurpose::Curated,
+        ),
+        (
+            "opra",
+            NumericEncodingV1::IntegerToken,
+            PublicationPurpose::Curated,
+        ),
+        (
+            "opra",
+            NumericEncodingV1::BinaryFloat64ShortestDecimal,
+            PublicationPurpose::Diagnostic,
+        ),
+    ] {
+        let temp = tempdir().unwrap();
+        let (mut publisher, transport, mut request) = fixture(temp.path());
+        publisher.transport_kind = TransportKind::RcloneGoogleDrive;
+        request.source =
+            MarketDataSourceV1::new("alpaca", feed, EntitlementState::Authorized, encoding, None)
+                .unwrap();
+        request.purpose = purpose;
+        // An unreadable object proves admission fails before Parquet/source
+        // readback and before any object transport can be called.
+        request.parquet_path = temp.path().join("absent.parquet");
+        assert!(matches!(
+            publisher.publish(&request),
+            Err(MarketDataError::PublicationNotAuthorized)
+        ));
+        assert_eq!(transport.upload_count(), 0);
+        assert!(transport.state.lock().unwrap().objects.is_empty());
+    }
 }
 
 fn local_capture_pair_fixture(
@@ -743,7 +784,7 @@ fn synthetic_parquet_cannot_be_relabelled_as_authorized_alpaca_drive_data() {
 
     assert!(matches!(
         publisher.publish(&request),
-        Err(MarketDataError::ParquetSchema)
+        Err(MarketDataError::PublicationNotAuthorized)
     ));
     assert_eq!(transport.upload_count(), 0);
 }

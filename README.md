@@ -160,6 +160,15 @@ API; the date and timestamps only support cross-repository serialization tests. 
 `available_at` is `2026-10-07T20:00:00Z`, before the current clock, but synthetic/unknown provenance
 still prevents it from serving as causal market evidence, training input, or promotion evidence.
 
+Remote archive publication is currently default-deny for curated and diagnostic namespaces.
+An `Authorized` field supplied in JSONL or an archive request is an observation, not trusted
+source-admission evidence. Replay rejects remote output before input/configuration access or
+output creation; the archive publisher independently rejects it before transport access.
+Re-enabling publication requires a separately reviewed issuer/verifier bound to exact provider
+input, entitlement and completeness evidence. Existing remote reads and local diagnostic writes
+retain their existing limits. This mitigation does not prove real SIP/OPRA entitlement or remote
+archive acceptance. See [source admission](docs/ARCHITECTURE.md#source-admission-and-publication).
+
 To replay an existing shared-contract JSONL stream, provide a bounded session config and an explicit
 local-test store. The JSONL schema is the flattened Rust/Serde projection from `market-contracts`;
 uint64 values such as `generation` and `sequence` are canonical decimal strings.
