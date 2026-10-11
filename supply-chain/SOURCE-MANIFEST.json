@@ -1741,7 +1741,7 @@
       },
       {
         "path": "src/archive/capture_pair_v2/publish.rs",
-        "sha256": "a60779483d0faca3fbf4834173e958a0ff3569b850a5b02a71351e8e29190765"
+        "sha256": "11aeabbff28e4d191a03219c2e193259324d4e5b3f37f321f15e3bb9ebb5f773"
       },
       {
         "path": "src/archive/capture_pair_v2/reader.rs",
@@ -1757,7 +1757,7 @@
       },
       {
         "path": "src/archive/capture_pair_v2/tests.rs",
-        "sha256": "4d7997be2b42d141c94cb2b538b34fbfda8ae22adb2e66188d92d356b4ed3188"
+        "sha256": "94608af4e4247d10ca95b653bee209371b9aa4c0f932fb7e414e0878c0fb1d8c"
       },
       {
         "path": "src/archive/raw_spool.rs",
@@ -1785,7 +1785,7 @@
       },
       {
         "path": "src/capture_synthetic.rs",
-        "sha256": "dbc9af765a4747ee926843b09d51fbef1e463d603db9db84800eaa2c9d8b5b3a"
+        "sha256": "842d1f48f591d7af0a228a5f09948e3ea3b17c88de7bfd5b0f9d0cc805195a6a"
       },
       {
         "path": "src/config.rs",
@@ -1797,7 +1797,7 @@
       },
       {
         "path": "src/http_api.rs",
-        "sha256": "1be5f0b305bfeea62daf9361ab091d1064bf37a05c1d9ad252b7bb4bcb37006a"
+        "sha256": "49102b1925cb3fbb9f789974c4aefe39587f021ef9fc0509a06149ff559ac68d"
       },
       {
         "path": "src/http_api/auth.rs",
@@ -1857,7 +1857,7 @@
       },
       {
         "path": "src/parquet_store/tests.rs",
-        "sha256": "976f51677341fcc6fc5e3914a7d88c4c248f5524351a67c5db1c01f4e5f7a63c"
+        "sha256": "820ef20446309c6f52d4ceeaaff68d712d6b260933ca3e01dbe9eb123dc7fb32"
       },
       {
         "path": "src/parquet_store/write_helpers.rs",
@@ -1865,7 +1865,7 @@
       },
       {
         "path": "src/parquet_worker.rs",
-        "sha256": "2e836d3430cb9d16d2447e4a94ba5700ab6fa3d61d12d65d080b348bf0b055b4"
+        "sha256": "d93c5c49ab8361bf8ad2d53a6b5ed5d98c7e88a4f3c287bd943431e51b137acd"
       },
       {
         "path": "src/pipeline.rs",
@@ -1897,7 +1897,7 @@
       },
       {
         "path": "src/remote_query/tests.rs",
-        "sha256": "1889ba5a8815a9c146e74b44c7ebfb81504b286c7f36648b13ea8e30dd84db1a"
+        "sha256": "ecdd3b3f153c15ce867e1294fce80e79fe0390186de86bd89e2d6139adbbca62"
       },
       {
         "path": "src/remote_query/tests/lock_lifetime.rs",
@@ -1940,7 +1940,7 @@
         "sha256": "2a363162ec994b56cf22bc87a84e92405c82337ed28103a39fbcc12591426b53"
       }
     ],
-    "sha256": "86ef83039b9ac633ebe8dd532de1e4e0dcb5581b8f8e33195e37541bac7c9726"
+    "sha256": "9ebe2fc7c937a22db7aa48b5f680a4e101e1b9bbf422a7eba6c9b84560d8ef27"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
