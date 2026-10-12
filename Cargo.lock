@@ -28,7 +28,7 @@ dependencies = [
 [[package]]
 name = "alpaca-stream"
 version = "0.1.0"
-source = "git+https://github.com/lqepoch/broker-connectors?rev=2359bb2bde052d070174d650a14fe040b6cd1e84#2359bb2bde052d070174d650a14fe040b6cd1e84"
+source = "git+https://github.com/lqepoch/broker-connectors?rev=dc6f578ec15be9e52aca43e0fddf5a25abdd3ba9#dc6f578ec15be9e52aca43e0fddf5a25abdd3ba9"
 dependencies = [
  "broker-ports",
  "chrono",
@@ -316,7 +316,7 @@ dependencies = [
 [[package]]
 name = "broker-ports"
 version = "0.1.0"
-source = "git+https://github.com/lqepoch/broker-connectors?rev=2359bb2bde052d070174d650a14fe040b6cd1e84#2359bb2bde052d070174d650a14fe040b6cd1e84"
+source = "git+https://github.com/lqepoch/broker-connectors?rev=dc6f578ec15be9e52aca43e0fddf5a25abdd3ba9#dc6f578ec15be9e52aca43e0fddf5a25abdd3ba9"
 dependencies = [
  "domain",
  "market-contracts",
@@ -549,7 +549,7 @@ dependencies = [
 [[package]]
 name = "domain"
 version = "0.1.0"
-source = "git+https://github.com/lqepoch/trading-core?rev=7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2#7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2"
+source = "git+https://github.com/lqepoch/trading-core?rev=105e42896eaa62afe7377a24478f0dd5632b1155#105e42896eaa62afe7377a24478f0dd5632b1155"
 dependencies = [
  "exact-decimal",
 ]
@@ -573,7 +573,7 @@ dependencies = [
 [[package]]
 name = "exact-decimal"
 version = "0.1.0"
-source = "git+https://github.com/lqepoch/trading-core?rev=7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2#7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2"
+source = "git+https://github.com/lqepoch/trading-core?rev=105e42896eaa62afe7377a24478f0dd5632b1155#105e42896eaa62afe7377a24478f0dd5632b1155"
 
 [[package]]
 name = "fastrand"
@@ -942,7 +942,7 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 [[package]]
 name = "market-contracts"
 version = "0.1.0"
-source = "git+https://github.com/lqepoch/trading-core?rev=7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2#7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2"
+source = "git+https://github.com/lqepoch/trading-core?rev=105e42896eaa62afe7377a24478f0dd5632b1155#105e42896eaa62afe7377a24478f0dd5632b1155"
 dependencies = [
  "chrono",
  "domain",
