@@ -15,10 +15,10 @@ clap = { version = "=4.5.53", features = ["derive"] }
 fs2 = "=0.4.3"
 jsonwebtoken = { version = "=10.3.0", default-features = false, features = ["aws_lc_rs"] }
 hex = "=0.4.3"
-market-contracts = { git = "https://github.com/lqepoch/trading-core", rev = "7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2", package = "market-contracts" }
-exact-decimal = { git = "https://github.com/lqepoch/trading-core", rev = "7bf9cf78f06ef1bb5a49a933bd5893a2df76b8a2", package = "exact-decimal" }
-broker-ports = { git = "https://github.com/lqepoch/broker-connectors", rev = "2359bb2bde052d070174d650a14fe040b6cd1e84", package = "broker-ports" }
-alpaca-stream = { git = "https://github.com/lqepoch/broker-connectors", rev = "2359bb2bde052d070174d650a14fe040b6cd1e84", package = "alpaca-stream" }
+market-contracts = { git = "https://github.com/lqepoch/trading-core", rev = "105e42896eaa62afe7377a24478f0dd5632b1155", package = "market-contracts" }
+exact-decimal = { git = "https://github.com/lqepoch/trading-core", rev = "105e42896eaa62afe7377a24478f0dd5632b1155", package = "exact-decimal" }
+broker-ports = { git = "https://github.com/lqepoch/broker-connectors", rev = "dc6f578ec15be9e52aca43e0fddf5a25abdd3ba9", package = "broker-ports" }
+alpaca-stream = { git = "https://github.com/lqepoch/broker-connectors", rev = "dc6f578ec15be9e52aca43e0fddf5a25abdd3ba9", package = "alpaca-stream" }
 parquet = { version = "=60.0.0", default-features = false, features = ["arrow", "zstd"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.151", features = ["arbitrary_precision"] }
