@@ -1729,7 +1729,7 @@
       },
       {
         "path": "src/archive/capture_pair_v2.rs",
-        "sha256": "2320348a9a20e0068b6785a412ad52db08061f7c24291a28325abe4650e8fbef"
+        "sha256": "48bcdfd9a02bf89843081a86aa1919261383b45b98ad246ebfa1f581a0ef08a5"
       },
       {
         "path": "src/archive/capture_pair_v2/offline_fixture.rs",
@@ -1741,7 +1741,7 @@
       },
       {
         "path": "src/archive/capture_pair_v2/publish.rs",
-        "sha256": "1ae70fbeeaa8cb0e67eaf995b3f412f34ee2c820532f87f3a59bbf22cad8900a"
+        "sha256": "cf7d1ecefac28673003703b7a69d5bfbe6d1ddb3016fd9752b65ba010eb6296c"
       },
       {
         "path": "src/archive/capture_pair_v2/reader.rs",
@@ -1785,7 +1785,7 @@
       },
       {
         "path": "src/capture_synthetic.rs",
-        "sha256": "842d1f48f591d7af0a228a5f09948e3ea3b17c88de7bfd5b0f9d0cc805195a6a"
+        "sha256": "7deb288d927ea3464b4d5426368c0cf5879135907108bda28271a5233fefd7eb"
       },
       {
         "path": "src/config.rs",
@@ -1940,7 +1940,7 @@
         "sha256": "2a363162ec994b56cf22bc87a84e92405c82337ed28103a39fbcc12591426b53"
       }
     ],
-    "sha256": "f5393f74f0509020046810a80a12db5efc29255549e438209ee2cffdd7e89496"
+    "sha256": "89c237e7fff304497ba18be2460baad1787bb77040fc87dc812217fda5a395d1"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
