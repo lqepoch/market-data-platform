@@ -37,6 +37,13 @@ mod publish;
 pub(crate) mod reader;
 
 #[cfg(feature = "offline-capture-synthetic")]
+#[cfg_attr(
+    not(target_os = "linux"),
+    allow(
+        dead_code,
+        reason = "only the Linux synthetic fixture path publishes this receipt"
+    )
+)]
 pub(crate) mod offline_fixture;
 
 #[cfg(test)]

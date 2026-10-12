@@ -53,7 +53,7 @@ pub async fn run(
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (output, shutdown_signal);
-        return Err(MarketDataError::PublicationNotAuthorized);
+        Err(MarketDataError::PublicationNotAuthorized)
     }
 
     #[cfg(target_os = "linux")]
@@ -130,11 +130,19 @@ pub async fn run(
     }
 }
 
+#[cfg_attr(
+    not(target_os = "linux"),
+    allow(dead_code, reason = "the synthetic fixture capture path is Linux-only")
+)]
 struct RecordingSinkFactory {
     spool: Arc<LocalRawFrameSpoolFactory>,
     created: Mutex<Option<(RawCaptureInstanceId, Arc<dyn RawFrameSink>)>>,
 }
 
+#[cfg_attr(
+    not(target_os = "linux"),
+    allow(dead_code, reason = "the synthetic fixture capture path is Linux-only")
+)]
 impl RecordingSinkFactory {
     fn new(spool: Arc<LocalRawFrameSpoolFactory>) -> Self {
         Self {
@@ -152,6 +160,10 @@ impl RecordingSinkFactory {
     }
 }
 
+#[cfg_attr(
+    not(target_os = "linux"),
+    allow(dead_code, reason = "the synthetic fixture capture path is Linux-only")
+)]
 impl RawFrameSinkFactory for RecordingSinkFactory {
     fn create_sink(
         &self,
@@ -178,6 +190,10 @@ impl RawFrameSinkFactory for RecordingSinkFactory {
     }
 }
 
+#[cfg_attr(
+    not(target_os = "linux"),
+    allow(dead_code, reason = "the synthetic fixture capture path is Linux-only")
+)]
 fn split_items(
     items: &[MarketDataItem],
 ) -> Result<(Vec<RawMarketFrame>, Vec<MarketEventEnvelopeV1>)> {
@@ -209,6 +225,10 @@ fn split_items(
 }
 
 #[cfg(unix)]
+#[cfg_attr(
+    not(target_os = "linux"),
+    allow(dead_code, reason = "the synthetic fixture capture path is Linux-only")
+)]
 fn prepare_output_root(path: &Path) -> Result<()> {
     use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 
@@ -241,6 +261,10 @@ fn prepare_output_root(path: &Path) -> Result<()> {
 }
 
 #[cfg(not(unix))]
+#[cfg_attr(
+    not(target_os = "linux"),
+    allow(dead_code, reason = "the synthetic fixture capture path is Linux-only")
+)]
 fn prepare_output_root(_path: &Path) -> Result<()> {
     Err(MarketDataError::PublicationNotAuthorized)
 }

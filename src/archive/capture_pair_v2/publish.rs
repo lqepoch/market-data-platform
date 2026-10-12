@@ -57,6 +57,13 @@ struct PairIntentV2<'a> {
 enum CapturePairSourceV2 {
     SyntheticJsonl,
     #[cfg(feature = "offline-capture-synthetic")]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        allow(
+            dead_code,
+            reason = "only the Linux synthetic fixture path constructs this source"
+        )
+    )]
     AlpacaOfflineFixture,
 }
 
@@ -113,6 +120,13 @@ impl ArchivePublisher {
     }
 
     #[cfg(feature = "offline-capture-synthetic")]
+    #[cfg_attr(
+        not(target_os = "linux"),
+        allow(
+            dead_code,
+            reason = "only the Linux synthetic fixture path calls this publisher"
+        )
+    )]
     pub(crate) fn publish_local_offline_alpaca_fixture_capture_pair_v2(
         &self,
         spool: &LocalRawFrameSpoolFactory,
