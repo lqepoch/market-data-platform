@@ -3,7 +3,7 @@
   "sources": [
     {
       "origin": "https://github.com/lqepoch/broker-connectors",
-      "rev": "dc6f578ec15be9e52aca43e0fddf5a25abdd3ba9",
+      "rev": "873337e3fafe64344dfb9ac7719fad54f157a9c0",
       "packages": [
         "alpaca-stream",
         "broker-ports"
@@ -11,7 +11,7 @@
     },
     {
       "origin": "https://github.com/lqepoch/trading-core",
-      "rev": "105e42896eaa62afe7377a24478f0dd5632b1155",
+      "rev": "b2679e757576f8da7850cd4b5ea2958bc9a2354c",
       "packages": [
         "domain",
         "exact-decimal",
