@@ -12,6 +12,12 @@ integration and the default CLI accepts shared-contract JSONL and synthetic inpu
 default-off feature adds one reviewed offline MessagePack fake-wire replay through the existing
 broker runner; it does not connect to a live SIP/OPRA feed.
 
+Boundary: this repository owns bounded collection orchestration, normalization, Parquet storage,
+archive publication/query, and local replay; Broker owns provider transport and Core owns shared
+contracts. The nine-repository map is a [governance candidate in Draft PR #20](https://github.com/lqepoch/platform-ops/blob/codex/chg-2026-001-workspace-layout/docs/NINE-REPOSITORY-ARCHITECTURE.md),
+not yet the `main` authority; current behavior follows this repository's source, manifests, locks,
+and local documentation.
+
 ## Status and evidence
 
 - Synthetic replay passes JSONL validation, bounded collection, trade-bar aggregation, Arrow/Parquet
