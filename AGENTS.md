@@ -5,6 +5,8 @@ Parquet persistence, immutable archive publication, query, and local replay. It 
 provider SDKs, REST/WebSocket clients, wire decoding, subscription acknowledgements, or credentials;
 those belong to `broker-connectors`.
 
+The nine-repository map is a [governance candidate in Draft PR #20](https://github.com/lqepoch/platform-ops/blob/codex/chg-2026-001-workspace-layout/docs/NINE-REPOSITORY-ARCHITECTURE.md), not yet the `main` authority. Until it is merged, use this repository's source, manifests, locks, and local documentation as current behavior evidence.
+
 - Use `market-contracts` as the only owner of event, manifest, uint64 JSON, and schema fingerprint
   contracts. Do not duplicate DTOs, canonical serializers, or schema hashes here.
 - Treat provider/feed, entitlement, numeric encoding, source time, receive time, generation, and

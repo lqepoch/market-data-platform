@@ -45,6 +45,9 @@ locked normal/build graph across all targets. Test-only/dev dependencies are inv
 source manifest and NOTICE and are included in cargo-deny's audit; they are not reported as shipped
 application components.
 
+The generator's `INPUT_PATHS` also includes `README.md` and `AGENTS.md`; changes to any listed
+input require the same regeneration, even when the change is documentation-only.
+
 Run the following after changing code, dependencies, source pins, or supply-chain policy:
 
 ```sh

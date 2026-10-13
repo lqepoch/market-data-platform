@@ -50,11 +50,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "00a3d4c865f1884a8a32ac1a17e80373a10e9896aa9f87b98d42853f108ffb2f"
+      "sha256": "614ed4f2983600e64dec92a201723f68d966ad8e74c1abd39bb2a455ec3d631d"
     },
     {
       "path": "AGENTS.md",
-      "sha256": "8fb8fad94b62e48cea7a8866659829b80d075540c48bd8986769d8780e976253"
+      "sha256": "4d6908c95ef0c8086a4cae255845218038a0bf61eafc5accce3ef83653c2431b"
     },
     {
       "path": ".github/workflows/ci.yml",
@@ -98,7 +98,7 @@
     },
     {
       "path": "docs/SUPPLY_CHAIN.md",
-      "sha256": "f1cd995f9db43dcb21c4e6284fee9ad889bd61bd97eef5fc6426b6bbe8232188"
+      "sha256": "0ee2a5ee110689e44867d410e6e1252d77bd2701c028887577a03d4c8ff51868"
     },
     {
       "path": "docs/openapi-v1.yaml",
