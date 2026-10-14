@@ -173,7 +173,7 @@ impl CacheKeyV1 {
             asset_class: enum_label(&request.asset_class)?,
             symbol: request.symbol.clone(),
             session_scope: enum_label(&request.session_scope)?,
-            session_instance_id: session_identity(&session_ids)?,
+            session_instance_id: trading_phase_set_identity(&session_ids)?,
             window_start_utc: request.start.as_str().to_owned(),
             window_end_exclusive_utc: request.end.as_str().to_owned(),
             market_calendar_version: source_scope.market_calendar_version.clone(),
@@ -819,7 +819,7 @@ impl CoverageEvidenceV1 {
             }
             session_ids.insert(segment.session_instance_id.clone());
         }
-        if session_identity(&session_ids)? != key.session_instance_id {
+        if trading_phase_set_identity(&session_ids)? != key.session_instance_id {
             return Err(CacheReconciliationError::Conflict);
         }
         Ok(())
@@ -1041,8 +1041,8 @@ impl BarsCacheEvidenceV1 {
         let mut cache_segments = cache_segments;
         core_segments.sort();
         cache_segments.sort();
-        if session_identity(&session_ids)? != key.session_instance_id
-            || session_identity(&cache_sessions)? != key.session_instance_id
+        if trading_phase_set_identity(&session_ids)? != key.session_instance_id
+            || trading_phase_set_identity(&cache_sessions)? != key.session_instance_id
             || core_segments != cache_segments
             || entitlement_state(self.entitlement_status)? != key.entitlement
             || (coverage.is_complete_for_key(key)
@@ -1180,7 +1180,11 @@ fn validate_rows_for_key(
     Ok(())
 }
 
-pub(crate) fn session_identity(session_ids: &BTreeSet<String>) -> Result<String> {
+/// Derive the cache dimension for a set of market trading-phase session IDs.
+///
+/// This is not an authentication-session identifier. Keep the v1 domain and encoding stable:
+/// persisted cache keys depend on the exact bytes produced here.
+pub(crate) fn trading_phase_set_identity(session_ids: &BTreeSet<String>) -> Result<String> {
     if session_ids.is_empty() {
         return Err(CacheReconciliationError::InvalidInput);
     }

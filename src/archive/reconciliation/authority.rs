@@ -596,7 +596,7 @@ fn validate_claims_dimension_set(
         .cloned()
         .collect::<BTreeSet<_>>();
     if sessions.len() != claims.session_instance_ids.len()
-        || super::session_identity(&sessions)? != key.session_instance_id
+        || super::trading_phase_set_identity(&sessions)? != key.session_instance_id
     {
         return Err(CacheReconciliationError::AdmissionMismatch);
     }

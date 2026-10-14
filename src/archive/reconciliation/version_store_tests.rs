@@ -470,24 +470,20 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
         let logical = store
             .load_logical_current(&identity, "2026-10-08-regular", now)
             .unwrap();
-        assert_eq!(
-            source.current.version_id, expected_source.0,
-            "{stage}: source version mismatch at now={now}; expected close={} authority={:?}",
-            expected_source.1, expected_source.2
+        assert!(
+            source.current.version_id == expected_source.0,
+            "{stage}: source version mismatch at now={now}"
         );
-        assert_eq!(
-            logical.session.current.version_id, expected_logical.0,
-            "{stage}: logical version mismatch at now={now}; source={} expected logical close={} authority={:?}",
-            source.current.version_id, expected_logical.1, expected_logical.2
+        assert!(
+            logical.session.current.version_id == expected_logical.0,
+            "{stage}: logical version mismatch at now={now}"
         );
-        assert_eq!(
-            source.bars_rows[0].close.as_str(),
-            expected_source.1,
+        assert!(
+            source.bars_rows[0].close.as_str() == expected_source.1,
             "{stage}: source close mismatch at now={now}"
         );
-        assert_eq!(
-            logical.snapshot.bars_rows[0].close.as_str(),
-            expected_logical.1,
+        assert!(
+            logical.snapshot.bars_rows[0].close.as_str() == expected_logical.1,
             "{stage}: logical close mismatch at now={now}"
         );
         assert_eq!(
@@ -499,17 +495,17 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
             "{stage}: logical authority"
         );
         if expected_source.1 == expected_logical.1 {
-            assert_eq!(
-                source.raw_bars_rows_sha256, logical.snapshot.raw_bars_rows_sha256,
+            assert!(
+                source.raw_bars_rows_sha256 == logical.snapshot.raw_bars_rows_sha256,
                 "{stage}: raw observation lineage differs between equivalent source and logical current"
             );
-            assert_eq!(
-                source.bars_rows_sha256, logical.snapshot.bars_rows_sha256,
+            assert!(
+                source.bars_rows_sha256 == logical.snapshot.bars_rows_sha256,
                 "{stage}: canonical rows differ between equivalent source and logical current"
             );
         } else {
-            assert_ne!(
-                source.bars_rows_sha256, logical.snapshot.bars_rows_sha256,
+            assert!(
+                source.bars_rows_sha256 != logical.snapshot.bars_rows_sha256,
                 "{stage}: different source and logical rows unexpectedly share a canonical hash"
             );
         }
