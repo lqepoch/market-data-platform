@@ -74,7 +74,12 @@ and local documentation.
   selection. The MDP outer cursor, Gateway delegation, and credentials are never persisted, and
   replay does not extend the provider cursor's expiry. A new or empty cache root gets a fixed
   private ownership marker; an unmarked non-empty root is rejected without permission/content
-  changes. The store remains provisional without
+  changes. Its provider-neutral logical index uses a checksummed atomic root plus immutable
+  month-assigned shards (64 sessions/256 KiB each, 1500 references/4 MiB maximum root, and a
+  32 MiB/96,000-session referenced-data cap). Session months come only from validated calendar
+  phase slices; missing phase mapping retains provisional artifacts without advancing the index.
+  Expired rows remain audit-only and can still block a materially conflicting cross-provider
+  candidate, while expired cache entries are not served. The store remains provisional without
   trusted source-admission evidence and is not wired to existing Drive/S3OSS archive writers. See
   [the cache reconciliation policy](docs/policies/mdp-cache-reconciliation-v1.md).
 

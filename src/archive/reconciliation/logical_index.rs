@@ -17,11 +17,16 @@ use super::{
 };
 
 const LOGICAL_IDENTITY_DOMAIN: &[u8] = b"lqepoch.mdp.cache-logical-partition-identity.v1\0";
-/// One bounded index can cover multiple years of daily sessions while remaining small enough to
-/// read and replace atomically. Candidates that exceed this cap retain their immutable cache
-/// version and report logical-index overflow without changing existing session pointers.
-pub(crate) const MAX_LOGICAL_SESSIONS: usize = 2048;
 pub(crate) const MAX_LOGICAL_INDEX_BYTES: usize = 4 * 1024 * 1024;
+pub(crate) const MAX_LOGICAL_SHARDS: usize = 1500;
+pub(crate) const MAX_LOGICAL_SESSIONS_PER_SHARD: usize = 64;
+pub(crate) const MAX_LOGICAL_SHARD_BYTES: usize = 256 * 1024;
+pub(crate) const MAX_LOGICAL_TOTAL_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_LOGICAL_TOTAL_SESSIONS: usize =
+    MAX_LOGICAL_SHARDS * MAX_LOGICAL_SESSIONS_PER_SHARD;
+/// Compatibility name for per-candidate comparison bounds. The persistent index has a separate
+/// larger cap and is split into immutable shards.
+pub(crate) const MAX_LOGICAL_SESSIONS: usize = 2048;
 
 /// Provider-neutral identity shared by source pages for the same authorized instrument query.
 /// Provider, feed, entitlement realm, request range, and cursor deliberately stay out of this
@@ -114,6 +119,8 @@ pub(crate) struct CacheLogicalVersionRefV1 {
     pub version_id: String,
     pub receipt_sha256: String,
     pub session_instance_id: String,
+    /// UTC month of the earliest verified phase start; this is only a physical shard key.
+    pub shard_month: String,
     pub authority: CacheAuthorityV1,
     pub covered_start_utc: String,
     pub covered_end_exclusive_utc: String,
@@ -129,6 +136,7 @@ pub(crate) struct CacheLogicalVersionSourceV1<'a> {
     pub authority: CacheAuthorityV1,
     pub created_at_unix_seconds: u64,
     pub expires_at_unix_seconds: u64,
+    pub shard_month: &'a str,
     pub coverage: &'a CoverageEvidenceV1,
 }
 
@@ -146,6 +154,7 @@ impl CacheLogicalVersionRefV1 {
             || end > key_end
             || self.key.fingerprint()? != self.key_fingerprint_sha256
             || !valid_dimension(&self.session_instance_id)
+            || !valid_shard_month(&self.shard_month)
             || !valid_sha256(&self.version_id)
             || !valid_sha256(&self.receipt_sha256)
             || self.expires_at_unix_seconds <= self.created_at_unix_seconds
@@ -167,12 +176,33 @@ pub(crate) struct CacheLogicalComparisonV1 {
     pub baseline_feed: String,
     pub baseline_version_id: String,
     pub baseline_authority: CacheAuthorityV1,
+    #[serde(default)]
+    pub baseline_evidence_status: CacheLogicalEvidenceStatusV1,
     pub candidate_provider: String,
     pub candidate_feed: String,
     pub candidate_version_id: String,
     pub candidate_authority: CacheAuthorityV1,
+    #[serde(default)]
+    pub candidate_evidence_status: CacheLogicalEvidenceStatusV1,
     pub kind: CacheLogicalComparisonKindV1,
     pub summary: SameFeedComparisonV1,
+}
+
+/// Cache publication does not have the current provider verifier needed to reauthorize an old
+/// receipt. Old rows remain historical price evidence for conflict auditing, never current access
+/// permission. A candidate is labelled verified only at the instant its independent admission
+/// was checked; later reads still require the current verifier.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CacheLogicalEvidenceStatusV1 {
+    /// Legacy receipt did not persist a baseline freshness/revocation classification.
+    #[default]
+    LegacyUnclassifiedHistorical,
+    ProvisionalObservation,
+    AdmissionVerifiedAtPublication,
+    ExpiredProvisionalHistorical,
+    ExpiredAuthorityHistorical,
+    UnrevalidatedAuthorityHistorical,
 }
 
 impl CacheLogicalComparisonV1 {
@@ -208,11 +238,13 @@ pub(crate) struct LogicalSessionSnapshotRefV1<'a> {
     pub version_id: &'a str,
     pub coverage: &'a CoverageEvidenceV1,
     pub rows: &'a [market_contracts::BarRowV1],
+    pub evidence_status: CacheLogicalEvidenceStatusV1,
 }
 
 /// Pure result of comparing every existing session in one candidate before the store mutates a
 /// current pointer. Conflicts are collected so the caller can persist one rejected immutable
 /// candidate and leave the whole old manifest untouched.
+#[derive(Default)]
 pub(crate) struct CacheLogicalBatchComparisonV1 {
     pub comparisons: BTreeMap<String, CacheLogicalComparisonV1>,
     pub incomplete_sessions: BTreeSet<String>,
@@ -297,6 +329,10 @@ pub(crate) struct CacheLogicalCurrentV1 {
     pub identity: CacheLogicalIdentityV1,
     pub generation: u64,
     pub sessions: BTreeMap<String, CacheLogicalSessionCurrentV1>,
+    /// Session-to-month bindings are derived from actual ordered phase slices, never ID parsing.
+    pub session_months: BTreeMap<String, String>,
+    /// Immutable disk shards referenced by the current root pointer.
+    pub shards: BTreeMap<String, CacheLogicalShardRefV1>,
     pub updated_at_unix_seconds: u64,
 }
 
@@ -305,18 +341,138 @@ impl CacheLogicalCurrentV1 {
         self.identity.validate()?;
         if self.generation == 0
             || self.sessions.is_empty()
-            || self.sessions.len() > MAX_LOGICAL_SESSIONS
+            || self.sessions.len() > MAX_LOGICAL_TOTAL_SESSIONS
+            || self.session_months.len() != self.sessions.len()
+            || self.shards.len() > MAX_LOGICAL_SHARDS
         {
             return Err(CacheReconciliationError::UnknownOutcome);
         }
         for (session, entry) in &self.sessions {
-            if !valid_dimension(session) {
+            let Some(month) = self.session_months.get(session) else {
+                return Err(CacheReconciliationError::UnknownOutcome);
+            };
+            if !valid_dimension(session)
+                || !valid_shard_month(month)
+                || month != &entry.current.shard_month
+            {
                 return Err(CacheReconciliationError::UnknownOutcome);
             }
             entry.validate(&self.identity, session)?;
         }
+        for (shard_id, shard) in &self.shards {
+            if shard_id != &shard.shard_id || !shard.validate() {
+                return Err(CacheReconciliationError::UnknownOutcome);
+            }
+        }
         Ok(())
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CacheLogicalShardRefV1 {
+    pub shard_id: String,
+    pub content_sha256: String,
+    pub byte_length: u64,
+    pub session_count: u32,
+}
+
+impl CacheLogicalShardRefV1 {
+    pub(crate) fn validate(&self) -> bool {
+        let Some((month, subshard)) = self.shard_id.rsplit_once('-') else {
+            return false;
+        };
+        let byte_length = usize::try_from(self.byte_length);
+        let session_count = usize::try_from(self.session_count);
+        valid_shard_month(month)
+            && subshard.len() == 4
+            && subshard.bytes().all(|byte| byte.is_ascii_digit())
+            && valid_sha256(&self.content_sha256)
+            && self.byte_length > 0
+            && byte_length.is_ok_and(|bytes| bytes <= MAX_LOGICAL_SHARD_BYTES)
+            && self.session_count > 0
+            && session_count.is_ok_and(|count| count <= MAX_LOGICAL_SESSIONS_PER_SHARD)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CacheLogicalIndexStatusV1 {
+    #[default]
+    NotAttempted,
+    Updated,
+    Unchanged,
+    PhaseMappingUnavailable,
+    IncompleteCoverage,
+    ConflictRejected,
+    CandidateSessionOverflow,
+    SessionShardOverflow,
+    ShardCountOverflow,
+    IndexByteOverflow,
+}
+
+pub(crate) fn derive_session_shard_months(
+    slices: &[super::authority::ProviderPhaseSliceV1],
+    session_ids: &[String],
+    request_start_utc: &str,
+    request_end_exclusive_utc: &str,
+) -> Result<BTreeMap<String, String>> {
+    super::authority::validate_phase_slices(
+        slices,
+        session_ids,
+        request_start_utc,
+        request_end_exclusive_utc,
+    )?;
+    let mut earliest_by_session = BTreeMap::new();
+    for slice in slices {
+        let start = parse_utc(&slice.start_utc)?;
+        let month = utc_month(&slice.start_utc)?;
+        match earliest_by_session.get(&slice.session_instance_id) {
+            Some((previous_start, _)) if previous_start <= &start => {}
+            _ => {
+                earliest_by_session.insert(slice.session_instance_id.clone(), (start, month));
+            }
+        }
+    }
+    Ok(earliest_by_session
+        .into_iter()
+        .map(|(session, (_, month))| (session, month))
+        .collect())
+}
+
+pub(crate) fn valid_shard_month(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 7
+        || bytes[4] != b'-'
+        || !bytes[..4].iter().all(u8::is_ascii_digit)
+        || !bytes[5..].iter().all(u8::is_ascii_digit)
+    {
+        return false;
+    }
+    value
+        .get(5..)
+        .and_then(|month| month.parse::<u8>().ok())
+        .is_some_and(|month| (1..=12).contains(&month))
+}
+
+fn utc_month(value: &str) -> Result<String> {
+    parse_utc(value)?;
+    let bytes = value.as_bytes();
+    if bytes.len() < 20
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || bytes[10] != b'T'
+        || !value.ends_with('Z')
+    {
+        return Err(CacheReconciliationError::InvalidInput);
+    }
+    let month = value
+        .get(..7)
+        .ok_or(CacheReconciliationError::InvalidInput)?;
+    if !valid_shard_month(month) {
+        return Err(CacheReconciliationError::InvalidInput);
+    }
+    Ok(month.to_owned())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -401,6 +557,7 @@ pub(crate) fn version_ref_for_session(
         version_id: source.version_id.to_owned(),
         receipt_sha256: source.receipt_sha256.to_owned(),
         session_instance_id: session_instance_id.to_owned(),
+        shard_month: source.shard_month.to_owned(),
         authority: source.authority,
         covered_start_utc: start.as_str().to_owned(),
         covered_end_exclusive_utc: end.as_str().to_owned(),
@@ -469,10 +626,16 @@ pub(crate) fn compare_session_overlap(
         baseline_feed: baseline.key.feed.clone(),
         baseline_version_id: baseline.version_id.to_owned(),
         baseline_authority: baseline.authority,
+        baseline_evidence_status: baseline.evidence_status,
         candidate_provider: candidate.key.provider.clone(),
         candidate_feed: candidate.key.feed.clone(),
         candidate_version_id: candidate.version_id.to_owned(),
         candidate_authority: candidate.authority,
+        candidate_evidence_status: if candidate.authority == CacheAuthorityV1::Authoritative {
+            CacheLogicalEvidenceStatusV1::AdmissionVerifiedAtPublication
+        } else {
+            CacheLogicalEvidenceStatusV1::ProvisionalObservation
+        },
         kind: if same_feed {
             CacheLogicalComparisonKindV1::SameFeed
         } else {

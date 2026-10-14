@@ -11,10 +11,10 @@ create an entitlement/completeness certificate.
 `CacheQuerySourceScopeV1`. It fingerprints the selected actual provider and feed (`unknown` remains
 `unknown`), stable non-secret route identity, SHA-256 of the stable entitlement realm, entitlement
 state, expected numeric encoding, asset class, requested and effective resolution, provider mode,
-domain-separated rights-profile SHA-256, adjustment, symbol, session scope and calendar-derived session instances, half-open UTC request
-window, optional calendar version, request-cursor digest, and Core-owned schema ID/version/
-fingerprint. It contains no
-credential or raw page cursor. `auto` requests for distinct actual providers remain distinct keys.
+domain-separated rights-profile SHA-256, adjustment, symbol, session scope and calendar-derived
+session instances, half-open UTC request window, optional calendar version, request-cursor digest,
+and Core-owned schema ID/version/fingerprint. It contains no credential or raw page cursor. `auto`
+requests for distinct actual providers remain distinct keys.
 Response hashes, row hashes, observation times and random provenance IDs are version evidence, never
 lookup dimensions. One cache snapshot represents one actual provider/feed; mixed-source responses
 are rejected.
@@ -29,8 +29,11 @@ sequence numbers. Unknown sequences do not block a complete history result when 
 range, page count, page exhaustion, and Core gap facts are known. Missing page count or exhaustion,
 a known gap, or truncation prevents a complete cache claim. Such rows can still be stored
 provisionally. If page facts do not support completeness, the cache downgrades a Core `Complete`
-response and its complete segments to `Partial` before publication. Provider cursors are never
-persisted; only their SHA-256 digest can be retained.
+response and its complete segments to `Partial` before publication. The pre-fetch key retains only
+the request cursor digest. A truncated response may additionally persist the A02-validated typed
+provider-local continuation in its private immutable receipt, bound to the exact key/provider/feed,
+entitlement realm, payload hash, and original expiry. The MDP outer cursor, arbitrary caller input,
+delegations, and credentials are never persisted or logged.
 
 The caller derives the pre-fetch key, then supplies the SDK-observation `BarsResponseV1`, the
 adapter's canonical `BarsResponseV1`, and `ProviderPageEvidenceV1` to
@@ -91,8 +94,11 @@ rollback, or recovery.
 Cross-source reconciliation uses a separate bounded logical index partitioned by the verified
 rights-profile hash, instrument, requested/effective resolution, adjustment, calendar version, and
 trusted schema. It deliberately omits provider/feed, entitlement realm, request window, page cursor,
-and session ID. The partition maps at most 2048 actual `session_instance_id` values to immutable
-version references. For every overlapping session, the cache compares only the exact shared
+and session ID. The partition maps actual `session_instance_id` values to immutable version
+references. A month used for physical storage is derived from the earliest validated calendar phase
+slice for that session; the opaque session ID is never parsed to infer a date. Missing or invalid
+phase mapping leaves the raw/canonical artifacts available as provisional versions but does not
+advance the logical index. For every overlapping session, the cache compares only the exact shared
 half-open interval covered by contiguous `Complete` canonical segments and rows. It does not clip
 bars, infer session identity from provider-local IDs, compare after-hours rows as regular-session
 data, or treat a partial/truncated page as complete. Disjoint or incomplete overlap does not advance
@@ -106,10 +112,26 @@ neither the provider current pointer nor any session in the prior logical manife
 conflict-rejected version is visible in `list_verified_versions` for audit but cannot be selected by
 automatic load, rollback, or recovery. Minor decimal differences are accepted only under the
 explicit persisted same-feed or cross-provider tolerance policy. A successful multi-session update
-replaces one checksummed bounded logical manifest atomically; the manifest is capped at 2048 sessions
-and 4 MiB, and capacity exhaustion keeps the new immutable raw/canonical version while leaving the
-previous logical manifest unchanged. The result and version receipt expose an overflow flag; callers
-must not present an overflowed logical index as complete coverage.
+replaces one checksummed bounded logical root atomically. The root is capped at 1500 shard references
+and 4 MiB; each immutable shard is capped at 64 sessions and 256 KiB; referenced shard bytes are
+capped at 32 MiB and total indexed sessions at 96,000. A candidate is capped at 2048 sessions for
+one reconciliation pass. Shards are content-addressed, create-only, and read back by hash before the
+single root pointer changes. Capacity exhaustion keeps the new immutable raw/canonical version while
+leaving the previous logical root unchanged. The version receipt and publish result expose a precise
+index status and overflow flag; callers must not present an overflowed or phase-unmapped logical
+index as complete coverage. A legacy logical root without phase-to-month evidence is not inferred or
+migrated; a write that cannot validate the existing root fails closed before changing its pointer.
+No cleanup or migration of legacy logical roots is implicit.
+
+Expired observations are not served as a current cache hit, but their immutable rows remain available
+to the reconciliation audit. An expired provisional Futu baseline is labelled
+`expired_provisional_historical`; an expired authority-bearing baseline is labelled
+`expired_authority_historical`. An unexpired old authority receipt that was not checked by the current
+issuer/revocation verifier is labelled `unrevalidated_authority_historical`. None of these historical
+labels grants current rights. Material overlap conflicts still reject the full candidate update,
+including when the conflicting Futu baseline has expired; expiry cannot silently erase major-conflict
+protection. The new candidate still requires its own current, exact-input-bound admission before it
+can be authoritative.
 
 Provisional snapshots are retained as immutable versions. They can become current only when there
 is no verified authoritative current version for that exact key. They cannot replace an

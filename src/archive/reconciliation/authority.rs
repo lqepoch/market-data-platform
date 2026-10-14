@@ -27,7 +27,7 @@ use super::{
 const RECEIPT_DOMAIN: &[u8] = b"lqepoch.mdp.provider-admission-receipt.v1\0";
 const POLICY_DOMAIN: &[u8] = b"lqepoch.mdp.reconciliation-policy.v1\0";
 const MAX_ADMISSION_RECEIPT_BYTES: usize = 64 * 1024;
-const MAX_PHASE_SLICES: usize = 4096;
+pub(super) const MAX_PHASE_SLICES: usize = 4096;
 const MAX_ADMISSION_TTL_SECONDS: u64 = 24 * 60 * 60;
 
 impl ProviderPhaseSliceV1 {
@@ -601,7 +601,7 @@ fn validate_claims_dimension_set(
     Ok(())
 }
 
-fn validate_phase_slices(
+pub(super) fn validate_phase_slices(
     slices: &[ProviderPhaseSliceV1],
     session_ids: &[String],
     query_start_utc: &str,

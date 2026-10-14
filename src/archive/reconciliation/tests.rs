@@ -1,4 +1,8 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    path::Path,
+};
 
 use market_contracts::EntitlementState;
 use sha2::Digest;
@@ -26,6 +30,62 @@ fn cache_input<'a>(
         canonical_response,
         page_evidence,
     )
+}
+
+fn cache_input_with_test_phases<'a>(
+    request: &'a BarsRequestV1,
+    source_scope: &'a CacheQuerySourceScopeV1,
+    raw_observations: BarsResponseV1,
+    canonical_response: BarsResponseV1,
+    page_evidence: ProviderPageEvidenceV1,
+) -> CacheBarsResponsesInputV1<'a> {
+    let phases = canonical_response
+        .segments
+        .iter()
+        .map(|segment| ProviderPhaseSliceV1 {
+            phase: "regular".to_owned(),
+            session_instance_id: segment.session_instance_id.clone(),
+            start_utc: segment.start_utc.as_str().to_owned(),
+            end_exclusive_utc: segment.end_exclusive_utc.as_str().to_owned(),
+        })
+        .collect::<Vec<_>>();
+    CacheBarsResponsesInputV1::new(
+        request,
+        source_scope,
+        raw_observations,
+        canonical_response,
+        page_evidence,
+    )
+    .with_phase_slices(&phases)
+}
+
+fn logical_pointer_version_on_disk(
+    root: &Path,
+    identity: &CacheLogicalIdentityV1,
+    session_instance_id: &str,
+) -> String {
+    let logical_dir = root.join("logical").join(identity.fingerprint().unwrap());
+    let envelope: serde_json::Value =
+        serde_json::from_slice(&fs::read(logical_dir.join("current.json")).unwrap()).unwrap();
+    let shards = envelope["payload"]["shards"].as_object().unwrap();
+    for reference in shards.values() {
+        let content_sha256 = reference["content_sha256"].as_str().unwrap();
+        let shard: serde_json::Value = serde_json::from_slice(
+            &fs::read(
+                logical_dir
+                    .join("shards")
+                    .join(format!("{content_sha256}.json")),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        if let Some(version_id) =
+            shard["sessions"][session_instance_id]["current"]["version_id"].as_str()
+        {
+            return version_id.to_owned();
+        }
+    }
+    panic!("logical session was not found in verified shards");
 }
 
 fn row(identity: &str, price: &str, volume: &str) -> CanonicalRowV1 {
@@ -696,6 +756,7 @@ fn merged_futu_recent_and_buffer_run_compares_only_the_shared_old_session() {
             version_id: &futu_version,
             coverage: &futu_coverage,
             rows: &futu_rows,
+            evidence_status: CacheLogicalEvidenceStatusV1::ProvisionalObservation,
         },
         LogicalSessionSnapshotRefV1 {
             key: &alpaca_key,
@@ -703,6 +764,7 @@ fn merged_futu_recent_and_buffer_run_compares_only_the_shared_old_session() {
             version_id: &alpaca_version,
             coverage: &alpaca_coverage,
             rows: &alpaca_rows,
+            evidence_status: CacheLogicalEvidenceStatusV1::AdmissionVerifiedAtPublication,
         },
         &SameFeedTolerancePolicyV1::default(),
     )
@@ -739,6 +801,7 @@ fn merged_futu_recent_and_buffer_run_compares_only_the_shared_old_session() {
             version_id: &futu_version,
             coverage: &futu_coverage,
             rows: &futu_rows,
+            evidence_status: CacheLogicalEvidenceStatusV1::ProvisionalObservation,
         },
         LogicalSessionSnapshotRefV1 {
             key: &alpaca_key,
@@ -746,6 +809,7 @@ fn merged_futu_recent_and_buffer_run_compares_only_the_shared_old_session() {
             version_id: &alpaca_version,
             coverage: &alpaca_coverage,
             rows: &minor_change_rows,
+            evidence_status: CacheLogicalEvidenceStatusV1::AdmissionVerifiedAtPublication,
         },
         &cross_provider_tolerance,
     )
@@ -800,6 +864,7 @@ fn merged_futu_recent_and_buffer_run_compares_only_the_shared_old_session() {
             version_id: &alpaca_version,
             coverage: &alpaca_merged_coverage,
             rows: &conflicting_rows,
+            evidence_status: CacheLogicalEvidenceStatusV1::AdmissionVerifiedAtPublication,
         },
         &[
             (
@@ -810,6 +875,7 @@ fn merged_futu_recent_and_buffer_run_compares_only_the_shared_old_session() {
                     version_id: &futu_version,
                     coverage: &futu_coverage,
                     rows: &futu_rows,
+                    evidence_status: CacheLogicalEvidenceStatusV1::ProvisionalObservation,
                 },
             ),
             (
@@ -820,6 +886,7 @@ fn merged_futu_recent_and_buffer_run_compares_only_the_shared_old_session() {
                     version_id: &futu_version,
                     coverage: &futu_coverage,
                     rows: &futu_rows,
+                    evidence_status: CacheLogicalEvidenceStatusV1::ProvisionalObservation,
                 },
             ),
         ],
@@ -1764,7 +1831,7 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
 
     let second = store
         .publish_synthetic_verified_bars_responses(
-            cache_input(
+            cache_input_with_test_phases(
                 &request,
                 &source_scope,
                 test_response("600.26"),
@@ -2005,9 +2072,8 @@ fn second_session_conflict_keeps_every_existing_logical_pointer() {
         ),
     ];
     let temp = tempfile::tempdir().unwrap();
-    let store =
-        CacheVersionStoreV1::new(temp.path().join("logical-cache"), CacheLimitsV1::default())
-            .unwrap();
+    let cache_root = temp.path().join("logical-cache");
+    let store = CacheVersionStoreV1::new(cache_root.clone(), CacheLimitsV1::default()).unwrap();
     let futu_response = make_response(
         "futu",
         "futu",
@@ -2016,7 +2082,7 @@ fn second_session_conflict_keeps_every_existing_logical_pointer() {
     );
     let initial = store
         .publish_bars_responses(
-            cache_input(
+            cache_input_with_test_phases(
                 &initial_request,
                 &futu_scope,
                 futu_response.clone(),
@@ -2042,14 +2108,14 @@ fn second_session_conflict_keeps_every_existing_logical_pointer() {
     let candidate_key = CacheKeyV1::from_request(&candidate_request, &alpaca_scope).unwrap();
     assert!(matches!(
         store.publish_synthetic_verified_bars_responses(
-            cache_input(
+            cache_input_with_test_phases(
                 &candidate_request,
                 &alpaca_scope,
                 candidate_response.clone(),
                 candidate_response,
                 page_evidence,
             ),
-            1_800_000_010,
+            1_800_000_901,
             &SameFeedTolerancePolicyV1::default(),
         ),
         Err(CacheReconciliationError::Conflict)
@@ -2059,33 +2125,152 @@ fn second_session_conflict_keeps_every_existing_logical_pointer() {
         Err(CacheReconciliationError::NotFound)
     ));
     let rejected = store
-        .list_verified_versions(&candidate_key, 1_800_000_011)
+        .list_verified_versions(&candidate_key, 1_800_000_902)
         .unwrap();
     assert_eq!(rejected.len(), 1);
     assert!(rejected[0].conflict_rejected);
+    let candidate_receipt_path = cache_root
+        .join("keys")
+        .join(candidate_key.fingerprint().unwrap())
+        .join("versions")
+        .join(&rejected[0].version_id)
+        .join("receipt.json");
+    let candidate_receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(candidate_receipt_path).unwrap()).unwrap();
+    assert!(
+        candidate_receipt["logical_comparisons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|comparison| comparison["baseline_evidence_status"]
+                == "expired_provisional_historical")
+    );
 
     let initial_key = CacheKeyV1::from_request(&initial_request, &futu_scope).unwrap();
-    let old_current = store.load_current(&initial_key, 1_800_000_011).unwrap();
-    assert_eq!(old_current.current.version_id, initial.published_version_id);
-    assert_eq!(old_current.current.authority, CacheAuthorityV1::Provisional);
+    assert!(matches!(
+        store.load_current(&initial_key, 1_800_000_902),
+        Err(CacheReconciliationError::Expired)
+    ));
     let identity = CacheLogicalIdentityV1::from_key(&initial_key).unwrap();
+    let logical_dir = cache_root
+        .join("logical")
+        .join(identity.fingerprint().unwrap());
+    let logical_envelope: serde_json::Value =
+        serde_json::from_slice(&fs::read(logical_dir.join("current.json")).unwrap()).unwrap();
+    assert_eq!(
+        logical_envelope["payload"]["generation"],
+        initial.logical_invalidation.as_ref().unwrap().generation
+    );
     for session in ["2026-10-08-regular", "2026-10-08-after-hours"] {
-        let logical = store
-            .load_logical_current(&identity, session, 1_800_000_011)
-            .unwrap();
         assert_eq!(
-            logical.snapshot.current.version_id,
+            logical_pointer_version_on_disk(&cache_root, &identity, session),
             initial.published_version_id
         );
-        assert_eq!(logical.session.current.session_instance_id, session);
+        assert!(matches!(
+            store.load_logical_current(&identity, session, 1_800_000_902),
+            Err(CacheReconciliationError::Expired)
+        ));
     }
 }
 
 #[cfg(target_os = "linux")]
 #[test]
-fn logical_index_roundtrips_more_than_sixty_four_sessions_after_restart() {
-    let session_ids = (0..65)
-        .map(|index| format!("2026-10-08-session-{index:02}"))
+fn synthetic_cross_provider_tolerance_allows_minor_candidate_update() {
+    let mut futu_request = admission_test_request();
+    futu_request.provider_mode = BarsProviderModeV1::FutuOnly;
+    let mut futu_scope = admission_test_scope();
+    futu_scope.provider = "futu".to_owned();
+    futu_scope.feed = "futu".to_owned();
+    futu_scope.source_scope_id = "futu-unknown-history-v1".to_owned();
+    futu_scope.entitlement = EntitlementState::Unknown;
+
+    let mut futu_response = admission_test_response("600.25");
+    futu_response.provider = "futu".to_owned();
+    futu_response.feed = "futu".to_owned();
+    futu_response.entitlement_status = market_contracts::BarsEntitlementStatusV1::Unknown;
+    futu_response.source_provenance[0].provider = "futu".to_owned();
+    futu_response.source_provenance[0].feed = "futu".to_owned();
+    futu_response.source_provenance[0].entitlement_status =
+        market_contracts::BarsEntitlementStatusV1::Unknown;
+
+    let alpaca_request = admission_test_request();
+    let alpaca_scope = admission_test_scope();
+    let alpaca_response = admission_test_response("600.26");
+    let policy = SameFeedTolerancePolicyV1 {
+        max_abs_delta_by_field: BTreeMap::from([
+            ("close".to_owned(), "0.01".to_owned()),
+            ("high".to_owned(), "0.01".to_owned()),
+            ("low".to_owned(), "0.01".to_owned()),
+            ("open".to_owned(), "0.01".to_owned()),
+        ]),
+        max_changed_rows: 1,
+        max_added_rows: 0,
+        allow_removed_rows: false,
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let cache_root = temp.path().join("minor-conflict-cache");
+    let store = CacheVersionStoreV1::new(cache_root, CacheLimitsV1::default()).unwrap();
+    let initial = store
+        .publish_bars_responses_with_policy(
+            cache_input_with_test_phases(
+                &futu_request,
+                &futu_scope,
+                futu_response.clone(),
+                futu_response,
+                admission_test_evidence(),
+            ),
+            1_800_000_000,
+            &ReconciliationPolicyV1::legacy_same_feed(policy.clone()),
+        )
+        .unwrap();
+    assert_eq!(initial.authority, CacheAuthorityV1::Provisional);
+
+    let candidate = store
+        .publish_synthetic_verified_bars_responses(
+            cache_input_with_test_phases(
+                &alpaca_request,
+                &alpaca_scope,
+                alpaca_response.clone(),
+                alpaca_response,
+                admission_test_evidence(),
+            ),
+            1_800_000_010,
+            &policy,
+        )
+        .unwrap();
+    assert_eq!(candidate.authority, CacheAuthorityV1::Authoritative);
+    let comparison = candidate.cross_provider_comparison.unwrap();
+    assert_eq!(comparison.changed_rows, 1);
+    assert_eq!(comparison.tolerated_decimal_fields, 4);
+    let invalidation = candidate.logical_invalidation.unwrap();
+    assert_eq!(invalidation.changes.len(), 1);
+    assert_eq!(
+        invalidation.changes[0].session_instance_id,
+        "2026-10-08-regular"
+    );
+
+    let identity = CacheLogicalIdentityV1::from_key(
+        &CacheKeyV1::from_request(&alpaca_request, &alpaca_scope).unwrap(),
+    )
+    .unwrap();
+    let current = store
+        .load_logical_current(&identity, "2026-10-08-regular", 1_800_000_011)
+        .unwrap();
+    assert_eq!(
+        current.snapshot.current.version_id,
+        candidate.published_version_id
+    );
+    assert_eq!(
+        current.snapshot.rows[0].fields.get("close").unwrap(),
+        &CanonicalValueV1::Decimal("600.26".to_owned())
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn logical_index_roundtrips_ninety_two_sessions_in_two_shards_after_restart() {
+    let session_ids = (0..92)
+        .map(|index| format!("opaque-session-{index:02}"))
         .collect::<Vec<_>>();
     let minute = |offset: usize| {
         let value = 13 * 60 + 30 + offset;
@@ -2184,7 +2369,7 @@ fn logical_index_roundtrips_more_than_sixty_four_sessions_after_restart() {
     let store = CacheVersionStoreV1::new(root.clone(), CacheLimitsV1::default()).unwrap();
     let published = store
         .publish_bars_responses(
-            cache_input(
+            cache_input_with_test_phases(
                 &request,
                 &source_scope,
                 response.clone(),
@@ -2204,19 +2389,31 @@ fn logical_index_roundtrips_more_than_sixty_four_sessions_after_restart() {
             .unwrap()
             .changes
             .len(),
-        65
+        92
     );
 
     let reopened = CacheVersionStoreV1::new(root, CacheLimitsV1::default()).unwrap();
     let key = CacheKeyV1::from_request(&request, &source_scope).unwrap();
     let current = reopened.load_current(&key, 1_800_000_001).unwrap();
-    assert_eq!(current.raw_bars_rows.len(), 65);
+    assert_eq!(current.raw_bars_rows.len(), 92);
     let identity = CacheLogicalIdentityV1::from_key(&key).unwrap();
     for session in [session_ids.first().unwrap(), session_ids.last().unwrap()] {
         let logical = reopened
             .load_logical_current(&identity, session, 1_800_000_001)
             .unwrap();
         assert_eq!(logical.session.current.session_instance_id, *session);
+        assert_eq!(logical.logical_current.shards.len(), 2);
+        assert!(
+            logical
+                .logical_current
+                .shards
+                .keys()
+                .all(|shard_id| shard_id.starts_with("2026-10-"))
+        );
+        assert!(logical.logical_current.shards.values().all(|shard| {
+            shard.session_count as usize <= MAX_LOGICAL_SESSIONS_PER_SHARD
+                && shard.byte_length as usize <= super::logical_index::MAX_LOGICAL_SHARD_BYTES
+        }));
         assert_eq!(
             logical.snapshot.current.version_id,
             published.published_version_id
@@ -2226,8 +2423,73 @@ fn logical_index_roundtrips_more_than_sixty_four_sessions_after_restart() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn logical_index_overflow_keeps_new_raw_version_and_old_manifest() {
-    let session = "2026-10-08-new-session";
+fn missing_calendar_phases_keeps_provisional_artifacts_without_logical_indexing() {
+    let session = "provider-session-opaque-17";
+    let request = admission_test_request();
+    let mut source_scope = admission_test_scope();
+    source_scope.provider = "futu".to_owned();
+    source_scope.feed = "futu".to_owned();
+    source_scope.source_scope_id = "futu-unknown-history-v1".to_owned();
+    source_scope.entitlement = EntitlementState::Unknown;
+    source_scope.session_instance_ids = vec![session.to_owned()];
+    let mut request = request;
+    request.provider_mode = market_contracts::BarsProviderModeV1::FutuOnly;
+    let mut response = admission_test_response("600.25");
+    response.provider = "futu".to_owned();
+    response.feed = "futu".to_owned();
+    response.entitlement_status = market_contracts::BarsEntitlementStatusV1::Unknown;
+    response.source_provenance[0].provider = "futu".to_owned();
+    response.source_provenance[0].feed = "futu".to_owned();
+    response.source_provenance[0].entitlement_status =
+        market_contracts::BarsEntitlementStatusV1::Unknown;
+    response.rows[0].session_instance_id = session.to_owned();
+    response.segments[0].session_instance_id = session.to_owned();
+    let temp = tempfile::tempdir().unwrap();
+    let store = CacheVersionStoreV1::new(
+        temp.path().join("missing-phases-cache"),
+        CacheLimitsV1::default(),
+    )
+    .unwrap();
+    let published = store
+        .publish_bars_responses(
+            cache_input(
+                &request,
+                &source_scope,
+                response.clone(),
+                response,
+                admission_test_evidence(),
+            ),
+            1_800_000_000,
+            &SameFeedTolerancePolicyV1::default(),
+        )
+        .unwrap();
+    assert_eq!(published.authority, CacheAuthorityV1::Provisional);
+    assert_eq!(
+        published.logical_index_status,
+        CacheLogicalIndexStatusV1::PhaseMappingUnavailable
+    );
+    assert!(!published.logical_index_overflow);
+    assert!(published.logical_invalidation.is_none());
+    let key = CacheKeyV1::from_request(&request, &source_scope).unwrap();
+    assert_eq!(
+        store
+            .load_current(&key, 1_800_000_001)
+            .unwrap()
+            .raw_bars_rows
+            .len(),
+        1
+    );
+    let identity = CacheLogicalIdentityV1::from_key(&key).unwrap();
+    assert!(matches!(
+        store.load_logical_current(&identity, session, 1_800_000_001),
+        Err(CacheReconciliationError::NotFound)
+    ));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn logical_index_keeps_more_than_legacy_capacity_in_bounded_shards() {
+    let session = "opaque-session-new";
     let request = admission_test_request();
     let mut source_scope = admission_test_scope();
     source_scope.provider = "futu".to_owned();
@@ -2241,11 +2503,13 @@ fn logical_index_overflow_keeps_new_raw_version_and_old_manifest() {
     let identity = CacheLogicalIdentityV1::from_key(&key).unwrap();
     let key_fingerprint = key.fingerprint().unwrap();
     let temp = tempfile::tempdir().unwrap();
-    let root = temp.path().join("overflow-cache");
+    let root = temp.path().join("large-logical-cache");
     let store = CacheVersionStoreV1::new(root.clone(), CacheLimitsV1::default()).unwrap();
     let mut sessions = BTreeMap::new();
+    let mut session_months = BTreeMap::new();
     for index in 0..super::logical_index::MAX_LOGICAL_SESSIONS {
         let session_id = format!("old-session-{index:04}");
+        session_months.insert(session_id.clone(), "2026-10".to_owned());
         sessions.insert(
             session_id.clone(),
             CacheLogicalSessionCurrentV1 {
@@ -2255,6 +2519,7 @@ fn logical_index_overflow_keeps_new_raw_version_and_old_manifest() {
                     version_id: format!("{index:064x}"),
                     receipt_sha256: format!("{:064x}", index + 1),
                     session_instance_id: session_id,
+                    shard_month: "2026-10".to_owned(),
                     authority: CacheAuthorityV1::Provisional,
                     covered_start_utc: key.window_start_utc.clone(),
                     covered_end_exclusive_utc: key.window_end_exclusive_utc.clone(),
@@ -2271,6 +2536,8 @@ fn logical_index_overflow_keeps_new_raw_version_and_old_manifest() {
             identity: identity.clone(),
             generation: 1,
             sessions,
+            session_months,
+            shards: BTreeMap::new(),
             updated_at_unix_seconds: 1_800_000_000,
         })
         .unwrap();
@@ -2292,7 +2559,7 @@ fn logical_index_overflow_keeps_new_raw_version_and_old_manifest() {
         Some(market_contracts::ProtoTimestampV2::parse("2026-10-08T13:31:02Z").unwrap());
     let published = store
         .publish_bars_responses(
-            cache_input(
+            cache_input_with_test_phases(
                 &request,
                 &source_scope,
                 response.clone(),
@@ -2303,17 +2570,26 @@ fn logical_index_overflow_keeps_new_raw_version_and_old_manifest() {
             &SameFeedTolerancePolicyV1::default(),
         )
         .unwrap();
-    assert!(published.logical_index_overflow);
+    assert!(!published.logical_index_overflow);
+    assert_eq!(
+        published.logical_index_status,
+        CacheLogicalIndexStatusV1::Updated
+    );
     let current = store.load_current(&key, 1_800_000_002).unwrap();
     assert_eq!(current.raw_bars_rows.len(), 1);
     assert_eq!(current.current.version_id, published.published_version_id);
+    let logical = store
+        .load_logical_current(&identity, session, 1_800_000_002)
+        .unwrap();
+    assert_eq!(logical.logical_current.sessions.len(), 2049);
+    assert_eq!(logical.logical_current.shards.len(), 33);
     let versions = store.list_verified_versions(&key, 1_800_000_002).unwrap();
     assert_eq!(versions.len(), 1);
-    assert!(versions[0].logical_index_overflow);
-    assert!(matches!(
-        store.load_logical_current(&identity, session, 1_800_000_002),
-        Err(CacheReconciliationError::NotFound)
-    ));
+    assert!(!versions[0].logical_index_overflow);
+    assert_eq!(
+        versions[0].logical_index_status,
+        CacheLogicalIndexStatusV1::Updated
+    );
 
     let reopened = CacheVersionStoreV1::new(root, CacheLimitsV1::default()).unwrap();
     assert_eq!(
@@ -2324,8 +2600,9 @@ fn logical_index_overflow_keeps_new_raw_version_and_old_manifest() {
             .len(),
         1
     );
-    assert!(matches!(
-        reopened.load_logical_current(&identity, session, 1_800_000_003),
-        Err(CacheReconciliationError::NotFound)
-    ));
+    let reopened_logical = reopened
+        .load_logical_current(&identity, session, 1_800_000_003)
+        .unwrap();
+    assert_eq!(reopened_logical.logical_current.sessions.len(), 2049);
+    assert_eq!(reopened_logical.logical_current.shards.len(), 33);
 }

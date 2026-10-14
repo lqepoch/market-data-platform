@@ -1,32 +1,16 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::atomic::Ordering,
-};
-
-use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::logical_index::{
-    CacheLogicalCurrentV1, CacheLogicalIdentityV1, CacheLogicalInvalidationV1,
-    CacheLogicalReadResultV1, CacheLogicalSessionChangeV1, CacheLogicalSessionCurrentV1,
-    CacheLogicalVersionSourceV1, MAX_LOGICAL_INDEX_BYTES, MAX_LOGICAL_SESSIONS,
-    version_ref_for_session,
+    CacheLogicalCurrentV1, CacheLogicalIdentityV1, CacheLogicalIndexStatusV1,
+    CacheLogicalInvalidationV1, CacheLogicalReadResultV1, CacheLogicalSessionChangeV1,
+    CacheLogicalSessionCurrentV1, CacheLogicalVersionSourceV1, MAX_LOGICAL_SESSIONS,
+    MAX_LOGICAL_TOTAL_SESSIONS, derive_session_shard_months, version_ref_for_session,
 };
 use super::super::{authority::TrustedProviderAdmissionVerifierV1, valid_dimension};
 use super::{
     CacheAuthorityV1, CacheReadResultV1, CacheReconciliationError, CacheVersionStoreV1, Result,
-    VERSION_NONCE, ensure_worker_supported, hash_domain, is_fresh_at, read_optional_bounded,
-    read_required_bounded, replace_plain_file, sync_directory, valid_sha256, write_new_synced,
+    VERSION_NONCE, ensure_worker_supported, is_fresh_at, valid_sha256,
 };
-
-const LOGICAL_CURRENT_DOMAIN: &[u8] = b"lqepoch.mdp.cache-logical-current-manifest.v1\0";
-const LOGICAL_CURRENT_FILE: &str = "current.json";
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CacheLogicalCurrentEnvelopeV1 {
-    payload: CacheLogicalCurrentV1,
-    payload_sha256: String,
-}
 
 impl CacheVersionStoreV1 {
     /// Load provisional provider-neutral data. Production authoritative reads require the
@@ -96,6 +80,7 @@ impl CacheVersionStoreV1 {
                     authority: snapshot.current.authority,
                     created_at_unix_seconds: snapshot.created_at_unix_seconds,
                     expires_at_unix_seconds: snapshot.expires_at_unix_seconds,
+                    shard_month: &session.current.shard_month,
                     coverage: &snapshot.coverage,
                 },
                 session_instance_id,
@@ -124,27 +109,7 @@ impl CacheVersionStoreV1 {
         identity: &CacheLogicalIdentityV1,
         identity_fingerprint: &str,
     ) -> Result<Option<CacheLogicalCurrentV1>> {
-        let logical_dir = self.logical_dir(identity_fingerprint)?;
-        let Some(bytes) = read_optional_bounded(
-            &logical_dir.join(LOGICAL_CURRENT_FILE),
-            MAX_LOGICAL_INDEX_BYTES as u64,
-        )?
-        else {
-            return Ok(None);
-        };
-        let envelope: CacheLogicalCurrentEnvelopeV1 = serde_json::from_slice(&bytes)?;
-        let payload_sha = hash_domain(
-            LOGICAL_CURRENT_DOMAIN,
-            &serde_json::to_vec(&envelope.payload)?,
-        );
-        if payload_sha != envelope.payload_sha256
-            || envelope.payload.identity != *identity
-            || envelope.payload.identity.fingerprint()? != identity_fingerprint
-        {
-            return Err(CacheReconciliationError::UnknownOutcome);
-        }
-        envelope.payload.validate()?;
-        Ok(Some(envelope.payload))
+        super::logical_shards::read_logical_current(self, identity, identity_fingerprint)
     }
 
     fn write_logical_current_atomic(
@@ -152,40 +117,7 @@ impl CacheVersionStoreV1 {
         identity_fingerprint: &str,
         payload: &CacheLogicalCurrentV1,
     ) -> Result<()> {
-        payload.validate()?;
-        if payload.identity.fingerprint()? != identity_fingerprint {
-            return Err(CacheReconciliationError::InvalidInput);
-        }
-        let logical_dir = self.logical_dir(identity_fingerprint)?;
-        let envelope = CacheLogicalCurrentEnvelopeV1 {
-            payload: payload.clone(),
-            payload_sha256: hash_domain(LOGICAL_CURRENT_DOMAIN, &serde_json::to_vec(payload)?),
-        };
-        let bytes = serde_json::to_vec(&envelope)?;
-        if bytes.len() > MAX_LOGICAL_INDEX_BYTES {
-            return Err(CacheReconciliationError::LimitExceeded);
-        }
-        let nonce = VERSION_NONCE.fetch_add(1, Ordering::Relaxed);
-        let temporary = logical_dir.join(format!(".current-{}-{nonce}.tmp", payload.generation));
-        write_new_synced(&temporary, &bytes)?;
-        replace_plain_file(&temporary, &logical_dir.join(LOGICAL_CURRENT_FILE))
-            .map_err(|_| CacheReconciliationError::UnknownOutcome)?;
-        sync_directory(&logical_dir).map_err(|_| CacheReconciliationError::UnknownOutcome)?;
-        let readback = read_required_bounded(
-            &logical_dir.join(LOGICAL_CURRENT_FILE),
-            MAX_LOGICAL_INDEX_BYTES as u64,
-        )?;
-        let readback: CacheLogicalCurrentEnvelopeV1 = serde_json::from_slice(&readback)?;
-        if readback.payload != *payload
-            || readback.payload_sha256
-                != hash_domain(
-                    LOGICAL_CURRENT_DOMAIN,
-                    &serde_json::to_vec(&readback.payload)?,
-                )
-        {
-            return Err(CacheReconciliationError::UnknownOutcome);
-        }
-        Ok(())
+        super::logical_shards::write_logical_current(self, identity_fingerprint, payload)
     }
 
     #[cfg(test)]
@@ -212,6 +144,8 @@ impl CacheVersionStoreV1 {
             identity: identity.clone(),
             generation: 0,
             sessions: BTreeMap::new(),
+            session_months: BTreeMap::new(),
+            shards: BTreeMap::new(),
             updated_at_unix_seconds: now_unix_seconds,
         });
         let mut changes = Vec::with_capacity(updates.len());
@@ -229,12 +163,14 @@ impl CacheVersionStoreV1 {
                 invalidated_version,
                 current_version: entry.current.clone(),
             });
+            next.session_months
+                .insert(session.clone(), entry.current.shard_month.clone());
             next.sessions.insert(session, entry);
         }
         if changes.is_empty() {
             return Ok(None);
         }
-        if next.sessions.len() > MAX_LOGICAL_SESSIONS {
+        if next.sessions.len() > MAX_LOGICAL_TOTAL_SESSIONS {
             return Err(CacheReconciliationError::LimitExceeded);
         }
         let generation = previous
@@ -293,6 +229,19 @@ impl CacheVersionStoreV1 {
         if sessions.len() > MAX_LOGICAL_SESSIONS {
             return Err(CacheReconciliationError::LimitExceeded);
         }
+        let session_ids = sessions.iter().cloned().collect::<Vec<_>>();
+        let session_months = derive_session_shard_months(
+            &version_receipt.logical_phase_slices,
+            &session_ids,
+            &target.key.window_start_utc,
+            &target.key.window_end_exclusive_utc,
+        )
+        .map_err(|_| CacheReconciliationError::AdmissionMismatch)?;
+        if session_months.len() != sessions.len()
+            || session_months != version_receipt.logical_session_months
+        {
+            return Err(CacheReconciliationError::AdmissionMismatch);
+        }
         for session in sessions {
             let Some(reference) = version_ref_for_session(
                 CacheLogicalVersionSourceV1 {
@@ -303,6 +252,10 @@ impl CacheVersionStoreV1 {
                     authority: target.current.authority,
                     created_at_unix_seconds: target.created_at_unix_seconds,
                     expires_at_unix_seconds: target.expires_at_unix_seconds,
+                    shard_month: session_months
+                        .get(&session)
+                        .map(String::as_str)
+                        .ok_or(CacheReconciliationError::AdmissionMismatch)?,
                     coverage: &target.coverage,
                 },
                 &session,
@@ -332,4 +285,51 @@ impl CacheVersionStoreV1 {
             now_unix_seconds,
         )
     }
+}
+
+pub(super) fn preview_logical_session_updates(
+    identity: &CacheLogicalIdentityV1,
+    identity_fingerprint: &str,
+    previous: Option<&CacheLogicalCurrentV1>,
+    updates: &[(String, CacheLogicalSessionCurrentV1)],
+    now_unix_seconds: u64,
+) -> Result<CacheLogicalIndexStatusV1> {
+    if updates.is_empty() {
+        return Ok(CacheLogicalIndexStatusV1::Unchanged);
+    }
+    let mut next = previous.cloned().unwrap_or_else(|| CacheLogicalCurrentV1 {
+        identity: identity.clone(),
+        generation: 0,
+        sessions: BTreeMap::new(),
+        session_months: BTreeMap::new(),
+        shards: BTreeMap::new(),
+        updated_at_unix_seconds: now_unix_seconds,
+    });
+    let mut changed = false;
+    for (session, entry) in updates {
+        entry.validate(identity, session)?;
+        if next
+            .sessions
+            .get(session)
+            .is_some_and(|previous| previous.current == entry.current)
+        {
+            continue;
+        }
+        next.session_months
+            .insert(session.clone(), entry.current.shard_month.clone());
+        next.sessions.insert(session.clone(), entry.clone());
+        changed = true;
+    }
+    if !changed {
+        return Ok(CacheLogicalIndexStatusV1::Unchanged);
+    }
+    if next.sessions.len() > super::super::logical_index::MAX_LOGICAL_TOTAL_SESSIONS {
+        return Ok(CacheLogicalIndexStatusV1::SessionShardOverflow);
+    }
+    next.generation = previous
+        .map(|current| current.generation.checked_add(1))
+        .unwrap_or(Some(1))
+        .ok_or(CacheReconciliationError::LimitExceeded)?;
+    next.updated_at_unix_seconds = now_unix_seconds;
+    super::logical_shards::logical_capacity_status(&next, identity_fingerprint)
 }

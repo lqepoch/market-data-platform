@@ -279,7 +279,12 @@ permission or content changes. The cursor receipt binds provider kind, actual pr
 entitlement realm, cache key, payload hash, and original expiry; it never stores the MDP outer
 cursor, a Gateway delegation, or credentials. A02
 rewraps the locator into a fresh outer cursor and does not extend its lifetime. Production source
-authority remains closed. This store has no provider or remote-archive writer. See
+authority remains closed. Its provider-neutral reconciliation index commits all changed sessions
+through one checksummed root pointer and bounded immutable shards; session-to-month assignment
+uses validated calendar phase slices rather than parsing opaque IDs. Missing phase mapping keeps
+provisional artifacts without advancing the logical index. Expired observations are not served,
+but remain available for material-conflict audit. This store has no provider or remote-archive
+writer. See
 [`mdp-cache-reconciliation-v1.md`](policies/mdp-cache-reconciliation-v1.md) for its evidence,
 limits, and failure behavior.
 
