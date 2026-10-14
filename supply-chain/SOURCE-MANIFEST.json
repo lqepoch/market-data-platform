@@ -54,7 +54,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "f5b48efe81eac23edeb222f080c0313015341f9c0dcf9eef74b8eaf7a7839833"
+      "sha256": "5627372605bacf1c8d530caa2441f458609986cd6a91d33dbf51043e983f763c"
     },
     {
       "path": "AGENTS.md",
@@ -110,7 +110,7 @@
     },
     {
       "path": "docs/MARKET_QUERY_RUNTIME.md",
-      "sha256": "bad822b84f4d2b3c115f9ecdc3a307152b4e0f3ce9a0fea476e7822b9cf878b8"
+      "sha256": "8d5d0b063c14962c72f396738f149e4d0a647f1b48e535dead0fe2cd228b7c27"
     },
     {
       "path": "docs/session-router.md",
@@ -2373,7 +2373,7 @@
       },
       {
         "path": "src/archive/reconciliation/store.rs",
-        "sha256": "f23d62b01d3582b4f33a5ccd15c14319d01bfcd1eb09258f021583d35940e0fb"
+        "sha256": "1a35feea4076eb202362075a68c2cba3212226311fa2d035cdcd751179400973"
       },
       {
         "path": "src/archive/reconciliation/store/logical.rs",
@@ -2421,15 +2421,15 @@
       },
       {
         "path": "src/http_api/market_bars/query.rs",
-        "sha256": "fdb20c53f0eabfb1e6036cc5dbf8e59dd17e6e287dae3a00c033fb4744b9d062"
+        "sha256": "8e23dc1e84602e289046d1ae61c3d4e4f755fdd4f88ebcdd07fe771be5a08920"
       },
       {
         "path": "src/http_api/market_bars/response.rs",
-        "sha256": "7aa3ead461b0850b1f9caa33def478b7d754ac57b38cecda1041b58d9bd55b52"
+        "sha256": "6a0d0e4a258e71cec4d85ec6c62ef99e718270d57459e11de73d43b06abd522e"
       },
       {
         "path": "src/http_api/market_bars_tests.rs",
-        "sha256": "d0ec90237f3903f3d48e3ccded69ce28e310403909993b2621f27fc45110c8ad"
+        "sha256": "ed9948d1602e5299b7150dfdaa633cff42dca0465a98ccf4031929888fc41774"
       },
       {
         "path": "src/http_api/supervisor.rs",
@@ -2469,7 +2469,7 @@
       },
       {
         "path": "src/market_query/providers.rs",
-        "sha256": "828f13d9645fbf751483cd935710af30cb8631702d4a7865c4ce720dc4fed279"
+        "sha256": "7569b673033d5b87c8d81b43baedaa44d2ff0083d17c48b81cc114e8b0e48018"
       },
       {
         "path": "src/market_query/providers/admission.rs",
@@ -2481,15 +2481,15 @@
       },
       {
         "path": "src/market_query/providers/cursor.rs",
-        "sha256": "adfa6623d55c8b0b3e5f51f34cfc385109b056e66c4122bb82e3efffe0f27dc1"
+        "sha256": "93df6111fff5bcd5a16a46f508a5a13cb9a6b4afa005450852fd21832d58d826"
       },
       {
         "path": "src/market_query/providers/error.rs",
-        "sha256": "b97974e63ef740fa19a6626819e28816e8d4363ca6240f3b8c9dff46f1402a1d"
+        "sha256": "f3a10c52b2c969815921d22a8d8dab0e3982271b7902acb32cbc8fa212aa1305"
       },
       {
         "path": "src/market_query/providers/futu.rs",
-        "sha256": "45290f93e5edc751c289bbd19e1c240b0eff159a64fc1fed4ecaa61bbca10962"
+        "sha256": "40c9137965028288d54b71171f89f55b0210e65a35f77248a6f711f90f674e81"
       },
       {
         "path": "src/market_query/providers/projection.rs",
@@ -2636,7 +2636,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "1e09f2894c8c50992f56578241735655ecce74ce9ec439c763a372a9f626858d"
+    "sha256": "a58802593020fa5019bfd0c74ded8900447ec7dc2ce2c17fd709f882afdd3197"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
