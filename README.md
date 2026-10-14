@@ -20,6 +20,13 @@ and local documentation.
 
 ## Status and evidence
 
+- The authenticated `/v1/providers/capabilities` discovery route records provider ownership and
+  explicit unknown entitlement; registration does not establish access, completeness or acceptance.
+  `/v1/market/quotes`, `/v1/market/trades`, and `/v1/news` return
+  `UNSUPPORTED_PROVIDER_CAPABILITY` until their read paths are integrated. `/v1/market/cache/status`
+  describes only the new market cache, independently of the existing verified archive cache.
+  These routes use the same short-lived `market:read` delegation and outer `no-store` policy.
+
 - Synthetic replay passes JSONL validation, bounded collection, trade-bar aggregation, Arrow/Parquet
   writes, shared schema fingerprint checks, footer/readback verification, local immutable archive,
   query, and JSONL export.

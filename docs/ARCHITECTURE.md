@@ -2,6 +2,12 @@
 
 ## Ownership
 
+Market capability discovery is a read-only authenticated registry, separate from runtime provider
+verification. Static registration preserves source ownership and unknown entitlement. Pending quote,
+trade and news integrations fail with HTTP 501 and `UNSUPPORTED_PROVIDER_CAPABILITY`, never an empty
+successful market result. Discovery does not inspect private cache roots or authorize archive
+publication. The new market cache status does not represent the existing archive cache's receipts.
+
 - `broker-connectors`: sole provider SDK, Alpaca REST/WebSocket transport, MessagePack decoder,
   timestamp extensions, subscription ACK state, reconnect generation, and feed-specific limits.
 - `market-data-platform`: bounded shared-envelope ingestion, sequence/gap accounting, event

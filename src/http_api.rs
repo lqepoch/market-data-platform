@@ -26,6 +26,7 @@ use crate::{
 };
 
 mod auth;
+mod market;
 mod supervisor;
 
 pub use auth::AuthConfig;
@@ -218,7 +219,9 @@ pub async fn serve_with_pair_read_config(
 }
 
 fn app_router(state: Arc<ServiceState>, auth: Option<AuthConfig>) -> Router {
-    let protected_routes = Router::new().route("/v1/datasets/{dataset_id}/bars", get(get_bars));
+    let protected_routes = Router::new()
+        .route("/v1/datasets/{dataset_id}/bars", get(get_bars))
+        .merge(market::routes());
     #[cfg(target_os = "linux")]
     let protected_routes = if state.pair_query_available {
         protected_routes.route(

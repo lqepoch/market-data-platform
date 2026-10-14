@@ -50,7 +50,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "614ed4f2983600e64dec92a201723f68d966ad8e74c1abd39bb2a455ec3d631d"
+      "sha256": "24e0fbf3f818a62120d83e1d26931d29f2a2b4149c3d7ef7c49f3ce1acc7ae9f"
     },
     {
       "path": "AGENTS.md",
@@ -66,7 +66,7 @@
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "sha256": "fdf06bb01efe36a3a005fefe88c1c87aeb537d01b24c1135a8da7144b2dd974f"
+      "sha256": "dfaf29f0bc66ba62328f2aeb178f1c25493679718e4255a74e98c73f036315f2"
     },
     {
       "path": "docs/CHG-2026-001-MDP-HTTP-PROVENANCE.md",
@@ -102,7 +102,7 @@
     },
     {
       "path": "docs/openapi-v1.yaml",
-      "sha256": "ef506375ddf8bc02ea0131731a3f930f25578eba6165b4816dae247b94d6a8c1"
+      "sha256": "64563c3bcb7e2b43ce603fb622db20c14f8a55b29fe9ad77ede529f2eb2c2775"
     },
     {
       "path": "supply-chain/git-source-pins.json",
@@ -1797,11 +1797,15 @@
       },
       {
         "path": "src/http_api.rs",
-        "sha256": "f7b2dea48d016b49ddad49b26f89c8a1ed52960319d9d0c880bd37e9e0dc5968"
+        "sha256": "8a105d2bdd51fadd59b3beb35a37d3dea86e65d2ed52b6c47a6d5979110cc947"
       },
       {
         "path": "src/http_api/auth.rs",
         "sha256": "a86926453eebf8fe61699360dd5b3eab66f0adb9cac220950ceb33eadd8f229f"
+      },
+      {
+        "path": "src/http_api/market.rs",
+        "sha256": "7c4112017d40580a62bb338cb0bb256e5400f4a0dd9149e9ba1412677373330d"
       },
       {
         "path": "src/http_api/supervisor.rs",
@@ -1809,7 +1813,7 @@
       },
       {
         "path": "src/http_api/tests.rs",
-        "sha256": "db8aaa882dc4daa0512a62c9c1c8f35fa39680f64f3ec0371258f5078338a07a"
+        "sha256": "823571e354d2037d62d0df176b2cdc6fd91b0dc5bd5d3af8f8cfa48d260b8047"
       },
       {
         "path": "src/http_api/tests/pair_tests.rs",
@@ -1940,7 +1944,7 @@
         "sha256": "2a363162ec994b56cf22bc87a84e92405c82337ed28103a39fbcc12591426b53"
       }
     ],
-    "sha256": "89c237e7fff304497ba18be2460baad1787bb77040fc87dc812217fda5a395d1"
+    "sha256": "a606d54a4f8a5c76920e8010626060f6f8c4022b093b11dfabcf23f8c35da436"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",

@@ -245,6 +245,51 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /v1/providers/capabilities:
+    get:
+      summary: Discover provider ownership without asserting entitlement or coverage
+      security: [{mdpDelegation: []}]
+      responses:
+        '200':
+          description: Registration with explicit unknown entitlement and pending runtime status
+        '401':
+          description: Missing or invalid market delegation
+  /v1/market/cache/status:
+    get:
+      summary: Discover unified market cache availability without exposing private storage
+      security: [{mdpDelegation: []}]
+      responses:
+        '200':
+          description: Unified market cache status, separate from the archive cache
+        '401':
+          description: Missing or invalid market delegation
+  /v1/market/quotes:
+    get:
+      summary: Reserved read-only quotes contract
+      security: [{mdpDelegation: []}]
+      responses:
+        '501':
+          description: UNSUPPORTED_PROVIDER_CAPABILITY; no market rows are fabricated
+        '401':
+          description: Missing or invalid market delegation
+  /v1/market/trades:
+    get:
+      summary: Reserved read-only trades contract
+      security: [{mdpDelegation: []}]
+      responses:
+        '501':
+          description: UNSUPPORTED_PROVIDER_CAPABILITY; no market rows are fabricated
+        '401':
+          description: Missing or invalid market delegation
+  /v1/news:
+    get:
+      summary: Reserved independent news read contract
+      security: [{mdpDelegation: []}]
+      responses:
+        '501':
+          description: UNSUPPORTED_PROVIDER_CAPABILITY; EqoBoard RSS adapters are not yet proxied
+        '401':
+          description: Missing or invalid market delegation
 components:
   headers:
     NoStore:

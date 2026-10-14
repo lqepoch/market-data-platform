@@ -88,6 +88,46 @@ fn assert_no_store(response: &axum::response::Response) {
 }
 
 #[tokio::test]
+async fn market_discovery_and_unsupported_reads_require_market_scope() {
+    let temp = tempfile::tempdir().unwrap();
+    let remote = synthetic_remote_root(&temp.path().join("remote")).await;
+    let (app, mut supervisor) = service(
+        remote,
+        temp.path().join("cache"),
+        Some(test_support::auth_config()),
+    );
+    let token = test_support::terminal_token("market:read");
+    for (path, expected) in [
+        ("/v1/providers/capabilities", StatusCode::OK),
+        ("/v1/market/cache/status", StatusCode::OK),
+        ("/v1/market/quotes", StatusCode::NOT_IMPLEMENTED),
+        ("/v1/market/trades", StatusCode::NOT_IMPLEMENTED),
+        ("/v1/news", StatusCode::NOT_IMPLEMENTED),
+    ] {
+        let denied = app.clone().oneshot(request(path, None)).await.unwrap();
+        assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+        assert_no_store(&denied);
+        let response = app
+            .clone()
+            .oneshot(request(path, Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+        assert_no_store(&response);
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 64 * 1024).await.unwrap())
+                .unwrap();
+        if expected == StatusCode::NOT_IMPLEMENTED {
+            assert_eq!(body["error"], "UNSUPPORTED_PROVIDER_CAPABILITY");
+            assert_eq!(body["entitlement_status"], "unknown");
+        } else {
+            assert_eq!(body["coverage_asserted"], false);
+        }
+    }
+    supervisor.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn health_and_readiness_are_probeable_without_market_auth() {
     let temp = tempfile::tempdir().unwrap();
     let remote = synthetic_remote_root(&temp.path().join("remote")).await;
