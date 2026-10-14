@@ -306,7 +306,7 @@ pub fn plan_market_bars(
     // A closed XNYS cash date says nothing about an overnight equity session. These are unknown
     // planning bands only, not session instances or permission to trade. Preserve uncertainty
     // only in local 00:00-04:00 and 20:00-24:00; known cash-closed daytime remains empty.
-    if intraday
+    if effective_resolution != BarResolutionV1::OneDay
         && matches!(
             request.session_scope,
             SessionScopeV1::All | SessionScopeV1::Overnight
