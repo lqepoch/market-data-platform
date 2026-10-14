@@ -127,6 +127,47 @@ fn minute_capabilities() -> Vec<SourceCapability> {
     .collect()
 }
 
+fn sunday_calendar_with_monday_over(over_end: &str) -> TrustedCalendarSnapshot {
+    // Planner-only fixture: production XNYS artifact parsing rejects the added OVER phase.
+    let sunday = NaiveDate::from_ymd_opt(2026, 1, 4).unwrap();
+    let monday = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
+    let mut calendar = test_calendar(sunday, 2);
+    calendar.days[0].state = CalendarDayState::Closed {
+        reason: Some("Weekend fixture".to_owned()),
+    };
+    calendar.days[0].verification_status = CalendarVerificationStatus::ModeledWeekend;
+    calendar
+        .instances
+        .retain(|instance| instance.trade_date == monday);
+    calendar.instances.push(SessionInstance {
+        session_id: "XNYS:2026-01-05".to_owned(),
+        session_instance_id: "XNYS:2026-01-05:over".to_owned(),
+        trade_date: monday,
+        phase: SessionPhase::Over,
+        window: UtcWindow {
+            start: utc_dt("2026-01-05T01:00:00Z"),
+            end_exclusive: utc_dt(over_end),
+        },
+    });
+    calendar
+        .instances
+        .sort_by_key(|instance| instance.window.start);
+    calendar
+}
+
+fn overnight_minute_capabilities() -> Vec<SourceCapability> {
+    let mut capabilities = minute_capabilities();
+    capabilities.push(SourceCapability {
+        provider: crate::session_router::Provider::Futu,
+        feed: None,
+        phase: Some(SessionPhase::Over),
+        interval: DataInterval::Minute(1),
+        historical: true,
+        realtime: true,
+    });
+    capabilities
+}
+
 fn intraday_request(start: &str, end: &str) -> BarsRequestV1 {
     BarsRequestV1 {
         symbol: "SPY".to_owned(),
@@ -811,6 +852,77 @@ fn closed_cash_calendar_day_does_not_prove_overnight_closure() {
         } else {
             assert!(plan.gaps.is_empty());
         }
+    }
+}
+
+#[test]
+fn trusted_over_coverage_subtracts_only_covered_closed_cash_night_time() {
+    let capabilities = overnight_minute_capabilities();
+
+    for scope in [SessionScopeV1::All, SessionScopeV1::Overnight] {
+        let mut request = intraday_request("2026-01-05T01:00:00Z", "2026-01-05T05:00:00Z");
+        request.provider_mode = BarsProviderModeV1::Auto;
+        request.session_scope = scope;
+        let full_coverage = sunday_calendar_with_monday_over("2026-01-05T09:00:00Z");
+        let covered_plan = plan_market_bars(
+            &request,
+            &timestamp("2026-01-05T02:00:00Z"),
+            &capabilities,
+            &full_coverage,
+        )
+        .unwrap();
+
+        assert_eq!(covered_plan.slices_recent_to_old.len(), 1);
+        assert_eq!(
+            covered_plan.slices_recent_to_old[0].phase,
+            Some(SessionPhase::Over)
+        );
+        assert_eq!(
+            covered_plan.slices_recent_to_old[0].source,
+            Some(PlannedSource::Futu)
+        );
+        assert!(covered_plan.gaps.is_empty());
+
+        let no_over_capability_plan = plan_market_bars(
+            &request,
+            &timestamp("2026-01-05T02:00:00Z"),
+            &minute_capabilities(),
+            &full_coverage,
+        )
+        .unwrap();
+        assert_eq!(no_over_capability_plan.gaps.len(), 1);
+        assert_eq!(
+            no_over_capability_plan.gaps[0].reason_code,
+            CoverageGapReasonV1::ProviderUnavailable
+        );
+
+        let partial_coverage = sunday_calendar_with_monday_over("2026-01-05T03:00:00Z");
+        let partial_plan = plan_market_bars(
+            &request,
+            &timestamp("2026-01-05T02:00:00Z"),
+            &capabilities,
+            &partial_coverage,
+        )
+        .unwrap();
+
+        assert_eq!(partial_plan.slices_recent_to_old.len(), 1);
+        assert_eq!(
+            partial_plan.slices_recent_to_old[0].window.end_exclusive,
+            utc_dt("2026-01-05T03:00:00Z")
+        );
+        assert_eq!(partial_plan.gaps.len(), 1);
+        assert_eq!(
+            partial_plan.gaps[0].reason_code,
+            CoverageGapReasonV1::Unknown
+        );
+        assert_eq!(
+            partial_plan.gaps[0].start_utc.as_str(),
+            "2026-01-05T03:00:00Z"
+        );
+        assert_eq!(
+            partial_plan.gaps[0].end_exclusive_utc.as_str(),
+            "2026-01-05T05:00:00Z"
+        );
     }
 }
 

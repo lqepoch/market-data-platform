@@ -1,5 +1,6 @@
 use super::*;
 use chrono::{Duration, Weekday};
+use sha2::{Digest, Sha256};
 
 fn utc(value: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(value)
@@ -226,6 +227,38 @@ fn xnys_week_snapshot() -> TrustedCalendarSnapshot {
     snapshot(days, instances)
 }
 
+fn synthetic_four_phase_snapshot() -> TrustedCalendarSnapshot {
+    // This intentionally synthetic planner fixture adds provider-specific OVER instances to the
+    // XNYS-shaped rows. Runtime parsing must continue to reject it as an XNYS calendar artifact.
+    let mut calendar = xnys_week_snapshot();
+    for (trade_date, start, end) in [
+        (
+            "2026-01-05",
+            "2026-01-05T01:00:00Z", // Sunday 20:00 ET, crossing into Monday's trade date.
+            "2026-01-05T09:00:00Z", // Monday 04:00 ET.
+        ),
+        (
+            "2026-01-06",
+            "2026-01-06T01:00:00Z", // Monday 20:00 ET, crossing into Tuesday's trade date.
+            "2026-01-06T09:00:00Z", // Tuesday 04:00 ET.
+        ),
+    ] {
+        let session_id = format!("XNYS:{trade_date}");
+        calendar.instances.push(instance(
+            &session_id,
+            &format!("{session_id}-over"),
+            trade_date,
+            SessionPhase::Over,
+            start,
+            end,
+        ));
+    }
+    calendar
+        .instances
+        .sort_by_key(|instance| instance.window.start);
+    calendar
+}
+
 fn capabilities() -> Vec<SourceCapability> {
     let mut values = Vec::new();
     for phase in [
@@ -396,6 +429,188 @@ fn ranks_follow_the_ordered_trusted_instances_and_unknown_overnight_stays_a_gap(
             assert!(!gap.realtime);
         }
     }
+}
+
+#[test]
+fn synthetic_four_phase_plans_route_current_buffer_and_old_instances_across_midnight() {
+    let calendar = synthetic_four_phase_snapshot();
+    let caps = capabilities();
+    let alpaca_sip = PlannedSource::Alpaca {
+        feed: AlpacaFeed::Sip,
+    };
+    let alpaca_boats = PlannedSource::Alpaca {
+        feed: AlpacaFeed::Boats,
+    };
+
+    for (as_of, start, end, expected_active, expected_slices) in [
+        (
+            "2026-01-06T03:00:00Z", // Monday 22:00 ET: Tuesday OVER is active.
+            "2026-01-05T09:00:00Z",
+            "2026-01-06T09:00:00Z",
+            Some("XNYS:2026-01-06-over"),
+            vec![
+                (
+                    "XNYS:2026-01-05-after",
+                    SessionRank::Buffer,
+                    PlannedSource::Futu,
+                ),
+                ("XNYS:2026-01-05-regular", SessionRank::Old, alpaca_sip),
+                ("XNYS:2026-01-05-pre", SessionRank::Old, alpaca_sip),
+            ],
+        ),
+        (
+            "2026-01-05T14:40:00Z", // Monday 09:40 ET: REG follows PRE and OVER.
+            "2026-01-05T01:00:00Z",
+            "2026-01-05T21:00:00Z",
+            Some("XNYS:2026-01-05-regular"),
+            vec![
+                (
+                    "XNYS:2026-01-05-regular",
+                    SessionRank::New,
+                    PlannedSource::Futu,
+                ),
+                (
+                    "XNYS:2026-01-05-pre",
+                    SessionRank::Buffer,
+                    PlannedSource::Futu,
+                ),
+                ("XNYS:2026-01-05-over", SessionRank::Old, alpaca_boats),
+            ],
+        ),
+        (
+            "2026-01-05T22:30:00Z", // Monday 17:30 ET: AFTER follows REG.
+            "2026-01-05T09:00:00Z",
+            "2026-01-06T01:00:00Z",
+            Some("XNYS:2026-01-05-after"),
+            vec![
+                (
+                    "XNYS:2026-01-05-after",
+                    SessionRank::New,
+                    PlannedSource::Futu,
+                ),
+                (
+                    "XNYS:2026-01-05-regular",
+                    SessionRank::Buffer,
+                    PlannedSource::Futu,
+                ),
+                ("XNYS:2026-01-05-pre", SessionRank::Old, alpaca_sip),
+            ],
+        ),
+        (
+            "2026-01-05T12:00:00Z", // Monday 07:00 ET: PRE follows OVER, then Friday AFTER.
+            "2026-01-02T21:00:00Z",
+            "2026-01-05T14:30:00Z",
+            Some("XNYS:2026-01-05-pre"),
+            vec![
+                ("XNYS:2026-01-05-pre", SessionRank::New, PlannedSource::Futu),
+                (
+                    "XNYS:2026-01-05-over",
+                    SessionRank::Buffer,
+                    PlannedSource::Futu,
+                ),
+                ("XNYS:2026-01-02-after", SessionRank::Old, alpaca_sip),
+            ],
+        ),
+    ] {
+        let plan = plan_sessions(request(
+            &calendar,
+            &caps,
+            start,
+            end,
+            as_of,
+            DataInterval::Minute(1),
+            SourceMode::Auto,
+            false,
+        ))
+        .expect("four-phase synthetic plan");
+
+        assert_eq!(plan.active_session_instance_id.as_deref(), expected_active);
+        let current_slice = plan
+            .slices
+            .iter()
+            .find(|slice| slice.session_instance_id.as_deref() == expected_active)
+            .expect("active phase slice is present in the request window");
+        assert_eq!(current_slice.rank, Some(SessionRank::New));
+        assert_eq!(current_slice.source, Some(PlannedSource::Futu));
+        assert!(current_slice.realtime);
+        for (session_instance_id, rank, source) in expected_slices {
+            let slice = plan
+                .slices
+                .iter()
+                .find(|slice| slice.session_instance_id.as_deref() == Some(session_instance_id))
+                .expect("expected phase slice is in the bounded request window");
+            assert_eq!(slice.rank, Some(rank), "{session_instance_id}");
+            assert_eq!(slice.source, Some(source), "{session_instance_id}");
+            assert_eq!(
+                slice.realtime,
+                rank == SessionRank::New,
+                "{session_instance_id}"
+            );
+        }
+    }
+}
+
+#[test]
+fn synthetic_overnight_boundaries_are_left_closed_and_closed_weekend_does_not_gain_over() {
+    let calendar = synthetic_four_phase_snapshot();
+    let caps = capabilities();
+
+    for (as_of, expected_active) in [
+        ("2026-01-05T00:59:59Z", None),
+        ("2026-01-05T01:00:00Z", Some("XNYS:2026-01-05-over")),
+        ("2026-01-05T01:00:01Z", Some("XNYS:2026-01-05-over")),
+        ("2026-01-05T08:59:59Z", Some("XNYS:2026-01-05-over")),
+        ("2026-01-05T09:00:00Z", Some("XNYS:2026-01-05-pre")),
+        ("2026-01-05T09:00:01Z", Some("XNYS:2026-01-05-pre")),
+    ] {
+        let plan = plan_sessions(request(
+            &calendar,
+            &caps,
+            "2026-01-05T00:59:59Z",
+            "2026-01-05T09:00:01Z",
+            as_of,
+            DataInterval::Minute(1),
+            SourceMode::Auto,
+            false,
+        ))
+        .expect("overnight boundary plan");
+        assert_eq!(
+            plan.active_session_instance_id.as_deref(),
+            expected_active,
+            "as_of={as_of}"
+        );
+    }
+
+    assert!(calendar.instances.iter().all(|instance| {
+        !matches!(instance.trade_date.weekday(), Weekday::Sat | Weekday::Sun)
+            || instance.phase != SessionPhase::Over
+    }));
+    let closed_saturday = plan_sessions(request(
+        &calendar,
+        &caps,
+        "2026-01-04T03:00:00Z", // Saturday 22:00 ET; before Sunday's explicit Monday OVER.
+        "2026-01-04T03:01:00Z",
+        "2026-01-04T03:00:30Z",
+        DataInterval::Minute(1),
+        SourceMode::Auto,
+        false,
+    ))
+    .expect("closed-weekend plan");
+    assert!(closed_saturday.active_session_instance_id.is_none());
+    assert!(closed_saturday.slices.is_empty());
+}
+
+#[test]
+fn native_xnys_snapshot_parser_still_rejects_the_synthetic_fourth_phase() {
+    let calendar = synthetic_four_phase_snapshot();
+    validate_calendar_snapshot(&calendar).expect("generic planner accepts explicit fixture");
+
+    let bytes = serde_json::to_vec(&calendar).expect("snapshot JSON");
+    let expected_sha256 = hex::encode(Sha256::digest(&bytes));
+    assert!(matches!(
+        parse_calendar_snapshot(&bytes, &expected_sha256),
+        Err(CalendarArtifactError::UnsupportedPhaseSet)
+    ));
 }
 
 #[test]

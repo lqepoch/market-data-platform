@@ -312,16 +312,25 @@ pub fn plan_market_bars(
             SessionScopeV1::All | SessionScopeV1::Overnight
         )
     {
+        let trusted_over_windows = slices_recent_to_old
+            .iter()
+            .filter(|slice| {
+                slice.phase == Some(SessionPhase::Over) && slice.session_instance_id.is_some()
+            })
+            .map(|slice| slice.window)
+            .collect::<Vec<_>>();
         for day in &calendar.days {
             if !matches!(&day.state, CalendarDayState::Closed { .. }) {
                 continue;
             }
             for night_window in closed_cash_night_windows(day.day_window)? {
                 if let Some(window) = intersect_windows(requested_window, night_window) {
-                    push_bounded(
-                        &mut plan_gaps,
-                        gap_from_window(window, CoverageGapReasonV1::Unknown)?,
-                    )?;
+                    for uncovered in subtract_covered_windows(window, &trusted_over_windows) {
+                        push_bounded(
+                            &mut plan_gaps,
+                            gap_from_window(uncovered, CoverageGapReasonV1::Unknown)?,
+                        )?;
+                    }
                 }
             }
         }
@@ -983,6 +992,39 @@ fn closed_cash_night_windows(day_window: UtcWindow) -> Result<[UtcWindow; 2], Pl
             end_exclusive: late_end,
         },
     ])
+}
+
+fn subtract_covered_windows(window: UtcWindow, covered_windows: &[UtcWindow]) -> Vec<UtcWindow> {
+    let mut covered = covered_windows
+        .iter()
+        .filter_map(|candidate| intersect_windows(window, *candidate))
+        .collect::<Vec<_>>();
+    covered.sort_by_key(|candidate| candidate.start);
+
+    let mut uncovered = Vec::new();
+    let mut cursor = window.start;
+    for candidate in covered {
+        if candidate.end_exclusive <= cursor {
+            continue;
+        }
+        if cursor < candidate.start {
+            uncovered.push(UtcWindow {
+                start: cursor,
+                end_exclusive: candidate.start,
+            });
+        }
+        cursor = max(cursor, candidate.end_exclusive);
+        if cursor >= window.end_exclusive {
+            break;
+        }
+    }
+    if cursor < window.end_exclusive {
+        uncovered.push(UtcWindow {
+            start: cursor,
+            end_exclusive: window.end_exclusive,
+        });
+    }
+    uncovered
 }
 
 fn is_day_edge_gap(
