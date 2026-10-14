@@ -24,6 +24,7 @@ use market_contracts::{BarsRequestV1, ProtoTimestampV2};
 use zeroize::Zeroizing;
 
 use crate::{
+    archive::reconciliation::authority::VerifiedProviderAdmissionV1,
     market_query::planning::MarketBarsPlan,
     session_router::{
         AlpacaFeed, DataInterval, PlannedSource, Provider, SessionPhase, SourceCapability,
@@ -44,7 +45,7 @@ pub struct MarketBarsProviderRuntime {
     alpaca: Option<AlpacaRestReadClient>,
     futu: futu::FutuGateway,
     yfinance: yfinance::YFinanceBridge,
-    futu_admissions: Vec<crate::archive::reconciliation::VerifiedProviderAdmissionV1>,
+    futu_admissions: Vec<VerifiedProviderAdmissionV1>,
 }
 
 impl fmt::Debug for MarketBarsProviderRuntime {
@@ -85,7 +86,7 @@ impl MarketBarsProviderRuntime {
     /// and runtime-fact source are available.
     pub(crate) fn with_verified_provider_admissions(
         mut self,
-        admissions: Vec<crate::archive::reconciliation::VerifiedProviderAdmissionV1>,
+        admissions: Vec<VerifiedProviderAdmissionV1>,
     ) -> Self {
         self.futu_admissions = admissions;
         self

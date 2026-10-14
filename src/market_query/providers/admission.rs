@@ -8,7 +8,7 @@ use market_contracts::{
 use sha2::{Digest, Sha256};
 
 use crate::{
-    archive::reconciliation::{ProviderPhaseSliceV1, VerifiedProviderAdmissionV1},
+    archive::reconciliation::authority::{ProviderPhaseSliceV1, VerifiedProviderAdmissionV1},
     market_query::planning::{MarketBarsPlan, plan_market_bars},
     session_router::{
         DataInterval, PlannedSlice, PlannedSource, Provider, SessionPhase, SourceCapability,
@@ -290,7 +290,7 @@ fn admission_matches_request(
 }
 
 fn request_supports_futu(request: &BarsRequestV1) -> bool {
-    request.asset_class == AssetClassV1::Stock
+    matches!(request.asset_class, AssetClassV1::Stock | AssetClassV1::Etf)
         && request.adjustment == AdjustmentV1::Unadjusted
         && matches!(
             request.provider_mode,

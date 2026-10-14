@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
+    archive::reconciliation::authority::VerifiedProviderAdmissionV1,
     archive::reconciliation::{
         CacheKeyV1, ProviderCursorCacheInputV1, ProviderCursorKindV1,
         ValidatedProviderCursorReceiptV1,
@@ -72,7 +73,7 @@ pub struct ProviderPageSelection {
     cache_identity: ProviderCacheIdentity,
     cache_policy: ProviderCachePolicy,
     admission_set_sha256: Option<String>,
-    futu_admissions: Vec<crate::archive::reconciliation::VerifiedProviderAdmissionV1>,
+    futu_admissions: Vec<VerifiedProviderAdmissionV1>,
     rights_profile_sha256: Option<String>,
 }
 
