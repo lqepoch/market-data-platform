@@ -212,7 +212,7 @@ fn runtime_summary_reports_attemptability_without_claiming_provider_authority() 
 }
 
 #[test]
-fn canonical_cache_hit_page_is_revalidated_without_losing_rows_or_provisional_status() {
+fn exhausted_cache_hit_advances_to_the_next_provider_run_without_provider_cursor_receipt() {
     use chrono::{Duration, NaiveDate};
     use market_contracts::{
         AdjustmentV1, BarResolutionV1, BarRowV1, BarSourceProvenanceV1, DecimalString,
@@ -295,38 +295,66 @@ fn canonical_cache_hit_page_is_revalidated_without_losing_rows_or_provisional_st
     let request = market_contracts::BarsRequestV1 {
         symbol: "SPY".to_owned(),
         asset_class: market_contracts::AssetClassV1::Etf,
-        start: ProtoTimestampV2::parse("2026-01-05T14:30:00Z").unwrap(),
-        end: ProtoTimestampV2::parse("2026-01-05T14:32:00Z").unwrap(),
+        start: ProtoTimestampV2::parse("2026-01-05T14:29:00Z").unwrap(),
+        end: ProtoTimestampV2::parse("2026-01-05T21:01:00Z").unwrap(),
         resolution: BarResolutionV1::OneMinute,
-        session_scope: SessionScopeV1::Regular,
+        session_scope: SessionScopeV1::All,
         adjustment: AdjustmentV1::Unadjusted,
-        provider_mode: BarsProviderModeV1::AlpacaOnly,
+        provider_mode: BarsProviderModeV1::Auto,
         allow_daily_downgrade: false,
         limit: 10,
         cursor: None,
     };
-    let capabilities = [crate::session_router::SourceCapability {
-        provider: crate::session_router::Provider::Alpaca,
-        feed: Some(crate::session_router::AlpacaFeed::Sip),
-        phase: Some(crate::session_router::SessionPhase::Regular),
-        interval: crate::session_router::DataInterval::Minute(1),
-        historical: true,
-        realtime: false,
-    }];
+    let capabilities = [
+        crate::session_router::SourceCapability {
+            provider: crate::session_router::Provider::Alpaca,
+            feed: Some(crate::session_router::AlpacaFeed::Sip),
+            phase: Some(crate::session_router::SessionPhase::Pre),
+            interval: crate::session_router::DataInterval::Minute(1),
+            historical: true,
+            realtime: false,
+        },
+        crate::session_router::SourceCapability {
+            provider: crate::session_router::Provider::Futu,
+            feed: None,
+            phase: Some(crate::session_router::SessionPhase::Regular),
+            interval: crate::session_router::DataInterval::Minute(1),
+            historical: true,
+            realtime: false,
+        },
+        crate::session_router::SourceCapability {
+            provider: crate::session_router::Provider::Futu,
+            feed: None,
+            phase: Some(crate::session_router::SessionPhase::After),
+            interval: crate::session_router::DataInterval::Minute(1),
+            historical: true,
+            realtime: false,
+        },
+    ];
+    // Use the current clock so the emitted opaque continuation remains inside its short TTL.
+    let as_of = ProtoTimestampV2::parse(
+        &chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
+    )
+    .unwrap();
     let plan = crate::market_query::planning::plan_market_bars(
         &request,
-        &ProtoTimestampV2::parse("2026-01-05T21:00:00Z").unwrap(),
+        &as_of,
         &capabilities,
         &calendar,
     )
     .unwrap();
     let selection = crate::market_query::providers::select_page(&request, &plan).unwrap();
-    let row_start = request.start.clone();
-    let row_end = ProtoTimestampV2::parse("2026-01-05T14:31:00Z").unwrap();
-    let received_at = ProtoTimestampV2::parse("2026-01-05T14:32:01Z").unwrap();
+    assert_eq!(plan.provider_groups.len(), 2);
+    assert_eq!(
+        selection.provider_group().source,
+        crate::session_router::PlannedSource::Futu
+    );
+    let row_start = ProtoTimestampV2::parse("2026-01-05T21:00:00Z").unwrap();
+    let row_end = ProtoTimestampV2::parse("2026-01-05T21:01:00Z").unwrap();
+    let received_at = ProtoTimestampV2::parse("2026-01-05T21:01:01Z").unwrap();
     let raw_page = market_contracts::BarsResponseV1 {
         schema_version: market_contracts::BARS_SCHEMA_VERSION_V1,
-        provider: "alpaca".to_owned(),
+        provider: "futu".to_owned(),
         feed: "unknown".to_owned(),
         entitlement_status: market_contracts::BarsEntitlementStatusV1::Unknown,
         requested_resolution: BarResolutionV1::OneMinute,
@@ -346,7 +374,7 @@ fn canonical_cache_hit_page_is_revalidated_without_losing_rows_or_provisional_st
             low: DecimalString::new("9.00").unwrap(),
             close: DecimalString::new("10.50").unwrap(),
             volume: DecimalString::new("100").unwrap(),
-            provenance_id: "alpaca-page".to_owned(),
+            provenance_id: "futu-page".to_owned(),
             session_instance_id: "provider-local".to_owned(),
             validation_state: market_contracts::BarsValidationStateV1::Provisional,
         }],
@@ -355,17 +383,17 @@ fn canonical_cache_hit_page_is_revalidated_without_losing_rows_or_provisional_st
             start_utc: row_start,
             end_exclusive_utc: row_end,
             coverage_status: BarsCoverageStatusV1::Complete,
-            provenance_id: Some("alpaca-page".to_owned()),
+            provenance_id: Some("futu-page".to_owned()),
             session_instance_id: "provider-local".to_owned(),
         }],
         gaps: Vec::new(),
         source_provenance: vec![BarSourceProvenanceV1 {
-            provenance_id: "alpaca-page".to_owned(),
-            provider: "alpaca".to_owned(),
+            provenance_id: "futu-page".to_owned(),
+            provider: "futu".to_owned(),
             feed: "unknown".to_owned(),
-            source: "Alpaca historical stock-bars API".to_owned(),
+            source: "Futu OpenD".to_owned(),
             entitlement_status: market_contracts::BarsEntitlementStatusV1::Unknown,
-            numeric_encoding: NumericEncodingV1::DecimalToken,
+            numeric_encoding: NumericEncodingV1::BinaryFloat64ShortestDecimal,
         }],
         as_of: None,
         fetched_at: received_at,
@@ -385,8 +413,11 @@ fn canonical_cache_hit_page_is_revalidated_without_losing_rows_or_provisional_st
     .unwrap();
     let mut cache_hit_page = canonical;
     cache_hit_page.cache_status = market_contracts::BarsCacheStatusV1::Hit;
+    assert!(!cache_hit_page.truncated);
+    assert!(cache_hit_page.continuation_cursor.is_none());
 
-    // The real hit path replays A04's canonical Core response through this same run mapper.
+    // A04 returns this shape for an exhausted page without a provider cursor receipt. The HTTP
+    // assembler must still emit the outer cursor for the next planned source run.
     let replayed = super::response::response_from_page(
         &request,
         &plan,
@@ -400,7 +431,7 @@ fn canonical_cache_hit_page_is_revalidated_without_losing_rows_or_provisional_st
     assert_eq!(replayed.rows.len(), 1);
     assert_eq!(
         replayed.rows[0].session_instance_id,
-        format!("{session_id}:regular")
+        format!("{session_id}:after")
     );
     assert_eq!(replayed.feed, "unknown");
     assert_eq!(
@@ -413,6 +444,31 @@ fn canonical_cache_hit_page_is_revalidated_without_losing_rows_or_provisional_st
         market_contracts::BarsCacheStatusV1::Hit
     );
     assert!(replayed.verified_at.is_none());
+    assert!(replayed.truncated);
+    let continuation = replayed
+        .continuation_cursor
+        .as_ref()
+        .expect("next planned source run has an outer continuation");
+
+    let mut next_request = request.clone();
+    next_request.cursor = Some(continuation.clone());
+    let next_as_of = crate::market_query::providers::planning_as_of(&next_request, &as_of).unwrap();
+    let next_plan = crate::market_query::planning::plan_market_bars(
+        &next_request,
+        &next_as_of,
+        &capabilities,
+        &calendar,
+    )
+    .unwrap();
+    let next_selection =
+        crate::market_query::providers::select_page(&next_request, &next_plan).unwrap();
+    assert_eq!(
+        next_selection.provider_group().source,
+        crate::session_router::PlannedSource::Alpaca {
+            feed: crate::session_router::AlpacaFeed::Sip
+        }
+    );
+    assert!(next_selection.timeline_position() > selection.timeline_position());
 }
 
 #[test]
