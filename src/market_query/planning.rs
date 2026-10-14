@@ -413,16 +413,16 @@ pub fn next_provider_run(
     let mut next_position = first_index;
     while next_position < slices.len() {
         let slice = &slices[next_position];
-        if slice.gap.is_none() {
-            if let Some(slice_source) = slice.source {
-                if slice_source != source {
-                    break;
-                }
-                if interval_to_resolution(slice.interval)? != resolution {
-                    return Err(PlanningError::ProviderRunMismatch);
-                }
-                run_slices.push(slice.clone());
+        if slice.gap.is_none()
+            && let Some(slice_source) = slice.source
+        {
+            if slice_source != source {
+                break;
             }
+            if interval_to_resolution(slice.interval)? != resolution {
+                return Err(PlanningError::ProviderRunMismatch);
+            }
+            run_slices.push(slice.clone());
         }
         next_position += 1;
     }
@@ -876,13 +876,16 @@ fn slice_is_in_scope(
 }
 
 fn phase_is_in_scope(phase: Option<SessionPhase>, scope: SessionScopeV1) -> bool {
-    match (scope, phase) {
-        (SessionScopeV1::All, Some(_)) => true,
-        (SessionScopeV1::Regular, Some(SessionPhase::Regular)) => true,
-        (SessionScopeV1::Extended, Some(SessionPhase::Pre | SessionPhase::After)) => true,
-        (SessionScopeV1::Overnight, Some(SessionPhase::Over)) => true,
-        _ => false,
-    }
+    matches!(
+        (scope, phase),
+        (SessionScopeV1::All, Some(_))
+            | (SessionScopeV1::Regular, Some(SessionPhase::Regular))
+            | (
+                SessionScopeV1::Extended,
+                Some(SessionPhase::Pre | SessionPhase::After)
+            )
+            | (SessionScopeV1::Overnight, Some(SessionPhase::Over))
+    )
 }
 
 /// The XNYS source has no OVER instance. Only the uncovered edge of an explicit open NY day is
@@ -1102,9 +1105,7 @@ fn mapped_coverage_status(
             },
         );
     }
-    if any_covered {
-        Ok(BarsCoverageStatusV1::Partial)
-    } else if has_partial_segment {
+    if any_covered || has_partial_segment {
         Ok(BarsCoverageStatusV1::Partial)
     } else {
         Ok(BarsCoverageStatusV1::Unknown)
@@ -1341,7 +1342,7 @@ fn slices_are_recent_first(slices: &[PlannedSlice]) -> bool {
 /// Return the contiguous subset of a validated newest-first, non-overlapping slice list that may
 /// intersect `query`. This keeps page-to-calendar mapping proportional to actual overlaps instead
 /// of scanning every planned day for every provider row.
-fn overlapping_slices<'a>(query: UtcWindow, slices: &'a [PlannedSlice]) -> &'a [PlannedSlice] {
+fn overlapping_slices(query: UtcWindow, slices: &[PlannedSlice]) -> &[PlannedSlice] {
     let end = slices.partition_point(|slice| slice.window.end_exclusive > query.start);
     let start = slices[..end].partition_point(|slice| slice.window.start >= query.end_exclusive);
     &slices[start..end]

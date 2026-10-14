@@ -652,7 +652,7 @@ fn daily_queries_coalesce_by_source_instead_of_emitting_one_group_per_date() {
     assert!(
         plan.provider_groups
             .iter()
-            .all(|group| group.slices_recent_to_old.len() >= 1)
+            .all(|group| !group.slices_recent_to_old.is_empty())
     );
     assert!(plan.provider_groups.iter().any(|group| {
         group.source == PlannedSource::Futu && group.slices_recent_to_old.len() == 1
