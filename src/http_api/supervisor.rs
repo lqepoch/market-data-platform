@@ -1,5 +1,7 @@
 use std::{
     collections::HashMap,
+    future::Future,
+    pin::Pin,
     sync::{Arc, Mutex, MutexGuard},
 };
 
@@ -39,9 +41,14 @@ pub(super) struct QueryClient {
 
 enum SupervisorMessage {
     Query(QueryJob),
+    MarketBars(MarketBarsJob),
     #[cfg(target_os = "linux")]
     VerifyPair(PairVerifyJob),
 }
+
+type MarketBarsFuture =
+    Pin<Box<dyn Future<Output = crate::Result<market_contracts::BarsResponseV1>> + Send + 'static>>;
+type MarketBarsExecutor = Box<dyn FnOnce(CancellationToken) -> MarketBarsFuture + Send + 'static>;
 
 struct QueryJob {
     namespace: DatasetNamespace,
@@ -49,6 +56,12 @@ struct QueryJob {
     symbol: String,
     cancellation: CancellationToken,
     response: oneshot::Sender<crate::Result<(Vec<TradeMinuteBarV1>, RemoteQuerySummary)>>,
+}
+
+struct MarketBarsJob {
+    cancellation: CancellationToken,
+    execute: MarketBarsExecutor,
+    response: oneshot::Sender<crate::Result<market_contracts::BarsResponseV1>>,
 }
 
 #[cfg(target_os = "linux")]
@@ -174,6 +187,52 @@ impl QueryClient {
         }
     }
 
+    /// Runs a provider request and its blocking page planner through the shared bounded
+    /// supervisor. The planner owns provider-error mapping so it can return either an
+    /// explicit partial response or the precise data error for the HTTP layer.
+    pub(super) async fn market_bars<P, Fut, Raw, ProviderError, Plan>(
+        &self,
+        provider: P,
+        planner: Plan,
+    ) -> std::result::Result<market_contracts::BarsResponseV1, QueryFailure>
+    where
+        P: FnOnce(CancellationToken) -> Fut + Send + 'static,
+        Fut: Future<Output = std::result::Result<Raw, ProviderError>> + Send + 'static,
+        Raw: Send + 'static,
+        ProviderError: Send + 'static,
+        Plan: FnOnce(
+                std::result::Result<Raw, ProviderError>,
+                CancellationToken,
+            ) -> crate::Result<market_contracts::BarsResponseV1>
+            + Send
+            + 'static,
+    {
+        let cancellation = CancellationToken::new();
+        let _cancel_on_drop = CancelOnDrop(cancellation.clone());
+        let (response, receiver) = oneshot::channel();
+        let job = MarketBarsJob {
+            cancellation,
+            execute: Box::new(move |cancellation| {
+                Box::pin(execute_market_bars(provider, planner, cancellation))
+            }),
+            response,
+        };
+        if let Err(error) = self.sender.try_send(SupervisorMessage::MarketBars(job)) {
+            drop(error);
+            tracing::warn!("MDP query supervisor is unavailable or at capacity");
+            return Err(QueryFailure::Unavailable);
+        }
+        match tokio::time::timeout(self.deadline, receiver).await {
+            Err(_) => Err(QueryFailure::Timeout),
+            Ok(Err(_)) => {
+                tracing::error!("MDP market-bars worker ended without a response");
+                Err(QueryFailure::Unavailable)
+            }
+            Ok(Ok(Err(error))) => Err(QueryFailure::Data(error)),
+            Ok(Ok(Ok(result))) => Ok(result),
+        }
+    }
+
     #[cfg(target_os = "linux")]
     pub(super) async fn verify_pair(
         &self,
@@ -279,6 +338,17 @@ async fn run_owner(
                         });
                         registry_lock(&cancellations).insert(abort.id(), cancellation);
                     }
+                    Some(SupervisorMessage::MarketBars(job)) => {
+                        let MarketBarsJob { cancellation, execute, response } = job;
+                        let job_cancellation = cancellation.clone();
+                        let abort = active.spawn(async move {
+                            let result = execute(job_cancellation.clone()).await;
+                            if !job_cancellation.is_cancelled() {
+                                let _ = response.send(result);
+                            }
+                        });
+                        registry_lock(&cancellations).insert(abort.id(), cancellation);
+                    }
                     #[cfg(target_os = "linux")]
                     Some(SupervisorMessage::VerifyPair(job)) => {
                         let PairVerifyJob { receipt_name, cancellation, response } = job;
@@ -305,6 +375,74 @@ async fn run_owner(
             }
         }
     }
+}
+
+async fn execute_market_bars<P, Fut, Raw, ProviderError, Plan>(
+    provider: P,
+    planner: Plan,
+    cancellation: CancellationToken,
+) -> crate::Result<market_contracts::BarsResponseV1>
+where
+    P: FnOnce(CancellationToken) -> Fut + Send + 'static,
+    Fut: Future<Output = std::result::Result<Raw, ProviderError>> + Send + 'static,
+    Raw: Send + 'static,
+    ProviderError: Send + 'static,
+    Plan: FnOnce(
+            std::result::Result<Raw, ProviderError>,
+            CancellationToken,
+        ) -> crate::Result<market_contracts::BarsResponseV1>
+        + Send
+        + 'static,
+{
+    if cancellation.is_cancelled() {
+        return Err(cancelled_market_bars());
+    }
+    let provider_result = await_provider_or_cancel(provider(cancellation.clone()), &cancellation)
+        .await
+        .ok_or_else(cancelled_market_bars)?;
+    if cancellation.is_cancelled() {
+        return Err(cancelled_market_bars());
+    }
+
+    let planner_cancellation = cancellation.clone();
+    let planner_result = tokio::task::spawn_blocking(move || {
+        if planner_cancellation.is_cancelled() {
+            return Err(cancelled_market_bars());
+        }
+        planner(provider_result, planner_cancellation)
+    })
+    .await
+    .map_err(|_| MarketDataError::Storage(crate::error::StorageFailure::CommandFailed))?;
+
+    if cancellation.is_cancelled() {
+        return Err(cancelled_market_bars());
+    }
+    planner_result
+}
+
+async fn await_provider_or_cancel<F>(
+    future: F,
+    cancellation: &CancellationToken,
+) -> Option<F::Output>
+where
+    F: Future,
+{
+    tokio::pin!(future);
+    loop {
+        tokio::select! {
+            biased;
+            _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => {
+                if cancellation.is_cancelled() {
+                    return None;
+                }
+            }
+            output = &mut future => return Some(output),
+        }
+    }
+}
+
+fn cancelled_market_bars() -> MarketDataError {
+    MarketDataError::Storage(crate::error::StorageFailure::Cancelled)
 }
 
 fn remove_finished(
@@ -400,6 +538,150 @@ mod tests {
 
         drop(sender);
         while receiver.try_recv().is_ok() {}
+    }
+
+    #[tokio::test]
+    async fn market_bars_uses_the_shared_bounded_queue() {
+        let (client, _held_queue) = QueryClient::with_full_queue_for_test();
+        let provider_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let planner_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let provider_called_in_job = Arc::clone(&provider_called);
+        let planner_called_in_job = Arc::clone(&planner_called);
+
+        let result = client
+            .market_bars(
+                move |_| async move {
+                    provider_called_in_job.store(true, std::sync::atomic::Ordering::SeqCst);
+                    Ok::<u8, &'static str>(1)
+                },
+                move |_, _| {
+                    planner_called_in_job.store(true, std::sync::atomic::Ordering::SeqCst);
+                    Err(MarketDataError::Contract)
+                },
+            )
+            .await;
+
+        assert!(matches!(result, Err(QueryFailure::Unavailable)));
+        assert!(!provider_called.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(!planner_called.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn market_bars_passes_provider_errors_to_planner_on_blocking_worker() {
+        let caller_thread = std::thread::current().id();
+        let planner_observed_error = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let planner_observed_error_in_job = Arc::clone(&planner_observed_error);
+        let result = execute_market_bars(
+            |_| async { Err::<u8, &'static str>("synthetic provider error") },
+            move |provider_result, _| {
+                assert_ne!(std::thread::current().id(), caller_thread);
+                assert_eq!(provider_result, Err("synthetic provider error"));
+                planner_observed_error_in_job.store(true, std::sync::atomic::Ordering::SeqCst);
+                Err(MarketDataError::Contract)
+            },
+            CancellationToken::new(),
+        )
+        .await;
+
+        assert!(matches!(result, Err(MarketDataError::Contract)));
+        assert!(planner_observed_error.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn cancelling_market_bars_drops_provider_future_promptly() {
+        struct DropMarker(Arc<std::sync::atomic::AtomicBool>);
+
+        impl Drop for DropMarker {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+
+        let cancellation = CancellationToken::new();
+        let cancellation_for_job = cancellation.clone();
+        let provider_started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let provider_started_in_job = Arc::clone(&provider_started);
+        let provider_dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let provider_dropped_in_job = Arc::clone(&provider_dropped);
+        let task = tokio::spawn(async move {
+            execute_market_bars(
+                move |_| async move {
+                    provider_started_in_job.store(true, std::sync::atomic::Ordering::SeqCst);
+                    let _drop_marker = DropMarker(provider_dropped_in_job);
+                    std::future::pending::<std::result::Result<u8, &'static str>>().await
+                },
+                |_, _| Err(MarketDataError::Contract),
+                cancellation_for_job,
+            )
+            .await
+        });
+
+        tokio::time::timeout(std::time::Duration::from_millis(250), async {
+            while !provider_started.load(std::sync::atomic::Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("provider future must start");
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        cancellation.cancel();
+        let result = tokio::time::timeout(std::time::Duration::from_millis(250), task)
+            .await
+            .expect("provider cancellation must be observed promptly")
+            .expect("market-bars task must not panic");
+
+        assert!(matches!(
+            result,
+            Err(MarketDataError::Storage(
+                crate::error::StorageFailure::Cancelled
+            ))
+        ));
+        assert!(provider_dropped.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn planner_cancellation_is_cooperative_and_joined() {
+        let cancellation = CancellationToken::new();
+        let cancellation_for_job = cancellation.clone();
+        let planner_started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let planner_finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let planner_started_in_job = Arc::clone(&planner_started);
+        let planner_finished_in_job = Arc::clone(&planner_finished);
+        let task = tokio::spawn(async move {
+            execute_market_bars(
+                |_| async { Ok::<u8, &'static str>(1) },
+                move |_, cancellation| {
+                    planner_started_in_job.store(true, std::sync::atomic::Ordering::SeqCst);
+                    while !cancellation.is_cancelled() {
+                        std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
+                    planner_finished_in_job.store(true, std::sync::atomic::Ordering::SeqCst);
+                    Err(MarketDataError::Storage(
+                        crate::error::StorageFailure::Cancelled,
+                    ))
+                },
+                cancellation_for_job,
+            )
+            .await
+        });
+
+        tokio::time::timeout(std::time::Duration::from_millis(250), async {
+            while !planner_started.load(std::sync::atomic::Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("planner must start");
+        cancellation.cancel();
+        let result = task.await.expect("market-bars task must not panic");
+
+        assert!(matches!(
+            result,
+            Err(MarketDataError::Storage(
+                crate::error::StorageFailure::Cancelled
+            ))
+        ));
+        assert!(planner_finished.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[tokio::test]
