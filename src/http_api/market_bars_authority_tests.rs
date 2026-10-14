@@ -690,7 +690,7 @@ async fn unknown_provider_facts_never_reach_the_attestor_or_claim_authority() {
 }
 
 #[tokio::test]
-async fn provider_resource_limits_return_partial_source_gaps_without_conflict_or_verification() {
+async fn provider_resource_limits_return_partial_unknown_gaps_without_conflict_or_verification() {
     let mut harness = harness(SyntheticFacts::KnownSipAuthorized, false).await;
     for error in [
         ProviderQueryError::PartialPageLimit,
@@ -708,11 +708,12 @@ async fn provider_resource_limits_return_partial_source_gaps_without_conflict_or
         assert!(body["rows"].as_array().unwrap().is_empty());
 
         let gaps = body["gaps"].as_array().unwrap();
-        assert!(gaps.iter().any(|gap| gap["reason_code"] == "source_gap"));
+        assert!(gaps.iter().any(|gap| gap["reason_code"] == "unknown"));
         assert!(
             gaps.iter()
                 .all(|gap| gap["reason_code"] != "validation_conflict")
         );
+        assert!(gaps.iter().all(|gap| gap["reason_code"] != "source_gap"));
     }
     assert_eq!(harness.source.fetch_count.load(Ordering::SeqCst), 2);
     assert_eq!(harness.evidence_source.calls.load(Ordering::SeqCst), 0);

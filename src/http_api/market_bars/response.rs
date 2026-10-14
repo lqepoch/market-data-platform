@@ -291,10 +291,11 @@ pub(super) fn provider_failure_gap_reason(
         ProviderError::MalformedResponse | ProviderError::InvalidCorePage => {
             CoverageGapReasonV1::ValidationConflict
         }
-        // Local page/byte bounds stop collection before the source window is exhausted; they do
-        // not establish that any returned OHLCV data conflicts.
+        // Local page/byte bounds stop collection before the source window is exhausted. Core V1
+        // has no resource-limit gap reason, and these bounds do not prove a source discontinuity
+        // or a conflict in returned OHLCV data.
         ProviderError::ResponseTooLarge | ProviderError::PartialPageLimit => {
-            CoverageGapReasonV1::SourceGap
+            CoverageGapReasonV1::Unknown
         }
         _ => CoverageGapReasonV1::ProviderUnavailable,
     }
