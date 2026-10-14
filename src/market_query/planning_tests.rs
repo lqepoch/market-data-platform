@@ -200,6 +200,273 @@ fn provider_page(start: &str, end: &str) -> BarsResponseV1 {
     }
 }
 
+fn timeline_slice(
+    start: &str,
+    end: &str,
+    source: Option<PlannedSource>,
+    gap: Option<GapReason>,
+) -> PlannedSlice {
+    let window = UtcWindow {
+        start: utc_dt(start),
+        end_exclusive: utc_dt(end),
+    };
+    let trade_date = window.start.date_naive();
+    let date_label = trade_date.format("%Y-%m-%d").to_string();
+    let session_id = format!("XNYS:{date_label}");
+    let phase = match source {
+        Some(PlannedSource::Alpaca {
+            feed: crate::session_router::AlpacaFeed::Boats,
+        }) => Some(SessionPhase::Over),
+        Some(PlannedSource::Futu)
+        | Some(PlannedSource::Alpaca {
+            feed: crate::session_router::AlpacaFeed::Sip,
+        }) => Some(SessionPhase::Regular),
+        Some(PlannedSource::YFinanceDailyResearch) | None => None,
+    };
+    let session_instance_id = phase.map(|phase| format!("{session_id}:{phase:?}"));
+    PlannedSlice {
+        symbol: "SPY".to_owned(),
+        trade_date,
+        session_id,
+        session_instance_id,
+        phase,
+        rank: None,
+        interval: DataInterval::Minute(1),
+        window,
+        calendar_verification_status: CalendarVerificationStatus::Verified,
+        source,
+        source_label: source.map(|value| value.label().to_owned()),
+        historical: true,
+        realtime: false,
+        provisional: false,
+        gap,
+    }
+}
+
+fn source_group_for_test(source: PlannedSource, slices: &[PlannedSlice]) -> ProviderQueryGroup {
+    let group_slices = slices
+        .iter()
+        .filter(|slice| slice.source == Some(source) && slice.gap.is_none())
+        .cloned()
+        .collect::<Vec<_>>();
+    let fetch_window = group_slices.iter().fold(
+        UtcWindow {
+            start: group_slices[0].window.start,
+            end_exclusive: group_slices[0].window.end_exclusive,
+        },
+        |window, slice| UtcWindow {
+            start: window.start.min(slice.window.start),
+            end_exclusive: window.end_exclusive.max(slice.window.end_exclusive),
+        },
+    );
+    ProviderQueryGroup {
+        source,
+        resolution: BarResolutionV1::OneMinute,
+        adjustment: AdjustmentV1::Unadjusted,
+        fetch_window,
+        slices_recent_to_old: group_slices,
+    }
+}
+
+/// A synthetic multi-day timeline exercises the selector across all source identities. Source
+/// eligibility and resolution are separately fixed by `plan_market_bars`; this fixture only tests
+/// that cursor runs preserve the precomputed newest-to-oldest routing order.
+fn mixed_source_timeline_plan() -> MarketBarsPlan {
+    let boats = PlannedSource::Alpaca {
+        feed: crate::session_router::AlpacaFeed::Boats,
+    };
+    let sip = PlannedSource::Alpaca {
+        feed: crate::session_router::AlpacaFeed::Sip,
+    };
+    let futu = PlannedSource::Futu;
+    let yfinance = PlannedSource::YFinanceDailyResearch;
+    let slices = vec![
+        timeline_slice(
+            "2026-01-05T14:34:00Z",
+            "2026-01-05T14:35:00Z",
+            Some(boats),
+            None,
+        ),
+        timeline_slice(
+            "2026-01-05T14:33:00Z",
+            "2026-01-05T14:34:00Z",
+            None,
+            Some(GapReason::MissingCalendarPhase),
+        ),
+        timeline_slice(
+            "2026-01-05T14:32:00Z",
+            "2026-01-05T14:33:00Z",
+            Some(boats),
+            None,
+        ),
+        timeline_slice(
+            "2026-01-05T14:31:00Z",
+            "2026-01-05T14:32:00Z",
+            Some(futu),
+            None,
+        ),
+        timeline_slice(
+            "2026-01-05T14:30:00Z",
+            "2026-01-05T14:31:00Z",
+            Some(futu),
+            None,
+        ),
+        timeline_slice(
+            "2026-01-05T14:29:00Z",
+            "2026-01-05T14:30:00Z",
+            Some(sip),
+            None,
+        ),
+        timeline_slice(
+            "2026-01-05T14:28:00Z",
+            "2026-01-05T14:29:00Z",
+            Some(yfinance),
+            None,
+        ),
+        timeline_slice(
+            "2026-01-04T23:30:00Z",
+            "2026-01-04T23:31:00Z",
+            Some(boats),
+            None,
+        ),
+        timeline_slice(
+            "2026-01-04T23:00:00Z",
+            "2026-01-04T23:01:00Z",
+            Some(sip),
+            None,
+        ),
+        timeline_slice(
+            "2026-01-04T22:30:00Z",
+            "2026-01-04T22:31:00Z",
+            Some(futu),
+            None,
+        ),
+    ];
+    let provider_groups = [boats, futu, sip, yfinance]
+        .into_iter()
+        .map(|source| source_group_for_test(source, &slices))
+        .collect();
+    let request = BarsRequestV1 {
+        symbol: "SPY".to_owned(),
+        asset_class: AssetClassV1::Etf,
+        start: timestamp("2026-01-04T22:30:00Z"),
+        end: timestamp("2026-01-05T14:35:00Z"),
+        resolution: BarResolutionV1::OneMinute,
+        session_scope: SessionScopeV1::All,
+        adjustment: AdjustmentV1::Unadjusted,
+        provider_mode: BarsProviderModeV1::Auto,
+        allow_daily_downgrade: false,
+        limit: 100,
+        cursor: None,
+    };
+    MarketBarsPlan {
+        request,
+        as_of: timestamp("2026-01-05T15:00:00Z"),
+        requested_window: UtcWindow {
+            start: utc_dt("2026-01-04T22:30:00Z"),
+            end_exclusive: utc_dt("2026-01-05T14:35:00Z"),
+        },
+        effective_resolution: BarResolutionV1::OneMinute,
+        calendar_source_id: "test-calendar".to_owned(),
+        calendar_version: "test-v1".to_owned(),
+        calendar_verification_status: Vec::new(),
+        slices_recent_to_old: slices,
+        provider_groups,
+        gaps: Vec::new(),
+        provisional: false,
+    }
+}
+
+#[test]
+fn provider_runs_follow_newest_to_oldest_order_across_four_source_identities() {
+    let plan = mixed_source_timeline_plan();
+    let boats = PlannedSource::Alpaca {
+        feed: crate::session_router::AlpacaFeed::Boats,
+    };
+    let sip = PlannedSource::Alpaca {
+        feed: crate::session_router::AlpacaFeed::Sip,
+    };
+    let expected_sources = [
+        boats,
+        PlannedSource::Futu,
+        sip,
+        PlannedSource::YFinanceDailyResearch,
+        boats,
+        sip,
+        PlannedSource::Futu,
+    ];
+    let expected_group_indexes = [0, 1, 2, 3, 0, 2, 1];
+    let expected_next_positions = [3, 5, 6, 7, 8, 9, 10];
+    let mut position = 0;
+
+    for ((source, group_index), next_position) in expected_sources
+        .into_iter()
+        .zip(expected_group_indexes)
+        .zip(expected_next_positions)
+    {
+        let run = next_provider_run(&plan, position).unwrap().unwrap();
+        assert_eq!(run.timeline_position, position);
+        assert_eq!(run.group.source, source);
+        assert_eq!(run.group_index, group_index);
+        assert_eq!(run.next_timeline_position, next_position);
+        if position == 0 {
+            assert_eq!(run.group.slices_recent_to_old.len(), 2);
+            assert_eq!(
+                plan.provider_groups[group_index].slices_recent_to_old.len(),
+                3
+            );
+        }
+        if position == 3 {
+            assert_eq!(run.group.slices_recent_to_old.len(), 2);
+            assert_eq!(
+                plan.provider_groups[group_index].slices_recent_to_old.len(),
+                3
+            );
+        }
+        position = run.next_timeline_position;
+    }
+
+    assert_eq!(position, plan.slices_recent_to_old.len());
+    assert!(next_provider_run(&plan, position).unwrap().is_none());
+    assert_eq!(
+        next_provider_run(&plan, position + 1),
+        Err(PlanningError::InvalidTimelinePosition)
+    );
+}
+
+#[test]
+fn mapper_uses_only_the_selected_provider_run_not_older_same_source_slices() {
+    let plan = mixed_source_timeline_plan();
+    let run = next_provider_run(&plan, 3).unwrap().unwrap();
+    let mut page = provider_page("2026-01-05T14:31:00Z", "2026-01-05T14:32:00Z");
+
+    let mut older_row = page.rows[0].clone();
+    older_row.bar_start_utc = timestamp("2026-01-04T22:30:00Z");
+    older_row.bar_end_exclusive_utc = timestamp("2026-01-04T22:31:00Z");
+    older_row.received_at_utc = timestamp("2026-01-05T14:32:00Z");
+    older_row.available_at_utc = older_row.received_at_utc.clone();
+    page.rows.push(older_row);
+    page.rows
+        .sort_by_key(|row| row.bar_start_utc.as_str().to_owned());
+
+    let mut older_segment = page.segments[0].clone();
+    older_segment.start_utc = timestamp("2026-01-04T22:30:00Z");
+    older_segment.end_exclusive_utc = timestamp("2026-01-04T22:31:00Z");
+    page.segments.push(older_segment);
+    page.segments
+        .sort_by_key(|segment| segment.start_utc.as_str().to_owned());
+
+    let full_group = map_provider_page(&plan, run.group_index, &page).unwrap();
+    assert_eq!(full_group.rows.len(), 2);
+
+    let mapped_run = map_provider_run_page(&plan, &run, &page).unwrap();
+    assert_eq!(mapped_run.rows.len(), 1);
+    assert_eq!(
+        mapped_run.rows[0].bar_start_utc.as_str(),
+        "2026-01-05T14:31:00Z"
+    );
+}
+
 #[test]
 fn mapper_replaces_provider_session_id_and_keeps_unknown_source_evidence_provisional() {
     let date = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
@@ -400,6 +667,25 @@ fn daily_queries_coalesce_by_source_instead_of_emitting_one_group_per_date() {
             .find(|slice| slice.trade_date == start_date.succ_opt().unwrap().succ_opt().unwrap())
             .is_some_and(|slice| slice.provisional)
     );
+
+    let mut position = 0;
+    let mut sip_run_count = 0;
+    let sip_source = PlannedSource::Alpaca {
+        feed: crate::session_router::AlpacaFeed::Sip,
+    };
+    while let Some(run) = next_provider_run(&plan, position).unwrap() {
+        if run.group.source == sip_source {
+            sip_run_count += 1;
+            assert_eq!(run.group.resolution, BarResolutionV1::OneDay);
+            assert_eq!(run.group.slices_recent_to_old.len(), 2);
+            assert_ne!(
+                run.group.slices_recent_to_old[0].trade_date,
+                run.group.slices_recent_to_old[1].trade_date
+            );
+        }
+        position = run.next_timeline_position;
+    }
+    assert_eq!(sip_run_count, 1);
 }
 
 #[test]

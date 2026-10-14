@@ -38,6 +38,19 @@ pub struct ProviderQueryGroup {
     pub slices_recent_to_old: Vec<PlannedSlice>,
 }
 
+/// A time-ordered portion of a source group suitable for one cursor run.
+///
+/// `timeline_position` is the input offset in `MarketBarsPlan::slices_recent_to_old`; the clipped
+/// group contains only the next contiguous run of actual provider-backed slices. Gaps are skipped,
+/// but a different actual source ends the run so pagination cannot jump ahead of an older source.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProviderRun {
+    pub group_index: usize,
+    pub group: ProviderQueryGroup,
+    pub timeline_position: usize,
+    pub next_timeline_position: usize,
+}
+
 /// A deterministic plan for the exact Core request window.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MarketBarsPlan {
@@ -99,6 +112,12 @@ pub enum PlanningError {
     SessionPlan(#[from] PlanError),
     #[error("provider group index is outside the plan")]
     UnknownProviderGroup,
+    #[error("provider timeline position is outside the plan")]
+    InvalidTimelinePosition,
+    #[error("provider run does not match the deterministic plan")]
+    InvalidProviderRun,
+    #[error("provider run contains mixed bar resolutions")]
+    ProviderRunMismatch,
     #[error("provider page exceeds the bounded mapping limits")]
     ProviderPageTooLarge,
     #[error("provider page does not match its planned resolution or adjustment")]
@@ -360,6 +379,99 @@ pub fn plan_market_bars(
     })
 }
 
+/// Select the next source-homogeneous run from the newest-to-oldest plan timeline.
+///
+/// Slices with no actual provider route or an explicit gap are skipped. Such slices do not split a
+/// run, allowing ordinary single-source history to coalesce across non-fetchable intervals. The
+/// first different actual source ends the run and remains the next timeline position.
+pub fn next_provider_run(
+    plan: &MarketBarsPlan,
+    timeline_position: usize,
+) -> Result<Option<ProviderRun>, PlanningError> {
+    let slices = &plan.slices_recent_to_old;
+    if slices.len() > MAX_PAGE_RANGES || plan.provider_groups.len() > MAX_PROVIDER_GROUPS {
+        return Err(PlanningError::ProviderPageTooLarge);
+    }
+    if timeline_position > slices.len() {
+        return Err(PlanningError::InvalidTimelinePosition);
+    }
+
+    let Some(first_index) = (timeline_position..slices.len()).find(|index| {
+        let slice = &slices[*index];
+        slice.gap.is_none() && slice.source.is_some()
+    }) else {
+        return Ok(None);
+    };
+    let first_slice = &slices[first_index];
+    let source = first_slice
+        .source
+        .ok_or(PlanningError::InvalidProviderRun)?;
+    let resolution = interval_to_resolution(first_slice.interval)?;
+    let adjustment = plan.request.adjustment;
+
+    let mut run_slices = Vec::new();
+    let mut next_position = first_index;
+    while next_position < slices.len() {
+        let slice = &slices[next_position];
+        if slice.gap.is_none() {
+            if let Some(slice_source) = slice.source {
+                if slice_source != source {
+                    break;
+                }
+                if interval_to_resolution(slice.interval)? != resolution {
+                    return Err(PlanningError::ProviderRunMismatch);
+                }
+                run_slices.push(slice.clone());
+            }
+        }
+        next_position += 1;
+    }
+    if run_slices.is_empty() {
+        return Err(PlanningError::InvalidProviderRun);
+    }
+
+    let mut matching_groups = plan
+        .provider_groups
+        .iter()
+        .enumerate()
+        .filter(|(_, group)| {
+            group.source == source
+                && group.resolution == resolution
+                && group.adjustment == adjustment
+        })
+        .map(|(index, _)| index);
+    let group_index = matching_groups
+        .next()
+        .ok_or(PlanningError::UnknownProviderGroup)?;
+    if matching_groups.next().is_some() {
+        return Err(PlanningError::InvalidProviderRun);
+    }
+    let fetch_window = run_slices.iter().fold(
+        UtcWindow {
+            start: run_slices[0].window.start,
+            end_exclusive: run_slices[0].window.end_exclusive,
+        },
+        |window, slice| UtcWindow {
+            start: min(window.start, slice.window.start),
+            end_exclusive: max(window.end_exclusive, slice.window.end_exclusive),
+        },
+    );
+    let group = ProviderQueryGroup {
+        source,
+        resolution,
+        adjustment,
+        fetch_window,
+        slices_recent_to_old: run_slices,
+    };
+
+    Ok(Some(ProviderRun {
+        group_index,
+        group,
+        timeline_position,
+        next_timeline_position: next_position,
+    }))
+}
+
 /// Rebind a validated provider page to the selected source group and trusted calendar.
 ///
 /// Provider-returned session IDs and calendar versions are treated as hints only. A row is emitted
@@ -374,6 +486,31 @@ pub fn map_provider_page(
         .provider_groups
         .get(group_index)
         .ok_or(PlanningError::UnknownProviderGroup)?;
+    map_provider_group_page(plan, group, page)
+}
+
+/// Map one page using the clipped source run selected by [`next_provider_run`].
+///
+/// The run is re-derived from its input timeline position before mapping so callers cannot widen
+/// the mapper to another same-source run or reorder the stable cursor timeline.
+pub fn map_provider_run_page(
+    plan: &MarketBarsPlan,
+    run: &ProviderRun,
+    page: &BarsResponseV1,
+) -> Result<MappedProviderPage, PlanningError> {
+    let expected =
+        next_provider_run(plan, run.timeline_position)?.ok_or(PlanningError::InvalidProviderRun)?;
+    if &expected != run {
+        return Err(PlanningError::InvalidProviderRun);
+    }
+    map_provider_group_page(plan, &run.group, page)
+}
+
+fn map_provider_group_page(
+    plan: &MarketBarsPlan,
+    group: &ProviderQueryGroup,
+    page: &BarsResponseV1,
+) -> Result<MappedProviderPage, PlanningError> {
     if group.slices_recent_to_old.len() > MAX_PAGE_RANGES
         || !slices_are_recent_first(&group.slices_recent_to_old)
     {
