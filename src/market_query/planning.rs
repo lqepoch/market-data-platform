@@ -5,7 +5,7 @@
 //! into a small number of source-specific requests, and maps returned source timestamps back to
 //! calendar identities without modifying exact OHLCV values.
 
-use chrono::{DateTime, NaiveDate, SecondsFormat, Utc};
+use chrono::{DateTime, Duration, NaiveDate, SecondsFormat, Utc};
 use market_contracts::{
     AdjustmentV1, AssetClassV1, BarCoverageGapV1, BarCoverageSegmentV1, BarResolutionV1, BarRowV1,
     BarSourceProvenanceV1, BarsContractErrorV1, BarsCoverageStatusV1, BarsEntitlementStatusV1,
@@ -301,6 +301,30 @@ pub fn plan_market_bars(
             )?;
         }
         slices_recent_to_old.push(slice);
+    }
+
+    // A closed XNYS cash date says nothing about an overnight equity session. These are unknown
+    // planning bands only, not session instances or permission to trade. Preserve uncertainty
+    // only in local 00:00-04:00 and 20:00-24:00; known cash-closed daytime remains empty.
+    if intraday
+        && matches!(
+            request.session_scope,
+            SessionScopeV1::All | SessionScopeV1::Overnight
+        )
+    {
+        for day in &calendar.days {
+            if !matches!(&day.state, CalendarDayState::Closed { .. }) {
+                continue;
+            }
+            for night_window in closed_cash_night_windows(day.day_window)? {
+                if let Some(window) = intersect_windows(requested_window, night_window) {
+                    push_bounded(
+                        &mut plan_gaps,
+                        gap_from_window(window, CoverageGapReasonV1::Unknown)?,
+                    )?;
+                }
+            }
+        }
     }
 
     let mut provider_groups: Vec<ProviderQueryGroup> = Vec::new();
@@ -929,6 +953,36 @@ fn missing_overnight_edge_windows(
         }
     }
     result
+}
+
+/// Map cash-closed NY civil days' 00:00-04:00 and 20:00-24:00 wall-clock bands to UTC.
+/// Snapshot day bounds are generated from `America/New_York` local midnights. DST transitions
+/// occur in the early band, so its elapsed UTC length is `day_length - 20 hours`; the late band is
+/// the four hours immediately before the next local midnight. These are coverage-unknown bands,
+/// not trusted market sessions or provider authorization.
+fn closed_cash_night_windows(day_window: UtcWindow) -> Result<[UtcWindow; 2], PlanningError> {
+    let day_length_seconds = day_window
+        .end_exclusive
+        .signed_duration_since(day_window.start)
+        .num_seconds();
+    if !matches!(day_length_seconds, 82_800 | 86_400 | 90_000) {
+        return Err(PlanningError::SessionPlan(PlanError::InvalidCalendarDay));
+    }
+    let early_band_seconds = day_length_seconds - Duration::hours(20).num_seconds();
+    let early_start = day_window.start;
+    let early_end = early_start + Duration::seconds(early_band_seconds);
+    let late_end = day_window.end_exclusive;
+    let late_start = late_end - Duration::hours(4);
+    Ok([
+        UtcWindow {
+            start: early_start,
+            end_exclusive: early_end,
+        },
+        UtcWindow {
+            start: late_start,
+            end_exclusive: late_end,
+        },
+    ])
 }
 
 fn is_day_edge_gap(

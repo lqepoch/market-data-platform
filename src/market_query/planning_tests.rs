@@ -772,6 +772,242 @@ fn overnight_scope_reports_only_calendar_edge_gaps_without_fabricating_over_rout
 }
 
 #[test]
+fn closed_cash_calendar_day_does_not_prove_overnight_closure() {
+    let date = NaiveDate::from_ymd_opt(2026, 1, 4).unwrap(); // Sunday, 20:00 ET is Monday 01:00Z.
+    let mut calendar = test_calendar(date, 1);
+    calendar.days[0].state = CalendarDayState::Closed {
+        reason: Some("Weekend fixture".to_owned()),
+    };
+    calendar.days[0].verification_status = CalendarVerificationStatus::ModeledWeekend;
+    calendar.instances.clear();
+
+    for (scope, has_coverage_gap) in [
+        (SessionScopeV1::All, true),
+        (SessionScopeV1::Overnight, true),
+        (SessionScopeV1::Regular, false),
+        (SessionScopeV1::Extended, false),
+    ] {
+        let mut request = intraday_request("2026-01-05T01:00:00Z", "2026-01-05T01:30:00Z");
+        request.provider_mode = BarsProviderModeV1::Auto;
+        request.session_scope = scope;
+        let plan = plan_market_bars(
+            &request,
+            &timestamp("2026-01-05T02:00:00Z"),
+            &minute_capabilities(),
+            &calendar,
+        )
+        .unwrap();
+
+        assert!(plan.provider_groups.is_empty());
+        assert!(plan.slices_recent_to_old.is_empty());
+        if has_coverage_gap {
+            assert_eq!(plan.gaps.len(), 1);
+            assert_eq!(plan.gaps[0].reason_code, CoverageGapReasonV1::Unknown);
+            assert_eq!(plan.gaps[0].start_utc.as_str(), "2026-01-05T01:00:00Z");
+            assert_eq!(
+                plan.gaps[0].end_exclusive_utc.as_str(),
+                "2026-01-05T01:30:00Z"
+            );
+        } else {
+            assert!(plan.gaps.is_empty());
+        }
+    }
+}
+
+#[test]
+fn closed_cash_daytime_has_no_overnight_coverage_gap() {
+    let date = NaiveDate::from_ymd_opt(2026, 1, 4).unwrap();
+    let mut calendar = test_calendar(date, 1);
+    calendar.days[0].state = CalendarDayState::Closed {
+        reason: Some("Weekend fixture".to_owned()),
+    };
+    calendar.days[0].verification_status = CalendarVerificationStatus::ModeledWeekend;
+    calendar.instances.clear();
+
+    for scope in [SessionScopeV1::All, SessionScopeV1::Overnight] {
+        let mut request = intraday_request("2026-01-04T16:00:00Z", "2026-01-04T16:30:00Z");
+        request.provider_mode = BarsProviderModeV1::Auto;
+        request.session_scope = scope;
+        let plan = plan_market_bars(
+            &request,
+            &timestamp("2026-01-04T17:00:00Z"),
+            &minute_capabilities(),
+            &calendar,
+        )
+        .unwrap();
+
+        assert!(plan.provider_groups.is_empty());
+        assert!(plan.slices_recent_to_old.is_empty());
+        assert!(plan.gaps.is_empty());
+    }
+
+    let daily_request = BarsRequestV1 {
+        symbol: "SPY".to_owned(),
+        asset_class: AssetClassV1::Etf,
+        start: timestamp("2026-01-04T05:00:00Z"),
+        end: timestamp("2026-01-05T05:00:00Z"),
+        resolution: BarResolutionV1::OneDay,
+        session_scope: SessionScopeV1::All,
+        adjustment: AdjustmentV1::Unadjusted,
+        provider_mode: BarsProviderModeV1::Auto,
+        allow_daily_downgrade: false,
+        limit: 100,
+        cursor: None,
+    };
+    let daily_plan = plan_market_bars(
+        &daily_request,
+        &timestamp("2026-01-04T17:00:00Z"),
+        &minute_capabilities(),
+        &calendar,
+    )
+    .unwrap();
+    assert!(daily_plan.provider_groups.is_empty());
+    assert!(daily_plan.slices_recent_to_old.is_empty());
+    assert!(daily_plan.gaps.is_empty());
+}
+
+#[test]
+fn closed_cash_overnight_bands_follow_dst_encoded_in_calendar_day_bounds() {
+    for (date, day_start, next_day_start, request_start, request_end, as_of) in [
+        (
+            NaiveDate::from_ymd_opt(2026, 3, 8).unwrap(),
+            "2026-03-08T05:00:00Z",
+            "2026-03-09T04:00:00Z",
+            "2026-03-09T00:15:00Z", // Sunday 20:15 EDT.
+            "2026-03-09T00:30:00Z",
+            "2026-03-09T00:40:00Z",
+        ),
+        (
+            NaiveDate::from_ymd_opt(2026, 11, 1).unwrap(),
+            "2026-11-01T04:00:00Z",
+            "2026-11-02T05:00:00Z",
+            "2026-11-01T08:30:00Z", // Sunday 03:30 EST after the repeated hour.
+            "2026-11-01T08:45:00Z",
+            "2026-11-01T08:50:00Z",
+        ),
+    ] {
+        let mut calendar = test_calendar(date, 1);
+        calendar.days[0].day_window = UtcWindow {
+            start: utc_dt(day_start),
+            end_exclusive: utc_dt(next_day_start),
+        };
+        calendar.days[0].state = CalendarDayState::Closed {
+            reason: Some("DST weekend fixture".to_owned()),
+        };
+        calendar.days[0].verification_status = CalendarVerificationStatus::ModeledWeekend;
+        calendar.instances.clear();
+        let mut request = intraday_request(request_start, request_end);
+        request.provider_mode = BarsProviderModeV1::Auto;
+        request.session_scope = SessionScopeV1::Overnight;
+        let plan = plan_market_bars(
+            &request,
+            &timestamp(as_of),
+            &minute_capabilities(),
+            &calendar,
+        )
+        .unwrap();
+
+        assert!(plan.provider_groups.is_empty());
+        assert!(plan.slices_recent_to_old.is_empty());
+        assert_eq!(plan.gaps.len(), 1);
+        assert_eq!(plan.gaps[0].reason_code, CoverageGapReasonV1::Unknown);
+        assert_eq!(plan.gaps[0].start_utc.as_str(), request_start);
+        assert_eq!(plan.gaps[0].end_exclusive_utc.as_str(), request_end);
+    }
+}
+
+#[test]
+fn closed_cash_night_bands_have_exact_utc_bounds_across_dst() {
+    for (day_start, next_day_start, expected_early_end, expected_late_start) in [
+        (
+            "2026-03-08T05:00:00Z",
+            "2026-03-09T04:00:00Z",
+            "2026-03-08T08:00:00Z",
+            "2026-03-09T00:00:00Z",
+        ),
+        (
+            "2026-11-01T04:00:00Z",
+            "2026-11-02T05:00:00Z",
+            "2026-11-01T09:00:00Z",
+            "2026-11-02T01:00:00Z",
+        ),
+    ] {
+        let [early, late] = closed_cash_night_windows(UtcWindow {
+            start: utc_dt(day_start),
+            end_exclusive: utc_dt(next_day_start),
+        })
+        .unwrap();
+
+        assert_eq!(early.start, utc_dt(day_start));
+        assert_eq!(early.end_exclusive, utc_dt(expected_early_end));
+        assert_eq!(late.start, utc_dt(expected_late_start));
+        assert_eq!(late.end_exclusive, utc_dt(next_day_start));
+    }
+}
+
+#[test]
+fn spring_dst_closed_day_after_local_0400_has_no_overnight_gap() {
+    let date = NaiveDate::from_ymd_opt(2026, 3, 8).unwrap();
+    let mut calendar = test_calendar(date, 1);
+    calendar.days[0].day_window = UtcWindow {
+        start: utc_dt("2026-03-08T05:00:00Z"),
+        end_exclusive: utc_dt("2026-03-09T04:00:00Z"),
+    };
+    calendar.days[0].state = CalendarDayState::Closed {
+        reason: Some("DST weekend fixture".to_owned()),
+    };
+    calendar.days[0].verification_status = CalendarVerificationStatus::ModeledWeekend;
+    calendar.instances.clear();
+
+    for scope in [SessionScopeV1::All, SessionScopeV1::Overnight] {
+        let mut request = intraday_request("2026-03-08T08:30:00Z", "2026-03-08T08:45:00Z");
+        request.provider_mode = BarsProviderModeV1::Auto;
+        request.session_scope = scope;
+        let plan = plan_market_bars(
+            &request,
+            &timestamp("2026-03-08T08:50:00Z"),
+            &minute_capabilities(),
+            &calendar,
+        )
+        .unwrap();
+
+        assert!(plan.provider_groups.is_empty());
+        assert!(plan.slices_recent_to_old.is_empty());
+        assert!(plan.gaps.is_empty());
+    }
+}
+
+#[test]
+fn cash_holiday_night_is_unknown_without_fabricating_an_overnight_session() {
+    let date = NaiveDate::from_ymd_opt(2026, 11, 26).unwrap();
+    let mut calendar = test_calendar(date, 1);
+    calendar.days[0].state = CalendarDayState::Closed {
+        reason: Some("Thanksgiving fixture".to_owned()),
+    };
+    calendar.instances.clear();
+    let mut request = intraday_request("2026-11-27T02:00:00Z", "2026-11-27T02:30:00Z");
+    request.provider_mode = BarsProviderModeV1::Auto;
+    request.session_scope = SessionScopeV1::All;
+    let plan = plan_market_bars(
+        &request,
+        &timestamp("2026-11-27T03:00:00Z"),
+        &minute_capabilities(),
+        &calendar,
+    )
+    .unwrap();
+
+    assert!(plan.provider_groups.is_empty());
+    assert!(plan.slices_recent_to_old.is_empty());
+    assert_eq!(plan.gaps.len(), 1);
+    assert_eq!(plan.gaps[0].reason_code, CoverageGapReasonV1::Unknown);
+    assert_eq!(plan.gaps[0].start_utc.as_str(), "2026-11-27T02:00:00Z");
+    assert_eq!(
+        plan.gaps[0].end_exclusive_utc.as_str(),
+        "2026-11-27T02:30:00Z"
+    );
+}
+
+#[test]
 fn daily_extended_scope_is_explicitly_unsupported() {
     let start_date = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
     let calendar = test_calendar(start_date, 1);
