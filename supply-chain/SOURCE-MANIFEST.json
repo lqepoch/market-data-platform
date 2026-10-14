@@ -2301,7 +2301,7 @@
       },
       {
         "path": "src/archive.rs",
-        "sha256": "1d11d89a681a5feb08b40675710ccab694a85e2e866cfca802f004320ce80d1f"
+        "sha256": "5f368bfae24212928b1e816b9592754b7e340c67d1eea2e3a4c5527f503aafa2"
       },
       {
         "path": "src/archive/capture_pair.rs",
@@ -2409,7 +2409,7 @@
       },
       {
         "path": "src/archive/tests.rs",
-        "sha256": "31972dfcb2e5ca6d19b7c23032e4e0d9ff74a801e930be215430e74fcc8fa403"
+        "sha256": "8b7b538b58a501ea0560a85f4f2b4d38e5dc8a4ec3b286d61d4109d401e07d00"
       },
       {
         "path": "src/cancellation.rs",
@@ -2680,7 +2680,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "aa8455e43bfb73e9253936128dc2f37a5c4541aff1356f8bc5117c37af6208eb"
+    "sha256": "2958a5908b1911cc60d53ebd07d2223c37a922f184a4fb4730f85b869ae5870b"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
