@@ -106,15 +106,15 @@
     },
     {
       "path": "docs/openapi-v1.yaml",
-      "sha256": "422f1f0a2c172e9e45d340b29898d0ab929b2baf3efe6076a46b61b8b0c32886"
+      "sha256": "b06ad6ebe84a716b8941a977d10052901eb99ad89ba18ac3c2f43937d4ff3830"
     },
     {
       "path": "docs/MARKET_QUERY_RUNTIME.md",
-      "sha256": "0c16ffd9207b3f8f822fc151c01ce2322a5f372640b77de70f6a8cd4130d8b27"
+      "sha256": "43ffab81d0b387e4d5c92b00d961072ed8f3524337c190dc52d1e2a41f6c4220"
     },
     {
       "path": "docs/session-router.md",
-      "sha256": "e1a65b8ada983ba7ee785768bbb145425b3b53e69150d3678f3ad315f379a07a"
+      "sha256": "3f95c064054a03cf5f0e9dc593eee62232ef688196da35172e095462a2df5b24"
     },
     {
       "path": "docs/policies/mdp-cache-reconciliation-v1.md",
@@ -2301,7 +2301,7 @@
       },
       {
         "path": "src/archive.rs",
-        "sha256": "d7e86090525550e813469cc02d1b5f570209e5131fa62f0f1f7020ec2acfd95e"
+        "sha256": "1d11d89a681a5feb08b40675710ccab694a85e2e866cfca802f004320ce80d1f"
       },
       {
         "path": "src/archive/capture_pair.rs",
@@ -2397,11 +2397,11 @@
       },
       {
         "path": "src/archive/reconciliation/tests.rs",
-        "sha256": "b19ac904df6af2ee0032a70cd330fc9628840ba9e0307ee7f17f1570b6130f50"
+        "sha256": "b79e45ef33093237c77f3ae1044a2a7dc179c6372e86797b00b1b9478892ee9c"
       },
       {
         "path": "src/archive/reconciliation/transaction_tests.rs",
-        "sha256": "7ff46bff026d2e45bcbb65fdcc2142b04507615f64d94e65dcbfd481b926264a"
+        "sha256": "70cc230be443eb9197a53906a6aa3513013a90bea47471b898bf185c1a855ef9"
       },
       {
         "path": "src/archive/tests.rs",
@@ -2437,11 +2437,11 @@
       },
       {
         "path": "src/http_api/market_bars.rs",
-        "sha256": "cef6d4ad5067402a5bc4769eb4d0c393a4cb63c6c6b31025e49b59552170aa3e"
+        "sha256": "e0bb5f63e0f2fb15b772957977542857e38f7116d9ebb055eda5e5863a961ea2"
       },
       {
         "path": "src/http_api/market_bars/query.rs",
-        "sha256": "da8bc23312e2df5810d25c7b9c175b4b68fa13f5c167c158f6592a0a9be10161"
+        "sha256": "b6419bf41200b374ed8cf951eb2aa0efca56153cc21024c41e1759c4b2ce09dd"
       },
       {
         "path": "src/http_api/market_bars/response.rs",
@@ -2449,11 +2449,15 @@
       },
       {
         "path": "src/http_api/market_bars_authority_tests.rs",
-        "sha256": "6296761d38d6b3c11c4632280cc3959cdfc4e87ce83d3dbb498e3066884e667c"
+        "sha256": "000b86cc433544bebf66bbf48740b61da9cb5195343f1196d0b44552641dfae1"
+      },
+      {
+        "path": "src/http_api/market_bars_overnight_tests.rs",
+        "sha256": "d00596e7efedd1a8533742c1c5c65f311aed2666444a0fb98db53787a5c0b628"
       },
       {
         "path": "src/http_api/market_bars_tests.rs",
-        "sha256": "8d1e2cbb37a2a560a12f8c3de4fc3115ff3cf5585bf46a32533aab251411b680"
+        "sha256": "22310ad615469da83610d1c40ca2124aa9a7f107e66e1761ac449c0e0c89c1a6"
       },
       {
         "path": "src/http_api/supervisor.rs",
@@ -2477,7 +2481,19 @@
       },
       {
         "path": "src/market_calendar.rs",
-        "sha256": "519303fc0c958c7b8c174de95015acc75788e3cc75aed160c94fbcb60e589016"
+        "sha256": "e8edc20bf95784d47337a223dc84f809ad1e0f5852a35458124debb4618d4522"
+      },
+      {
+        "path": "src/market_calendar/overnight_overlay.rs",
+        "sha256": "319ccf28bdaff771cf4a5c64135d218a1360e60a1bd5e222fabe9cce2bb2bd16"
+      },
+      {
+        "path": "src/market_calendar/overnight_overlay_test_support.rs",
+        "sha256": "f0520f8cfb8540e34621fc0a1e07b84371e7f3101f041b593879432e7b2ea981"
+      },
+      {
+        "path": "src/market_calendar/overnight_overlay_tests.rs",
+        "sha256": "653ce87fcdf5f6f5a769cee1f543edbb410b857961f4e987ad1b95188f43b283"
       },
       {
         "path": "src/market_query.rs",
@@ -2485,7 +2501,7 @@
       },
       {
         "path": "src/market_query/planning.rs",
-        "sha256": "5f91f843a441460e8fc76ae2bf9173b855916ddc744f5fc9a579d37353bb235f"
+        "sha256": "ae25ad7ffde87cc573a1d3748b240a7f5c397aa14b685ad424fc28af3e5cb573"
       },
       {
         "path": "src/market_query/planning_tests.rs",
@@ -2660,7 +2676,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "c7d9c9d302a0117feb2f063028501f786c4462c559e1083179342e2f41ed4602"
+    "sha256": "1bec731aa494d86c6867974e35a5f9fcb41bc7f10b26c3a981b5411fff82d6f5"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
