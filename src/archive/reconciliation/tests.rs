@@ -1009,8 +1009,8 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
             cache_input(
                 &request,
                 &source_scope,
-                test_response("600.27"),
-                test_response("600.27"),
+                test_response("600.26"),
+                test_response("600.26"),
                 test_page_evidence(),
             ),
             1_800_000_012,
