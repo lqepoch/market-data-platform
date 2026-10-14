@@ -288,10 +288,14 @@ pub(super) fn provider_failure_gap_reason(
         ProviderError::Unauthorized | ProviderError::Forbidden => {
             CoverageGapReasonV1::EntitlementLimited
         }
-        ProviderError::MalformedResponse
-        | ProviderError::ResponseTooLarge
-        | ProviderError::PartialPageLimit
-        | ProviderError::InvalidCorePage => CoverageGapReasonV1::ValidationConflict,
+        ProviderError::MalformedResponse | ProviderError::InvalidCorePage => {
+            CoverageGapReasonV1::ValidationConflict
+        }
+        // Local page/byte bounds stop collection before the source window is exhausted; they do
+        // not establish that any returned OHLCV data conflicts.
+        ProviderError::ResponseTooLarge | ProviderError::PartialPageLimit => {
+            CoverageGapReasonV1::SourceGap
+        }
         _ => CoverageGapReasonV1::ProviderUnavailable,
     }
 }

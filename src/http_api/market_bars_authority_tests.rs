@@ -4,7 +4,7 @@
 //! deterministic test verifier, never a provider credential or production trust root.
 
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
 };
 
@@ -69,6 +69,7 @@ enum EvidenceMutation {
 struct SyntheticPageSource {
     facts: SyntheticFacts,
     fetch_count: AtomicUsize,
+    next_error: Mutex<Option<ProviderQueryError>>,
 }
 
 impl SyntheticPageSource {
@@ -76,7 +77,12 @@ impl SyntheticPageSource {
         Self {
             facts,
             fetch_count: AtomicUsize::new(0),
+            next_error: Mutex::new(None),
         }
+    }
+
+    fn fail_next_fetch_with(&self, error: ProviderQueryError) {
+        *self.next_error.lock().unwrap() = Some(error);
     }
 }
 
@@ -120,6 +126,9 @@ impl SyntheticMarketBarsPageSource for SyntheticPageSource {
         selection: &crate::market_query::providers::ProviderPageSelection,
     ) -> Result<ProviderPageFetch, ProviderQueryError> {
         self.fetch_count.fetch_add(1, Ordering::SeqCst);
+        if let Some(error) = self.next_error.lock().unwrap().take() {
+            return Err(error);
+        }
         let group = selection.provider_group();
         let start = group.fetch_window.start;
         let end = group.fetch_window.end_exclusive;
@@ -676,6 +685,43 @@ async fn unknown_provider_facts_never_reach_the_attestor_or_claim_authority() {
             .cache_invalidation_events_for_rights_profile(&rights_for_terminal())
             .is_empty(),
         "partial source pages do not advance the complete-session logical index"
+    );
+    harness.supervisor.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn provider_resource_limits_return_partial_source_gaps_without_conflict_or_verification() {
+    let mut harness = harness(SyntheticFacts::KnownSipAuthorized, false).await;
+    for error in [
+        ProviderQueryError::PartialPageLimit,
+        ProviderQueryError::ResponseTooLarge,
+    ] {
+        harness.source.fail_next_fetch_with(error);
+        let response =
+            send_bars_request(&harness.app, &test_support::terminal_token("market:read")).await;
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        let body = response_json(response).await;
+        assert_eq!(body["coverage_status"], "partial");
+        assert_eq!(body["verified_at"], serde_json::Value::Null);
+        assert_eq!(body["feed"], "unknown");
+        assert_eq!(body["entitlement_status"], "unknown");
+        assert!(body["rows"].as_array().unwrap().is_empty());
+
+        let gaps = body["gaps"].as_array().unwrap();
+        assert!(gaps.iter().any(|gap| gap["reason_code"] == "source_gap"));
+        assert!(
+            gaps.iter()
+                .all(|gap| gap["reason_code"] != "validation_conflict")
+        );
+    }
+    assert_eq!(harness.source.fetch_count.load(Ordering::SeqCst), 2);
+    assert_eq!(harness.evidence_source.calls.load(Ordering::SeqCst), 0);
+    assert!(
+        harness
+            .runtime
+            .cache_invalidation_events_for_rights_profile(&rights_for_terminal())
+            .is_empty(),
+        "provider resource limits do not publish a verified cache event"
     );
     harness.supervisor.shutdown().await.unwrap();
 }
