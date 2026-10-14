@@ -118,7 +118,7 @@
     },
     {
       "path": "docs/policies/mdp-cache-reconciliation-v1.md",
-      "sha256": "caa9f754822ac6fc57e2b20e1059416e33a7163e54d1516f152ce2f99d9d2dd8"
+      "sha256": "5f968fd6932baa336220bd83ea313e55815d981a3bc3fc253a39a2e18d4745da"
     },
     {
       "path": "supply-chain/git-source-pins.json",
@@ -2373,7 +2373,7 @@
       },
       {
         "path": "src/archive/reconciliation/store.rs",
-        "sha256": "2770d30fbfcb77c24243bc63adfffc62ac9eba4aa1f02a048d9b9451705dde15"
+        "sha256": "131310327ccea677c14301188e865d1543675636edf812e2865716bfa8479b3e"
       },
       {
         "path": "src/archive/reconciliation/store/logical.rs",
@@ -2397,7 +2397,7 @@
       },
       {
         "path": "src/archive/reconciliation/tests.rs",
-        "sha256": "ad48adcfbdb2d704d3e0c0ef29ac3f4f14c5712fef4f897109fc3bfafa6fcf23"
+        "sha256": "c614a69e8a22cf0ea67c87c9e51e503fa9a64f19d29b1e905ad02e1fd4e244b9"
       },
       {
         "path": "src/archive/reconciliation/transaction_tests.rs",
@@ -2680,7 +2680,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "2fadb26873768699ae029c46701644ebfd5408969ecd46b9a852274d5c0dc2bc"
+    "sha256": "24986bc0b68f2543fceb9d4060893b4d2e9cb794bc0ecb39456fb46baae9de17"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
