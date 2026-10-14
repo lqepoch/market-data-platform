@@ -900,6 +900,7 @@ fn explicit_pre_cutoff_daily_downgrade_keeps_one_resolution_across_2016_cutoff()
     });
 
     let mut request = intraday_request("2015-12-31T20:00:00Z", "2016-01-05T05:00:00Z");
+    request.provider_mode = BarsProviderModeV1::Auto;
     request.allow_daily_downgrade = true;
     let capabilities = [
         SourceCapability {
