@@ -358,7 +358,7 @@ fn map_transport_error(error: reqwest::Error) -> ProviderQueryError {
 }
 
 fn valid_bearer(value: &str) -> bool {
-    (32..=8_192).contains(&value.len()) && value.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
+    (32..=4_096).contains(&value.len()) && value.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
 }
 
 #[cfg(test)]
@@ -486,7 +486,7 @@ mod tests {
         )
         .expect("build local bridge client");
         let context =
-            ProviderRequestContext::new(std::time::Instant::now() + Duration::from_secs(5), None);
+            ProviderRequestContext::new(tokio::time::Instant::now() + Duration::from_secs(5), None);
         let page = bridge
             .fetch_research_observations(&request, &context)
             .await

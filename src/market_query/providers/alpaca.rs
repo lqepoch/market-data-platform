@@ -15,7 +15,9 @@ use alpaca_rest_read::{
 };
 
 use super::{
-    cursor::{alpaca_cursor, make_alpaca_cursor, validate_provider_cursor},
+    cursor::{
+        alpaca_cursor, alpaca_cursor_cache_input, make_alpaca_cursor, validate_provider_cursor,
+    },
     error::ProviderQueryError,
     projection::{
         build_page, format_utc, make_row, next_bar_end, now_proto, parse_proto, provenance,
@@ -117,9 +119,16 @@ pub(super) async fn fetch_page(
 
     let has_provider_cursor = result.has_next_page();
     let next_provider_cursor = result.take_next_cursor();
-    let continuation_cursor = match next_provider_cursor {
-        Some(cursor) => Some(make_alpaca_cursor(selection, cursor)?),
-        None => selection.cursor_for_next_group()?,
+    let (continuation_cursor, provider_cursor_cache_input) = match next_provider_cursor {
+        Some(cursor) => {
+            let cache_input = alpaca_cursor_cache_input(selection, &cursor)?;
+            (
+                Some(make_alpaca_cursor(selection, cursor)?),
+                Some(cache_input),
+            )
+        }
+        None if !has_provider_cursor => (selection.cursor_for_next_group()?, None),
+        None => return Err(ProviderQueryError::MalformedResponse),
     };
 
     let mut rows = Vec::with_capacity(result.bars().len());
@@ -195,6 +204,7 @@ pub(super) async fn fetch_page(
         Some(response_observed_at),
         Some(1),
         Some(!has_provider_cursor),
+        provider_cursor_cache_input,
     )
 }
 

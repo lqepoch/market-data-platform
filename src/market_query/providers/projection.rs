@@ -46,7 +46,7 @@ pub(super) fn next_bar_end(
         BarResolutionV1::OneDay => group
             .slices_recent_to_old
             .iter()
-            .find(|slice| slice.window.start == start)
+            .find(|slice| slice.trade_date == start.date_naive())
             .map(|slice| slice.window.end_exclusive),
     };
     end.ok_or(ProviderQueryError::MalformedResponse)
@@ -56,11 +56,14 @@ pub(super) fn build_page(
     plan: &MarketBarsPlan,
     group: &ProviderQueryGroup,
     provenance: BarSourceProvenanceV1,
-    rows: Vec<BarRowV1>,
+    mut rows: Vec<BarRowV1>,
     mut gaps: Vec<BarCoverageGapV1>,
     fetched_at: ProtoTimestampV2,
     continuation_cursor: Option<String>,
 ) -> Result<BarsResponseV1, ProviderQueryError> {
+    // Providers may paginate newest-first. Keep pagination order in the opaque cursor, while
+    // normalizing each returned page for chart and cache consumers.
+    rows.sort_by(|left, right| left.bar_start_utc.cmp(&right.bar_start_utc));
     gaps.sort_by(|left, right| {
         left.start_utc
             .cmp(&right.start_utc)

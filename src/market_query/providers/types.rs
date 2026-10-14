@@ -68,6 +68,9 @@ impl ProviderPageFetch {
         response_observed_at_utc: Option<ProtoTimestampV2>,
         pages_seen: Option<u32>,
         pages_exhausted: Option<bool>,
+        provider_cursor_cache_input: Option<
+            crate::archive::reconciliation::ProviderCursorCacheInputV1,
+        >,
     ) -> Result<Self, ProviderQueryError> {
         let truncated = response.truncated;
         if response.validate().is_err() {
@@ -84,6 +87,7 @@ impl ProviderPageFetch {
                 last_source_sequence: None,
                 sequence_gap_count: None,
                 truncated,
+                provider_cursor_cache_input,
             },
         })
     }

@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use crate::market_query::planning::{MarketBarsPlan, ProviderQueryGroup};
 
 use super::{
-    cursor::{futu_cursor, make_futu_cursor, validate_provider_cursor},
+    cursor::{futu_cursor, futu_cursor_cache_input, make_futu_cursor, validate_provider_cursor},
     error::{ProviderConfigError, ProviderQueryError},
     projection::{
         build_page, format_utc, make_row, next_bar_end, now_proto, parse_proto, provenance,
@@ -200,9 +200,15 @@ impl FutuGateway {
                 CoverageGapReasonV1::Unknown,
             )?);
         }
-        let continuation_cursor = match page.cursor {
-            Some(cursor) => Some(make_futu_cursor(selection, cursor)?),
-            None => selection.cursor_for_next_group()?,
+        let (continuation_cursor, provider_cursor_cache_input) = match page.cursor {
+            Some(cursor) => {
+                let cache_input = futu_cursor_cache_input(selection, &cursor)?;
+                (
+                    Some(make_futu_cursor(selection, cursor)?),
+                    Some(cache_input),
+                )
+            }
+            None => (selection.cursor_for_next_group()?, None),
         };
         let response = build_page(
             plan,
@@ -226,6 +232,7 @@ impl FutuGateway {
             observed_at,
             Some(page.pages_fetched),
             Some(!page.has_more),
+            provider_cursor_cache_input,
         )
     }
 }
@@ -500,7 +507,7 @@ mod tests {
         let selection = select_page(&request, &plan).expect("select query group");
         let gateway = FutuGateway::new(port).expect("build fixed-loopback gateway");
         let context = ProviderRequestContext::new(
-            std::time::Instant::now() + Duration::from_secs(5),
+            tokio::time::Instant::now() + Duration::from_secs(5),
             Some("test-gateway-delegation".to_owned()),
         );
         let fetched = gateway
@@ -525,7 +532,7 @@ mod tests {
         let selection = select_page(&request, &plan).expect("select query group");
         let gateway = FutuGateway::new(1).expect("build client without connecting");
         let context =
-            ProviderRequestContext::new(std::time::Instant::now() + Duration::from_secs(1), None);
+            ProviderRequestContext::new(tokio::time::Instant::now() + Duration::from_secs(1), None);
         let error = gateway
             .fetch_page(&plan, &plan.provider_groups[0], &selection, &context)
             .await

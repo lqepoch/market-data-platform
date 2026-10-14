@@ -7,7 +7,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    market_query::planning::{MarketBarsPlan, ProviderQueryGroup},
+    archive::reconciliation::{
+        CacheKeyV1, ProviderCursorCacheInputV1, ProviderCursorKindV1,
+        ValidatedProviderCursorReceiptV1,
+    },
+    market_query::planning::{MarketBarsPlan, ProviderQueryGroup, ProviderRun, next_provider_run},
     session_router::{AlpacaFeed, PlannedSource},
 };
 
@@ -31,6 +35,7 @@ struct CursorEnvelope {
     issued_at_unix_seconds: u64,
     expires_at_unix_seconds: u64,
     group_index: usize,
+    timeline_position: usize,
     provider_cursor: Option<ProviderCursor>,
 }
 
@@ -57,8 +62,9 @@ pub struct ProviderPageSelection {
     as_of_utc: String,
     issued_at_unix_seconds: u64,
     expires_at_unix_seconds: u64,
-    group_index: usize,
-    group_count: usize,
+    run: ProviderRun,
+    timeline_position: usize,
+    next_run_group_index: Option<usize>,
     provider_cursor: Option<ProviderCursor>,
     cache_key: String,
     cache_identity: ProviderCacheIdentity,
@@ -69,8 +75,9 @@ impl fmt::Debug for ProviderPageSelection {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ProviderPageSelection")
-            .field("group_index", &self.group_index)
-            .field("group_count", &self.group_count)
+            .field("group_index", &self.run.group_index)
+            .field("timeline_position", &self.timeline_position)
+            .field("run_window", &self.run.group.fetch_window)
             .field("has_provider_cursor", &self.provider_cursor.is_some())
             .field("cache_key", &self.cache_key)
             .finish()
@@ -81,7 +88,25 @@ impl ProviderPageSelection {
     /// Return the selected group index within the frozen plan.
     #[must_use]
     pub const fn group_index(&self) -> usize {
-        self.group_index
+        self.run.group_index
+    }
+
+    /// Return the plan timeline position for this run's opaque continuation.
+    #[must_use]
+    pub const fn timeline_position(&self) -> usize {
+        self.timeline_position
+    }
+
+    /// Return the clipped provider group for this temporal run.
+    #[must_use]
+    pub const fn provider_group(&self) -> &ProviderQueryGroup {
+        &self.run.group
+    }
+
+    /// Return the clipped run for trusted plan mapping.
+    #[must_use]
+    pub const fn provider_run(&self) -> &ProviderRun {
+        &self.run
     }
 
     /// Return a digest suitable for this exact planned source group cache request.
@@ -102,15 +127,83 @@ impl ProviderPageSelection {
         self.cache_policy
     }
 
-    /// Build the next group's opaque cursor after a cache hit or a fully exhausted provider page.
+    /// Build the next temporal run's cursor after a cache hit or an exhausted provider page.
     pub fn cursor_for_next_group(&self) -> Result<Option<String>, ProviderQueryError> {
-        let next_index = self.group_index.saturating_add(1);
-        if next_index >= self.group_count {
+        let Some(next_group_index) = self.next_run_group_index else {
             return Ok(None);
-        }
-        encode_envelope(&self.envelope(next_index, None))
+        };
+        encode_envelope(&self.envelope(next_group_index, self.run.next_timeline_position, None))
             .map(Some)
             .map_err(|_| ProviderQueryError::InvalidCursor)
+    }
+
+    /// Rewrap a cache-verified provider-local cursor in this request's current plan envelope.
+    ///
+    /// The raw provider token is consumed only inside this module. The caller supplies the exact
+    /// cache key used for the hit so both the persisted receipt and this group's stable cache
+    /// identity are checked before a new outer continuation is returned.
+    pub(crate) fn cursor_after_cached_provider_page(
+        &self,
+        receipt: &ValidatedProviderCursorReceiptV1,
+        cache_key: &CacheKeyV1,
+        now_unix_seconds: u64,
+    ) -> Result<String, ProviderQueryError> {
+        receipt
+            .validate_for_cache_key(cache_key)
+            .map_err(|_| ProviderQueryError::CursorQueryMismatch)?;
+
+        let expected_cursor_hash = digest_text(&self.cache_key);
+        let expected_provider = match receipt.kind() {
+            ProviderCursorKindV1::Alpaca => "alpaca",
+            ProviderCursorKindV1::Futu => "futu",
+        };
+        if cache_key.request_cursor_sha256.as_deref() != Some(expected_cursor_hash.as_str())
+            || cache_key.provider != self.cache_identity.provider
+            || cache_key.feed != self.cache_identity.feed
+            || cache_key.source_scope_id != self.cache_identity.source_scope_id
+            || cache_key.effective_resolution != self.cache_identity.effective_resolution.as_str()
+            || cache_key.numeric_encoding != self.cache_identity.numeric_encoding.as_str()
+            || self.cache_identity.provider != expected_provider
+        {
+            return Err(ProviderQueryError::CursorQueryMismatch);
+        }
+
+        if now_unix_seconds < self.issued_at_unix_seconds {
+            return Err(ProviderQueryError::InvalidCursor);
+        }
+        let expires_at_unix_seconds = receipt
+            .expires_at_unix_seconds()
+            .min(self.expires_at_unix_seconds);
+        if now_unix_seconds >= expires_at_unix_seconds
+            || self.issued_at_unix_seconds >= expires_at_unix_seconds
+        {
+            return Err(ProviderQueryError::CursorExpired);
+        }
+
+        let provider_cursor = match receipt.kind() {
+            ProviderCursorKindV1::Alpaca => {
+                let cursor: alpaca_rest_read::StockBarsCursor =
+                    serde_json::from_str(receipt.payload_json())
+                        .map_err(|_| ProviderQueryError::InvalidCursor)?;
+                ProviderCursor::Alpaca(cursor)
+            }
+            ProviderCursorKindV1::Futu => {
+                let cursor: String = serde_json::from_str(receipt.payload_json())
+                    .map_err(|_| ProviderQueryError::InvalidCursor)?;
+                if !valid_futu_cursor(&cursor) {
+                    return Err(ProviderQueryError::InvalidCursor);
+                }
+                ProviderCursor::Futu(cursor)
+            }
+        };
+
+        let mut envelope = self.envelope(
+            self.run.group_index,
+            self.timeline_position,
+            Some(provider_cursor),
+        );
+        envelope.expires_at_unix_seconds = expires_at_unix_seconds;
+        encode_envelope(&envelope).map_err(|_| ProviderQueryError::InvalidCursor)
     }
 
     pub(super) fn provider_cursor(&self) -> Option<&ProviderCursor> {
@@ -120,8 +213,14 @@ impl ProviderPageSelection {
     pub(super) fn validate_for(&self, plan: &MarketBarsPlan) -> Result<(), ProviderQueryError> {
         if self.plan_sha256 != plan_digest(plan)?
             || self.as_of_utc != plan.as_of.as_str()
-            || self.group_index >= plan.provider_groups.len()
+            || self.timeline_position > plan.slices_recent_to_old.len()
         {
+            return Err(ProviderQueryError::CursorPlanChanged);
+        }
+        let run = next_provider_run(plan, self.timeline_position)
+            .map_err(|_| ProviderQueryError::CursorPlanChanged)?
+            .ok_or(ProviderQueryError::CursorPlanChanged)?;
+        if run != self.run {
             return Err(ProviderQueryError::CursorPlanChanged);
         }
         Ok(())
@@ -131,13 +230,18 @@ impl ProviderPageSelection {
         &self,
         provider_cursor: ProviderCursor,
     ) -> Result<String, ProviderQueryError> {
-        encode_envelope(&self.envelope(self.group_index, Some(provider_cursor)))
-            .map_err(|_| ProviderQueryError::InvalidCursor)
+        encode_envelope(&self.envelope(
+            self.run.group_index,
+            self.timeline_position,
+            Some(provider_cursor),
+        ))
+        .map_err(|_| ProviderQueryError::InvalidCursor)
     }
 
     fn envelope(
         &self,
         group_index: usize,
+        timeline_position: usize,
         provider_cursor: Option<ProviderCursor>,
     ) -> CursorEnvelope {
         CursorEnvelope {
@@ -148,6 +252,7 @@ impl ProviderPageSelection {
             issued_at_unix_seconds: self.issued_at_unix_seconds,
             expires_at_unix_seconds: self.expires_at_unix_seconds,
             group_index,
+            timeline_position,
             provider_cursor,
         }
     }
@@ -192,54 +297,77 @@ pub fn select_page(
     request
         .validate()
         .map_err(|_| ProviderQueryError::CursorQueryMismatch)?;
-    if plan.provider_groups.is_empty() {
-        return Err(ProviderQueryError::ProviderGroupUnavailable);
-    }
     if request_identity(request)? != request_identity(&plan.request)? {
         return Err(ProviderQueryError::CursorQueryMismatch);
     }
     let request_sha256 = request_digest(request)?;
     let plan_sha256 = plan_digest(plan)?;
-    let (group_index, provider_cursor, issued_at_unix_seconds, expires_at_unix_seconds) =
-        if let Some(cursor) = request.cursor.as_deref() {
-            let envelope = decode_envelope(cursor)?;
-            if envelope.request_sha256 != request_sha256 {
-                return Err(ProviderQueryError::CursorQueryMismatch);
-            }
-            if envelope.plan_sha256 != plan_sha256 || envelope.as_of_utc != plan.as_of.as_str() {
-                return Err(ProviderQueryError::CursorPlanChanged);
-            }
-            let now = current_unix_seconds()?;
-            if now >= envelope.expires_at_unix_seconds {
-                return Err(ProviderQueryError::CursorExpired);
-            }
-            if now < envelope.issued_at_unix_seconds {
-                return Err(ProviderQueryError::InvalidCursor);
-            }
-            if envelope.group_index >= plan.provider_groups.len() {
-                return Err(ProviderQueryError::InvalidCursor);
-            }
-            let group = &plan.provider_groups[envelope.group_index];
-            validate_cursor_source(envelope.provider_cursor.as_ref(), group.source)?;
-            (
-                envelope.group_index,
-                envelope.provider_cursor,
-                envelope.issued_at_unix_seconds,
-                envelope.expires_at_unix_seconds,
-            )
-        } else {
-            let issued = unix_seconds(&plan.as_of)?;
-            (0, None, issued, issued.saturating_add(CURSOR_TTL_SECS))
-        };
+    let (
+        timeline_position,
+        expected_group_index,
+        provider_cursor,
+        issued_at_unix_seconds,
+        expires_at_unix_seconds,
+    ) = if let Some(cursor) = request.cursor.as_deref() {
+        let envelope = decode_envelope(cursor)?;
+        if envelope.request_sha256 != request_sha256 {
+            return Err(ProviderQueryError::CursorQueryMismatch);
+        }
+        if envelope.plan_sha256 != plan_sha256 || envelope.as_of_utc != plan.as_of.as_str() {
+            return Err(ProviderQueryError::CursorPlanChanged);
+        }
+        let now = current_unix_seconds()?;
+        if now >= envelope.expires_at_unix_seconds {
+            return Err(ProviderQueryError::CursorExpired);
+        }
+        if now < envelope.issued_at_unix_seconds {
+            return Err(ProviderQueryError::InvalidCursor);
+        }
+        if envelope.timeline_position > plan.slices_recent_to_old.len() {
+            return Err(ProviderQueryError::InvalidCursor);
+        }
+        let run = next_provider_run(plan, envelope.timeline_position)
+            .map_err(|_| ProviderQueryError::CursorPlanChanged)?
+            .ok_or(ProviderQueryError::InvalidCursor)?;
+        if envelope.group_index != run.group_index {
+            return Err(ProviderQueryError::CursorQueryMismatch);
+        }
+        validate_cursor_source(envelope.provider_cursor.as_ref(), run.group.source)?;
+        (
+            envelope.timeline_position,
+            Some(envelope.group_index),
+            envelope.provider_cursor,
+            envelope.issued_at_unix_seconds,
+            envelope.expires_at_unix_seconds,
+        )
+    } else {
+        let issued = unix_seconds(&plan.as_of)?;
+        (
+            0,
+            None,
+            None,
+            issued,
+            issued.saturating_add(CURSOR_TTL_SECS),
+        )
+    };
 
-    let group = &plan.provider_groups[group_index];
-    let (cache_identity, cache_policy) = cache_identity(plan, group)?;
+    let run = next_provider_run(plan, timeline_position)
+        .map_err(|_| ProviderQueryError::ProviderGroupUnavailable)?
+        .ok_or(ProviderQueryError::ProviderGroupUnavailable)?;
+    if expected_group_index.is_some_and(|index| index != run.group_index) {
+        return Err(ProviderQueryError::CursorQueryMismatch);
+    }
+    let next_run_group_index = next_provider_run(plan, run.next_timeline_position)
+        .map_err(|_| ProviderQueryError::ProviderGroupUnavailable)?
+        .map(|next_run| next_run.group_index);
+    let (cache_identity, cache_policy) = cache_identity(plan, &run.group)?;
     // The outer continuation token is bound to `as_of` and the complete plan. The cache key is a
     // separate, stable identity for the actual group page: omit the moving plan clock, outer
     // request bounds and opaque MDP cursor, while retaining the normalized request and exact
     // coalesced provider window. Include the provider cursor only as part of the digest input; its
     // raw value is never returned as the cache key or logged.
-    let slices = group
+    let slices = run
+        .group
         .slices_recent_to_old
         .iter()
         .map(|slice| {
@@ -263,10 +391,11 @@ pub fn select_page(
         plan.request.provider_mode,
         plan.request.allow_daily_downgrade,
         plan.request.limit,
-        group.source,
-        group.resolution,
-        group.adjustment,
-        group.fetch_window,
+        run.group.source,
+        run.group.resolution,
+        run.group.adjustment,
+        run.group.fetch_window,
+        timeline_position,
         plan.calendar_source_id.as_str(),
         plan.calendar_version.as_str(),
         slices,
@@ -278,8 +407,9 @@ pub fn select_page(
         as_of_utc: plan.as_of.as_str().to_owned(),
         issued_at_unix_seconds,
         expires_at_unix_seconds,
-        group_index,
-        group_count: plan.provider_groups.len(),
+        run,
+        timeline_position,
+        next_run_group_index,
         provider_cursor,
         cache_key,
         cache_identity,
@@ -335,6 +465,19 @@ pub(super) fn make_alpaca_cursor(
     selection.cursor_for_provider_page(ProviderCursor::Alpaca(cursor))
 }
 
+pub(super) fn alpaca_cursor_cache_input(
+    selection: &ProviderPageSelection,
+    cursor: &alpaca_rest_read::StockBarsCursor,
+) -> Result<ProviderCursorCacheInputV1, ProviderQueryError> {
+    let payload = serde_json::to_string(cursor).map_err(|_| ProviderQueryError::InvalidCursor)?;
+    ProviderCursorCacheInputV1::new(
+        ProviderCursorKindV1::Alpaca,
+        payload,
+        selection.expires_at_unix_seconds,
+    )
+    .map_err(|_| ProviderQueryError::InvalidCursor)
+}
+
 pub(super) fn make_futu_cursor(
     selection: &ProviderPageSelection,
     cursor: String,
@@ -343,6 +486,22 @@ pub(super) fn make_futu_cursor(
         return Err(ProviderQueryError::MalformedResponse);
     }
     selection.cursor_for_provider_page(ProviderCursor::Futu(cursor))
+}
+
+pub(super) fn futu_cursor_cache_input(
+    selection: &ProviderPageSelection,
+    cursor: &str,
+) -> Result<ProviderCursorCacheInputV1, ProviderQueryError> {
+    if !valid_futu_cursor(cursor) {
+        return Err(ProviderQueryError::MalformedResponse);
+    }
+    let payload = serde_json::to_string(cursor).map_err(|_| ProviderQueryError::InvalidCursor)?;
+    ProviderCursorCacheInputV1::new(
+        ProviderCursorKindV1::Futu,
+        payload,
+        selection.expires_at_unix_seconds,
+    )
+    .map_err(|_| ProviderQueryError::InvalidCursor)
 }
 
 fn cache_identity(
@@ -468,6 +627,10 @@ fn digest_json(value: &impl Serialize) -> Result<String, ProviderQueryError> {
     Ok(hex::encode(Sha256::digest(bytes)))
 }
 
+fn digest_text(value: &str) -> String {
+    hex::encode(Sha256::digest(value.as_bytes()))
+}
+
 fn encode_envelope(envelope: &CursorEnvelope) -> Result<String, ProviderQueryError> {
     let body = serde_json::to_vec(envelope).map_err(|_| ProviderQueryError::InvalidCursor)?;
     let token = format!("{CURSOR_PREFIX}{}", hex::encode(body));
@@ -538,8 +701,8 @@ mod tests {
     use crate::{
         market_query::planning::{MarketBarsPlan, ProviderQueryGroup},
         session_router::{
-            CalendarVerificationStatus, DataInterval, PlannedSlice, PlannedSource, SessionRank,
-            UtcWindow,
+            AlpacaFeed, CalendarVerificationStatus, DataInterval, PlannedSlice, PlannedSource,
+            SessionRank, UtcWindow,
         },
     };
 
@@ -630,5 +793,87 @@ mod tests {
         next_request.cursor = Some(next_cursor);
         let next_page = select_page(&next_request, &first_plan).expect("continued page selection");
         assert_ne!(first.cache_key(), next_page.cache_key());
+    }
+
+    #[test]
+    fn provider_cursor_stays_redacted_from_cache_identity_and_debug_output() {
+        let (request, plan) = fixture("2026-10-14T19:00:00Z");
+        let selection = select_page(&request, &plan).expect("first-page selection");
+        let provider_cursor = "provider-page-secret-token-12345";
+        let outer_cursor = selection
+            .cursor_for_provider_page(ProviderCursor::Futu(provider_cursor.to_owned()))
+            .expect("outer cursor");
+        let cache_input =
+            super::futu_cursor_cache_input(&selection, provider_cursor).expect("cache input");
+
+        assert!(!outer_cursor.contains(provider_cursor));
+        assert!(!selection.cache_key().contains(provider_cursor));
+        assert!(!format!("{cache_input:?}").contains(provider_cursor));
+    }
+
+    #[test]
+    fn exhausted_provider_page_advances_to_next_temporal_source_run() {
+        let as_of = Utc::now().to_rfc3339();
+        let (mut request, mut plan) = fixture(&as_of);
+        request.provider_mode = market_contracts::BarsProviderModeV1::Auto;
+        plan.request.provider_mode = request.provider_mode;
+
+        let first_slice = plan.slices_recent_to_old[0].clone();
+        let prior_start = first_slice.window.start - chrono::Duration::days(1);
+        let prior_end = first_slice.window.end_exclusive - chrono::Duration::days(1);
+        request.start =
+            ProtoTimestampV2::parse(&prior_start.to_rfc3339()).expect("valid prior request start");
+        plan.request.start = request.start.clone();
+        plan.requested_window.start = prior_start;
+        let mut prior_slice = first_slice.clone();
+        prior_slice.trade_date = NaiveDate::from_ymd_opt(2026, 10, 12).expect("valid date");
+        prior_slice.session_id = "XNYS-2026-10-12".to_owned();
+        prior_slice.session_instance_id = Some("XNYS-2026-10-12-regular".to_owned());
+        prior_slice.window = UtcWindow {
+            start: prior_start,
+            end_exclusive: prior_end,
+        };
+        prior_slice.source = Some(PlannedSource::Alpaca {
+            feed: AlpacaFeed::Sip,
+        });
+        prior_slice.source_label = Some("Alpaca SIP".to_owned());
+
+        let futu_group = plan.provider_groups[0].clone();
+        let alpaca_group = ProviderQueryGroup {
+            source: PlannedSource::Alpaca {
+                feed: AlpacaFeed::Sip,
+            },
+            resolution: futu_group.resolution,
+            adjustment: futu_group.adjustment,
+            fetch_window: prior_slice.window,
+            slices_recent_to_old: vec![prior_slice.clone()],
+        };
+        plan.slices_recent_to_old.push(prior_slice);
+        plan.provider_groups = vec![futu_group, alpaca_group];
+
+        let first = select_page(&request, &plan).expect("first temporal run");
+        assert_eq!(first.group_index(), 0);
+        assert_eq!(first.timeline_position(), 0);
+        assert_eq!(first.provider_group().source, PlannedSource::Futu);
+
+        request.cursor = first
+            .cursor_for_next_group()
+            .expect("encode next temporal run")
+            .expect("second run exists");
+        let second = select_page(&request, &plan).expect("second temporal run");
+        assert_eq!(second.group_index(), 1);
+        assert_eq!(second.timeline_position(), 1);
+        assert_eq!(
+            second.provider_group().source,
+            PlannedSource::Alpaca {
+                feed: AlpacaFeed::Sip
+            }
+        );
+        assert!(
+            second
+                .cursor_for_next_group()
+                .expect("there is no third run")
+                .is_none()
+        );
     }
 }

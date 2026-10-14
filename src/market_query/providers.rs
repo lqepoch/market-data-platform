@@ -113,10 +113,7 @@ impl MarketBarsProviderRuntime {
         context: ProviderRequestContext,
     ) -> Result<ProviderPageFetch, ProviderQueryError> {
         selection.validate_for(plan)?;
-        let group = plan
-            .provider_groups
-            .get(selection.group_index())
-            .ok_or(ProviderQueryError::ProviderGroupUnavailable)?;
+        let group = selection.provider_group();
         match group.source {
             PlannedSource::Alpaca { .. } => {
                 let client = self
@@ -211,15 +208,18 @@ fn alpaca_source_capabilities(configured: bool) -> Vec<SourceCapability> {
 fn alpaca_client_from_environment() -> Result<Option<AlpacaRestReadClient>, ProviderConfigError> {
     let key = optional_secret("ALPACA_KEY")?;
     let secret = optional_secret("ALPACA_SECRET")?;
-    let (key, secret) = match (key, secret) {
+    let (mut key, mut secret) = match (key, secret) {
         (None, None) => return Ok(None),
         (Some(key), Some(secret)) => (key, secret),
         _ => return Err(ProviderConfigError::IncompleteAlpacaCredentials),
     };
 
+    // Move each value directly into the connector's own zeroizing credential wrapper. Leaving an
+    // empty string in these environment wrappers avoids creating a second plain-text copy.
+    let key = std::mem::take(&mut *key);
+    let secret = std::mem::take(&mut *secret);
     let credentials =
-        AlpacaRestCredentials::new(key.as_str().to_owned(), secret.as_str().to_owned())
-            .map_err(|_| ProviderConfigError::InvalidValue)?;
+        AlpacaRestCredentials::new(key, secret).map_err(|_| ProviderConfigError::InvalidValue)?;
     AlpacaRestReadClient::new(credentials, AlpacaRestLimits::default())
         .map(Some)
         .map_err(|_| ProviderConfigError::ClientInitialization)
