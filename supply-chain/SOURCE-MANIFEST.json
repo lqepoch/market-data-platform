@@ -118,7 +118,7 @@
     },
     {
       "path": "docs/policies/mdp-cache-reconciliation-v1.md",
-      "sha256": "4026cf11109d23e11fa4ef8bdae42139189a7a1155251c636fc85822aa6c6f02"
+      "sha256": "23024ff938d010d95c004860203ed1bd46a48b32d9c7ced5c149e4e2e3e6494f"
     },
     {
       "path": "supply-chain/git-source-pins.json",
@@ -2381,15 +2381,15 @@
       },
       {
         "path": "src/archive/reconciliation/store/logical_shards.rs",
-        "sha256": "bc252c0daf9d91a12e6ed9747ecb85439598be2c66b9fe185b95eb8f97f4eab7"
+        "sha256": "8c04fe6764503f2e901d233a75890229ce4fa5e8effe55a4f901f73ad00a424a"
       },
       {
         "path": "src/archive/reconciliation/store/transaction.rs",
-        "sha256": "cdc5b2470348b24150260ebf8eb1bdf8dd834deb43834c492b88f75f4f28effb"
+        "sha256": "3de179ba8f6bb5345f575ef3a403ec5cb523861495be2a5c9400027cd3e9483e"
       },
       {
         "path": "src/archive/reconciliation/store/transaction_format.rs",
-        "sha256": "550ad8281bb5199b2fbcd00ebc71af45f28f7e493cb3200f5ffa3283f330cab2"
+        "sha256": "a6b7e9e87b545cd630cbb90bc0f77405160e67f5aeba62dde76134eadf35c23c"
       },
       {
         "path": "src/archive/reconciliation/store/version_ops.rs",
@@ -2397,7 +2397,11 @@
       },
       {
         "path": "src/archive/reconciliation/tests.rs",
-        "sha256": "c4975f5c63243f773991c2127298af381a9db987a7cb56149ae5bd3398841cf3"
+        "sha256": "b19ac904df6af2ee0032a70cd330fc9628840ba9e0307ee7f17f1570b6130f50"
+      },
+      {
+        "path": "src/archive/reconciliation/transaction_tests.rs",
+        "sha256": "7ff46bff026d2e45bcbb65fdcc2142b04507615f64d94e65dcbfd481b926264a"
       },
       {
         "path": "src/archive/tests.rs",
@@ -2437,7 +2441,7 @@
       },
       {
         "path": "src/http_api/market_bars/query.rs",
-        "sha256": "de0d8ba95b98d617d6b223f7c5e667d80bed3d5c20f1e11b4bf7b4099563c639"
+        "sha256": "da8bc23312e2df5810d25c7b9c175b4b68fa13f5c167c158f6592a0a9be10161"
       },
       {
         "path": "src/http_api/market_bars/response.rs",
@@ -2445,7 +2449,7 @@
       },
       {
         "path": "src/http_api/market_bars_authority_tests.rs",
-        "sha256": "d054354b78f0014951e39ec626fa4645ed9f0155045f948dd5e74628c13ceaa9"
+        "sha256": "0929d53224897a0853eba6d587aa903f2332e9fb2a820628db848304f018893b"
       },
       {
         "path": "src/http_api/market_bars_tests.rs",
@@ -2481,11 +2485,11 @@
       },
       {
         "path": "src/market_query/planning.rs",
-        "sha256": "f3a0381c22cba8921873dd8b383ffec1fafe50df54be6feafa36f50e0172c11a"
+        "sha256": "5f91f843a441460e8fc76ae2bf9173b855916ddc744f5fc9a579d37353bb235f"
       },
       {
         "path": "src/market_query/planning_tests.rs",
-        "sha256": "b1be36983ce0dabb269861ab06612f15da20453916a34e053dddea48603ce0b9"
+        "sha256": "320b4db16a18e72b1f196846c3fa0a91d24c37d7713805df12e665e79a356a3c"
       },
       {
         "path": "src/market_query/providers.rs",
@@ -2617,7 +2621,7 @@
       },
       {
         "path": "src/session_router_tests.rs",
-        "sha256": "c6237668a8290732b47e916a643847e141cc92ce44b5b423ab1c4505dd63db5e"
+        "sha256": "64e618c588fe81f0261052f8e98a4129e62ed519b2b184d5365398dfc668d769"
       },
       {
         "path": "src/storage.rs",
@@ -2656,7 +2660,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "0fb1fedb488e40fcdf3678605db1f81a2467bb518f505ae66ac5d5bef89fcc7e"
+    "sha256": "aed60586b95fd5fb2ef41cd50a13ea958ec458a913a6968789509d63f51cfabb"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
