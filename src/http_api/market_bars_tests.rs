@@ -679,7 +679,16 @@ fn exhausted_cache_hit_advances_to_the_next_provider_run_without_provider_cursor
 
     let mut next_request = request.clone();
     next_request.cursor = Some(continuation.clone());
-    let next_as_of = crate::market_query::providers::planning_as_of(&next_request, &as_of).unwrap();
+    let observed_now = chrono::DateTime::<chrono::Utc>::from_timestamp(
+        i64::try_from(now_unix_seconds).unwrap(),
+        0,
+    )
+    .unwrap()
+    .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let observed_now = ProtoTimestampV2::parse(&observed_now).unwrap();
+    let next_as_of =
+        crate::market_query::providers::planning_as_of(&next_request, &observed_now).unwrap();
+    assert_eq!(next_as_of, as_of);
     let next_plan = crate::market_query::planning::plan_market_bars(
         &next_request,
         &next_as_of,
