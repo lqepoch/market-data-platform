@@ -155,3 +155,5 @@ clean only the task's clean, merged branch after checking private-state filename
 Use the existing checkout when the task prohibits extra worktrees or clones.
 Merging a scoped fix is separate from release acceptance, deployment, provider
 entitlement and Paper/Live authorization; it grants none of those capabilities.
+
+Public compilation/build acceptance uses exact PR HEAD GitHub Actions; do not run local cargo build/test/clippy or Docker for this integration. Formatting, metadata, and source-manifest checks do not establish a compiled build. Private consumers retain their controlled native validation and credential isolation.
