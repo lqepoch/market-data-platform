@@ -1250,7 +1250,7 @@ impl CacheVersionStoreV1 {
                         },
                     ));
                 }
-                logical_index_status = super::logical::preview_logical_session_updates(
+                logical_index_status = logical::preview_logical_session_updates(
                     &logical_identity,
                     &logical_fingerprint,
                     existing_logical.as_ref(),

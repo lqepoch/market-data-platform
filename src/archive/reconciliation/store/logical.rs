@@ -9,7 +9,7 @@ use super::super::logical_index::{
 use super::super::{authority::TrustedProviderAdmissionVerifierV1, valid_dimension};
 use super::{
     CacheAuthorityV1, CacheReadResultV1, CacheReconciliationError, CacheVersionStoreV1, Result,
-    VERSION_NONCE, ensure_worker_supported, is_fresh_at, valid_sha256,
+    ensure_worker_supported, is_fresh_at, valid_sha256,
 };
 
 impl CacheVersionStoreV1 {

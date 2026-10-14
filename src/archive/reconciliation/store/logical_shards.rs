@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -11,7 +11,7 @@ use super::super::logical_index::{
 use super::{
     CacheReconciliationError, CacheVersionStoreV1, Result, create_private_dir,
     fresh_temp_component, hash_domain, read_optional_bounded, read_required_bounded,
-    replace_plain_file, sync_directory, valid_dimension, valid_sha256, write_new_synced,
+    replace_plain_file, sync_directory, valid_dimension, write_new_synced,
 };
 
 const ROOT_DOMAIN: &[u8] = b"lqepoch.mdp.cache-logical-index-root.v2\0";
