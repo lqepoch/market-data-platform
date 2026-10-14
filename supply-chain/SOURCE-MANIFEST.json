@@ -2357,11 +2357,11 @@
       },
       {
         "path": "src/archive/reconciliation.rs",
-        "sha256": "9d18cbc2a1f770e76ec82ed95885e2243dd14f48221c78726496956bdcc80204"
+        "sha256": "aa70b87da76eae386eda5fdea83dc862baebb6902f5c49a4939e72e0e9871528"
       },
       {
         "path": "src/archive/reconciliation/authority.rs",
-        "sha256": "3c7cfb1b31a2764ddcd4342159ef1c43ac8a4bdc6db0145c64a9df9879e03ee4"
+        "sha256": "f6742202d5e47a6710f486400e7d720c634881abf3caf5253ad5b0ce96c76f29"
       },
       {
         "path": "src/archive/reconciliation/authority_types.rs",
@@ -2405,7 +2405,7 @@
       },
       {
         "path": "src/archive/reconciliation/version_store_tests.rs",
-        "sha256": "53b27f9839e2244f0ba97b79edd9fb10485dc4c65a48235c913fb640c7ba5a22"
+        "sha256": "5b6da045d2666fa7466e68034a1570316cb84c90eab834dee081e550be4422f2"
       },
       {
         "path": "src/archive/tests.rs",
@@ -2680,7 +2680,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "24986bc0b68f2543fceb9d4060893b4d2e9cb794bc0ecb39456fb46baae9de17"
+    "sha256": "762bc81d344fda1ca730dda148d3ae1ac9260b004160ecbbbfdc0768a02b2d84"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
