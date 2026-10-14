@@ -1,6 +1,6 @@
 use super::*;
 use crate::session_router::{CalendarDay, CalendarSourceMetadata, SessionInstance};
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
 use market_contracts::{
     BarSourceProvenanceV1, BarsCacheStatusV1, BarsEntitlementStatusV1, BarsProviderModeV1,
     DecimalString, NumericEncodingV1,
@@ -311,6 +311,33 @@ fn mapper_rejects_a_bar_that_crosses_the_strict_utc_query_boundary() {
 }
 
 #[test]
+fn mapper_drops_a_current_minute_bar_that_extends_past_query_end_without_clipping() {
+    let date = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
+    let calendar = test_calendar(date, 1);
+    let request = intraday_request("2026-01-05T14:31:00Z", "2026-01-05T14:31:30Z");
+    let plan = plan_market_bars(
+        &request,
+        &timestamp("2026-01-05T15:00:00Z"),
+        &minute_capabilities(),
+        &calendar,
+    )
+    .unwrap();
+    let mapped = map_provider_page(
+        &plan,
+        0,
+        &provider_page("2026-01-05T14:31:00Z", "2026-01-05T14:32:00Z"),
+    )
+    .unwrap();
+
+    assert!(mapped.rows.is_empty());
+    assert_eq!(mapped.coverage_status, BarsCoverageStatusV1::Partial);
+    assert_eq!(mapped.gaps.len(), 1);
+    assert_eq!(mapped.gaps[0].reason_code, CoverageGapReasonV1::Unknown);
+    assert_eq!(mapped.gaps[0].start_utc, request.start);
+    assert_eq!(mapped.gaps[0].end_exclusive_utc, request.end);
+}
+
+#[test]
 fn daily_queries_coalesce_by_source_instead_of_emitting_one_group_per_date() {
     let start_date = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
     let calendar = test_calendar(start_date, 3);
@@ -560,6 +587,78 @@ fn intraday_before_ny_cutoff_requires_whole_request_daily_downgrade() {
         plan.calendar_verification_status[0].verification_status,
         CalendarVerificationStatus::Provisional
     );
+}
+
+#[test]
+fn explicit_pre_cutoff_daily_downgrade_keeps_one_resolution_across_2016_cutoff() {
+    let start_date = NaiveDate::from_ymd_opt(2015, 12, 31).unwrap();
+    let mut calendar = test_calendar(start_date, 5);
+    for day in &mut calendar.days {
+        if day.trade_date == NaiveDate::from_ymd_opt(2016, 1, 1).unwrap() {
+            day.state = CalendarDayState::Closed {
+                reason: Some("New Year holiday fixture".to_owned()),
+            };
+        } else if matches!(
+            day.trade_date.weekday(),
+            chrono::Weekday::Sat | chrono::Weekday::Sun
+        ) {
+            day.state = CalendarDayState::Closed {
+                reason: Some("Weekend fixture".to_owned()),
+            };
+            day.verification_status = CalendarVerificationStatus::ModeledWeekend;
+        }
+    }
+    calendar.instances.retain(|instance| {
+        instance.trade_date == start_date
+            || instance.trade_date == NaiveDate::from_ymd_opt(2016, 1, 4).unwrap()
+    });
+
+    let mut request = intraday_request("2015-12-31T20:00:00Z", "2016-01-05T05:00:00Z");
+    request.allow_daily_downgrade = true;
+    let capabilities = [
+        SourceCapability {
+            provider: crate::session_router::Provider::YFinance,
+            feed: None,
+            phase: None,
+            interval: DataInterval::Daily,
+            historical: true,
+            realtime: false,
+        },
+        SourceCapability {
+            provider: crate::session_router::Provider::Futu,
+            feed: None,
+            phase: None,
+            interval: DataInterval::Daily,
+            historical: true,
+            realtime: true,
+        },
+    ];
+    let plan = plan_market_bars(
+        &request,
+        &timestamp("2016-01-04T15:00:00Z"),
+        &capabilities,
+        &calendar,
+    )
+    .unwrap();
+
+    assert_eq!(plan.effective_resolution, BarResolutionV1::OneDay);
+    assert_eq!(plan.slices_recent_to_old.len(), 2);
+    assert!(
+        plan.provider_groups
+            .iter()
+            .all(|group| group.resolution == BarResolutionV1::OneDay)
+    );
+    assert!(
+        plan.provider_groups
+            .iter()
+            .any(|group| group.source == PlannedSource::YFinanceDailyResearch)
+    );
+    assert!(
+        plan.provider_groups
+            .iter()
+            .any(|group| group.source == PlannedSource::Futu)
+    );
+    assert!(plan.gaps.is_empty());
 }
 
 fn utc_dt(value: &str) -> DateTime<Utc> {
