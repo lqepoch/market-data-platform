@@ -176,6 +176,246 @@ fn cache_scope_profile_is_a_bounded_non_secret_identifier() {
 }
 
 #[test]
+fn runtime_summary_reports_attemptability_without_claiming_provider_authority() {
+    let capabilities = [crate::session_router::SourceCapability {
+        provider: crate::session_router::Provider::Alpaca,
+        feed: Some(crate::session_router::AlpacaFeed::Sip),
+        phase: Some(crate::session_router::SessionPhase::Regular),
+        interval: crate::session_router::DataInterval::Minute(1),
+        historical: true,
+        realtime: false,
+    }];
+    let summary = super::runtime_summary(&capabilities, true, true);
+
+    assert!(summary.runtime_enabled);
+    assert!(summary.alpaca_historical_attemptable);
+    assert!(!summary.futu_historical_attemptable);
+    assert!(!summary.yfinance_core_bars_attemptable);
+    assert!(summary.cache_configured);
+    assert!(summary.operator_scope_configured);
+    assert_eq!(
+        summary.cache_worker_platform_supported,
+        cfg!(target_os = "linux")
+    );
+    assert_eq!(
+        summary.provisional_cache_prerequisites_configured,
+        cfg!(target_os = "linux")
+    );
+
+    let unavailable = super::runtime_summary(&[], false, false);
+    assert!(!unavailable.alpaca_historical_attemptable);
+    assert!(!unavailable.futu_historical_attemptable);
+    assert!(!unavailable.yfinance_core_bars_attemptable);
+    assert!(!unavailable.cache_configured);
+    assert!(!unavailable.operator_scope_configured);
+    assert!(!unavailable.provisional_cache_prerequisites_configured);
+}
+
+#[test]
+fn canonical_cache_hit_page_is_revalidated_without_losing_rows_or_provisional_status() {
+    use chrono::{Duration, NaiveDate};
+    use market_contracts::{
+        AdjustmentV1, BarResolutionV1, BarRowV1, BarSourceProvenanceV1, DecimalString,
+        NumericEncodingV1, SessionScopeV1,
+    };
+
+    let trade_date = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
+    let day_start = trade_date.and_hms_opt(5, 0, 0).unwrap().and_utc();
+    let day_end = day_start + Duration::days(1);
+    let session_open = day_start + Duration::hours(9) + Duration::minutes(30);
+    let session_close = day_start + Duration::hours(16);
+    let day_label = trade_date.format("%Y-%m-%d").to_string();
+    let session_id = format!("XNYS:{day_label}");
+    let calendar = crate::session_router::TrustedCalendarSnapshot {
+        source_id: "XNYS".to_owned(),
+        version: "nyse.v1".to_owned(),
+        source_metadata: crate::session_router::CalendarSourceMetadata {
+            source_name: "NYSE Holidays & Trading Hours".to_owned(),
+            source_reference: "https://www.nyse.com/trade/hours-calendars".to_owned(),
+            generator_package: "pandas_market_calendars".to_owned(),
+            generator_version: "5.4.0".to_owned(),
+            valid_from: NaiveDate::from_ymd_opt(1990, 1, 1).unwrap(),
+            valid_to: NaiveDate::from_ymd_opt(2031, 12, 31).unwrap(),
+            official_verified_from: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+            official_verified_through: NaiveDate::from_ymd_opt(2028, 12, 31).unwrap(),
+            verification_status: "verified_through_official_fixture".to_owned(),
+            artifact_checksum: "a".repeat(64),
+            pinned_input_sha256: "b".repeat(64),
+            generated_at: "2026-09-04T00:00:00Z".to_owned(),
+            source_git_commit: "d".repeat(40),
+            compiler_config_sha256: "c".repeat(64),
+            next_review_at: NaiveDate::from_ymd_opt(2026, 12, 15).unwrap(),
+        },
+        coverage_start: trade_date,
+        coverage_end_exclusive: trade_date.succ_opt().unwrap(),
+        days: vec![crate::session_router::CalendarDay {
+            trade_date,
+            day_window: crate::session_router::UtcWindow {
+                start: day_start,
+                end_exclusive: day_end,
+            },
+            state: crate::session_router::CalendarDayState::Open {
+                session_id: session_id.clone(),
+            },
+            verification_status: crate::session_router::CalendarVerificationStatus::Verified,
+        }],
+        instances: vec![
+            crate::session_router::SessionInstance {
+                session_id: session_id.clone(),
+                session_instance_id: format!("{session_id}:pre"),
+                trade_date,
+                phase: crate::session_router::SessionPhase::Pre,
+                window: crate::session_router::UtcWindow {
+                    start: day_start + Duration::hours(4),
+                    end_exclusive: session_open,
+                },
+            },
+            crate::session_router::SessionInstance {
+                session_id: session_id.clone(),
+                session_instance_id: format!("{session_id}:regular"),
+                trade_date,
+                phase: crate::session_router::SessionPhase::Regular,
+                window: crate::session_router::UtcWindow {
+                    start: session_open,
+                    end_exclusive: session_close,
+                },
+            },
+            crate::session_router::SessionInstance {
+                session_id: session_id.clone(),
+                session_instance_id: format!("{session_id}:after"),
+                trade_date,
+                phase: crate::session_router::SessionPhase::After,
+                window: crate::session_router::UtcWindow {
+                    start: session_close,
+                    end_exclusive: day_start + Duration::hours(20),
+                },
+            },
+        ],
+    };
+    let request = market_contracts::BarsRequestV1 {
+        symbol: "SPY".to_owned(),
+        asset_class: market_contracts::AssetClassV1::Etf,
+        start: ProtoTimestampV2::parse("2026-01-05T14:30:00Z").unwrap(),
+        end: ProtoTimestampV2::parse("2026-01-05T14:32:00Z").unwrap(),
+        resolution: BarResolutionV1::OneMinute,
+        session_scope: SessionScopeV1::Regular,
+        adjustment: AdjustmentV1::Unadjusted,
+        provider_mode: BarsProviderModeV1::AlpacaOnly,
+        allow_daily_downgrade: false,
+        limit: 10,
+        cursor: None,
+    };
+    let capabilities = [crate::session_router::SourceCapability {
+        provider: crate::session_router::Provider::Alpaca,
+        feed: Some(crate::session_router::AlpacaFeed::Sip),
+        phase: Some(crate::session_router::SessionPhase::Regular),
+        interval: crate::session_router::DataInterval::Minute(1),
+        historical: true,
+        realtime: false,
+    }];
+    let plan = crate::market_query::planning::plan_market_bars(
+        &request,
+        &ProtoTimestampV2::parse("2026-01-05T21:00:00Z").unwrap(),
+        &capabilities,
+        &calendar,
+    )
+    .unwrap();
+    let selection = crate::market_query::providers::select_page(&request, &plan).unwrap();
+    let row_start = request.start.clone();
+    let row_end = ProtoTimestampV2::parse("2026-01-05T14:31:00Z").unwrap();
+    let received_at = ProtoTimestampV2::parse("2026-01-05T14:32:01Z").unwrap();
+    let raw_page = market_contracts::BarsResponseV1 {
+        schema_version: market_contracts::BARS_SCHEMA_VERSION_V1,
+        provider: "alpaca".to_owned(),
+        feed: "unknown".to_owned(),
+        entitlement_status: market_contracts::BarsEntitlementStatusV1::Unknown,
+        requested_resolution: BarResolutionV1::OneMinute,
+        effective_resolution: BarResolutionV1::OneMinute,
+        adjustment: AdjustmentV1::Unadjusted,
+        rows: vec![BarRowV1 {
+            symbol: request.symbol.clone(),
+            asset_class: request.asset_class,
+            resolution: BarResolutionV1::OneMinute,
+            adjustment: AdjustmentV1::Unadjusted,
+            bar_start_utc: row_start.clone(),
+            bar_end_exclusive_utc: row_end.clone(),
+            received_at_utc: received_at.clone(),
+            available_at_utc: received_at.clone(),
+            open: DecimalString::new("10.00").unwrap(),
+            high: DecimalString::new("11.00").unwrap(),
+            low: DecimalString::new("9.00").unwrap(),
+            close: DecimalString::new("10.50").unwrap(),
+            volume: DecimalString::new("100").unwrap(),
+            provenance_id: "alpaca-page".to_owned(),
+            session_instance_id: "provider-local".to_owned(),
+            validation_state: market_contracts::BarsValidationStateV1::Provisional,
+        }],
+        coverage_status: BarsCoverageStatusV1::Complete,
+        segments: vec![BarCoverageSegmentV1 {
+            start_utc: row_start,
+            end_exclusive_utc: row_end,
+            coverage_status: BarsCoverageStatusV1::Complete,
+            provenance_id: Some("alpaca-page".to_owned()),
+            session_instance_id: "provider-local".to_owned(),
+        }],
+        gaps: Vec::new(),
+        source_provenance: vec![BarSourceProvenanceV1 {
+            provenance_id: "alpaca-page".to_owned(),
+            provider: "alpaca".to_owned(),
+            feed: "unknown".to_owned(),
+            source: "Alpaca historical stock-bars API".to_owned(),
+            entitlement_status: market_contracts::BarsEntitlementStatusV1::Unknown,
+            numeric_encoding: NumericEncodingV1::DecimalToken,
+        }],
+        as_of: None,
+        fetched_at: received_at,
+        verified_at: None,
+        cache_status: market_contracts::BarsCacheStatusV1::Miss,
+        market_calendar_version: None,
+        continuation_cursor: None,
+        truncated: false,
+    };
+    let canonical = super::response::response_for_cache_page(
+        &request,
+        &plan,
+        &selection,
+        raw_page,
+        market_contracts::BarsCacheStatusV1::Miss,
+    )
+    .unwrap();
+    let mut cache_hit_page = canonical;
+    cache_hit_page.cache_status = market_contracts::BarsCacheStatusV1::Hit;
+
+    // The real hit path replays A04's canonical Core response through this same run mapper.
+    let replayed = super::response::response_from_page(
+        &request,
+        &plan,
+        Some(&selection),
+        cache_hit_page,
+        market_contracts::BarsCacheStatusV1::Hit,
+    )
+    .unwrap();
+
+    request.validate_response(&replayed).unwrap();
+    assert_eq!(replayed.rows.len(), 1);
+    assert_eq!(
+        replayed.rows[0].session_instance_id,
+        format!("{session_id}:regular")
+    );
+    assert_eq!(replayed.feed, "unknown");
+    assert_eq!(
+        replayed.entitlement_status,
+        market_contracts::BarsEntitlementStatusV1::Unknown
+    );
+    assert_eq!(replayed.coverage_status, BarsCoverageStatusV1::Partial);
+    assert_eq!(
+        replayed.cache_status,
+        market_contracts::BarsCacheStatusV1::Hit
+    );
+    assert!(replayed.verified_at.is_none());
+}
+
+#[test]
 fn response_status_never_calls_partial_or_unknown_coverage_complete() {
     assert_eq!(
         super::http_status_for_coverage(BarsCoverageStatusV1::Complete),

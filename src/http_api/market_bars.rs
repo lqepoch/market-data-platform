@@ -47,6 +47,22 @@ pub(super) struct MarketBarsRuntime {
     cache_scope_id: Option<String>,
 }
 
+/// Static runtime configuration summary for health/status projections.
+///
+/// These flags describe configured code paths and local cache prerequisites only. They do not
+/// imply provider reachability, account entitlement, data availability, or source verification.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(super) struct MarketBarsRuntimeSummary {
+    pub(super) runtime_enabled: bool,
+    pub(super) alpaca_historical_attemptable: bool,
+    pub(super) futu_historical_attemptable: bool,
+    pub(super) yfinance_core_bars_attemptable: bool,
+    pub(super) cache_configured: bool,
+    pub(super) operator_scope_configured: bool,
+    pub(super) cache_worker_platform_supported: bool,
+    pub(super) provisional_cache_prerequisites_configured: bool,
+}
+
 impl MarketBarsRuntime {
     /// The feature is explicitly disabled unless `MDP_MARKET_BARS_ENABLED=true`.
     /// Provider credentials may be absent; those routes remain unadvertised and return accurate
@@ -75,6 +91,45 @@ impl MarketBarsRuntime {
             cache,
             cache_scope_id,
         })))
+    }
+
+    /// Describe static provider attemptability and cache prerequisites without exposing secrets,
+    /// local paths, or any claim about entitlement, reachability, or returned data.
+    pub(super) fn summary(&self) -> MarketBarsRuntimeSummary {
+        runtime_summary(
+            &self.provider.source_capabilities(),
+            self.cache.is_some(),
+            self.cache_scope_id.is_some(),
+        )
+    }
+}
+
+fn runtime_summary(
+    capabilities: &[crate::session_router::SourceCapability],
+    cache_configured: bool,
+    operator_scope_configured: bool,
+) -> MarketBarsRuntimeSummary {
+    let historical_attemptable = |provider| {
+        capabilities.iter().any(|capability| {
+            capability.provider == provider && capability.historical && !capability.realtime
+        })
+    };
+    let cache_worker_platform_supported = cfg!(target_os = "linux");
+    MarketBarsRuntimeSummary {
+        runtime_enabled: true,
+        alpaca_historical_attemptable: historical_attemptable(
+            crate::session_router::Provider::Alpaca,
+        ),
+        futu_historical_attemptable: historical_attemptable(crate::session_router::Provider::Futu),
+        yfinance_core_bars_attemptable: historical_attemptable(
+            crate::session_router::Provider::YFinance,
+        ),
+        cache_configured,
+        operator_scope_configured,
+        cache_worker_platform_supported,
+        provisional_cache_prerequisites_configured: cache_configured
+            && operator_scope_configured
+            && cache_worker_platform_supported,
     }
 }
 
