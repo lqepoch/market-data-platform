@@ -61,10 +61,19 @@ pub(super) fn bars_v1_source_metadata(
         BarsEntitlementStatusV1::Mixed => return Err(MarketDataError::MixedProvenance),
     };
     Ok(vec![
-        KeyValue::new(BARS_V1_SOURCE_PROVIDER_KEY, first.provider.clone()),
-        KeyValue::new(BARS_V1_SOURCE_FEED_KEY, first.feed.clone()),
-        KeyValue::new(BARS_V1_SOURCE_ENTITLEMENT_KEY, entitlement),
-        KeyValue::new(BARS_V1_SOURCE_ENCODING_KEY, first.numeric_encoding.as_str()),
+        KeyValue::new(
+            BARS_V1_SOURCE_PROVIDER_KEY.to_owned(),
+            Some(first.provider.clone()),
+        ),
+        KeyValue::new(BARS_V1_SOURCE_FEED_KEY.to_owned(), Some(first.feed.clone())),
+        KeyValue::new(
+            BARS_V1_SOURCE_ENTITLEMENT_KEY.to_owned(),
+            Some(entitlement.to_owned()),
+        ),
+        KeyValue::new(
+            BARS_V1_SOURCE_ENCODING_KEY.to_owned(),
+            Some(first.numeric_encoding.as_str().to_owned()),
+        ),
     ])
 }
 
