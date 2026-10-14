@@ -1212,6 +1212,7 @@ fn signed_capability_admission_is_cursor_agnostic_and_expires() {
 #[cfg(target_os = "linux")]
 #[test]
 fn signed_admission_binds_dataset_and_is_reverified_on_authoritative_reads() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test();
     let now = 1_800_000_000;
     let request = admission_test_request();
     let scope = admission_test_scope();
@@ -1459,6 +1460,7 @@ fn cache_store_reports_bounded_worker_unsupported_without_inline_fallback() {
 #[cfg(target_os = "linux")]
 #[test]
 fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_worker_readback() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test();
     use market_contracts::{
         AdjustmentV1, AssetClassV1, BarCoverageSegmentV1, BarResolutionV1, BarRowV1,
         BarSourceProvenanceV1, BarsCacheStatusV1, BarsCoverageStatusV1, BarsEntitlementStatusV1,
@@ -2044,6 +2046,7 @@ mod transaction_tests;
 #[cfg(target_os = "linux")]
 #[test]
 fn synthetic_precommit_failure_preserves_another_sources_legacy_current() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test();
     let temp = tempfile::tempdir().unwrap();
     let cache_root = temp.path().join("cache");
     let store = CacheVersionStoreV1::new(cache_root.clone(), CacheLimitsV1::default()).unwrap();
@@ -2170,6 +2173,7 @@ fn synthetic_precommit_failure_preserves_another_sources_legacy_current() {
 #[cfg(target_os = "linux")]
 #[test]
 fn second_session_conflict_keeps_every_existing_logical_pointer() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test();
     use market_contracts::{
         AdjustmentV1, AssetClassV1, BarCoverageSegmentV1, BarResolutionV1, BarSourceProvenanceV1,
         BarsCacheStatusV1, BarsCoverageStatusV1, BarsEntitlementStatusV1, BarsProviderModeV1,
@@ -2429,6 +2433,7 @@ fn second_session_conflict_keeps_every_existing_logical_pointer() {
 #[cfg(target_os = "linux")]
 #[test]
 fn synthetic_cross_provider_tolerance_allows_minor_candidate_update() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test();
     let mut futu_request = admission_test_request();
     futu_request.provider_mode = BarsProviderModeV1::FutuOnly;
     let mut futu_scope = admission_test_scope();
@@ -2522,6 +2527,7 @@ fn synthetic_cross_provider_tolerance_allows_minor_candidate_update() {
 #[cfg(target_os = "linux")]
 #[test]
 fn logical_index_roundtrips_ninety_two_sessions_in_two_shards_after_restart() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test();
     let session_ids = (0..92)
         .map(|index| format!("opaque-session-{index:02}"))
         .collect::<Vec<_>>();
@@ -2677,6 +2683,7 @@ fn logical_index_roundtrips_ninety_two_sessions_in_two_shards_after_restart() {
 #[cfg(target_os = "linux")]
 #[test]
 fn missing_calendar_phases_keeps_provisional_artifacts_without_logical_indexing() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test();
     let session = "provider-session-opaque-17";
     let request = admission_test_request();
     let mut source_scope = admission_test_scope();
@@ -2742,6 +2749,7 @@ fn missing_calendar_phases_keeps_provisional_artifacts_without_logical_indexing(
 #[cfg(target_os = "linux")]
 #[test]
 fn logical_index_keeps_more_than_legacy_capacity_in_bounded_shards() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test();
     let session = "opaque-session-new";
     let request = admission_test_request();
     let mut source_scope = admission_test_scope();

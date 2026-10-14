@@ -3,6 +3,7 @@ use super::*;
 #[cfg(target_os = "linux")]
 #[test]
 fn synthetic_first_transaction_before_base_is_retryable_after_reopen() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test();
     let temp = tempfile::tempdir().unwrap();
     let cache_root = temp.path().join("cache");
     let store = CacheVersionStoreV1::new(cache_root.clone(), CacheLimitsV1::default()).unwrap();
@@ -68,6 +69,7 @@ fn synthetic_first_transaction_before_base_is_retryable_after_reopen() {
 #[cfg(target_os = "linux")]
 #[test]
 fn synthetic_first_transaction_after_marker_reads_base_and_is_retryable() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test();
     let temp = tempfile::tempdir().unwrap();
     let cache_root = temp.path().join("cache");
     let store = CacheVersionStoreV1::new(cache_root.clone(), CacheLimitsV1::default()).unwrap();
@@ -164,6 +166,7 @@ fn synthetic_first_transaction_after_marker_reads_base_and_is_retryable() {
 #[cfg(target_os = "linux")]
 #[test]
 fn synthetic_initial_base_preserves_other_source_logical_and_legacy_currents() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test();
     let temp = tempfile::tempdir().unwrap();
     let cache_root = temp.path().join("cache");
     let store = CacheVersionStoreV1::new(cache_root.clone(), CacheLimitsV1::default()).unwrap();

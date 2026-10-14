@@ -186,6 +186,28 @@ enum ReceiptPhase {
     Committed,
 }
 
+struct ArchiveDatasetLock(File);
+
+impl ArchiveDatasetLock {
+    fn acquire(path: &Path) -> Result<Self> {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)?;
+        file.try_lock_exclusive()
+            .map_err(|_| MarketDataError::LockHeld)?;
+        Ok(Self(file))
+    }
+}
+
+impl Drop for ArchiveDatasetLock {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.0);
+    }
+}
+
 impl ArchivePublisher {
     pub fn local_test(
         transport: LocalTestTransport,
@@ -258,15 +280,7 @@ impl ArchivePublisher {
             }
         };
         let lock_path = self.state_path(&request.dataset_id, "lock")?;
-        let lock_file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(lock_path)?;
-        lock_file
-            .try_lock_exclusive()
-            .map_err(|_| MarketDataError::LockHeld)?;
+        let _dataset_lock = ArchiveDatasetLock::acquire(&lock_path)?;
 
         let local = hash_file(&request.parquet_path, self.limits.max_object_bytes)?;
         self.validate_staging_budget(&request.parquet_path, local.size_bytes)?;
