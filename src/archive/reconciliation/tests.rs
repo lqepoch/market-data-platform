@@ -2016,6 +2016,14 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
         Err(CacheReconciliationError::UnknownOutcome)
     ));
     fs::write(&transaction_path, transaction_bytes).unwrap();
+    let logical_marker_path = logical_dir.join(".transaction-mode");
+    let logical_marker_bytes = fs::read(&logical_marker_path).unwrap();
+    fs::remove_file(&logical_marker_path).unwrap();
+    assert!(matches!(
+        store.load_current(&key, 1_800_000_046),
+        Err(CacheReconciliationError::UnknownOutcome)
+    ));
+    fs::write(&logical_marker_path, logical_marker_bytes).unwrap();
     assert_pointer_pair(&store, &first_id, 1_800_000_046);
     assert!(matches!(
         store.load_current(&key, 1_800_000_900),
@@ -2030,48 +2038,8 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
 }
 
 #[cfg(target_os = "linux")]
-#[test]
-fn synthetic_interrupted_first_transaction_fails_closed_on_reopen() {
-    let temp = tempfile::tempdir().unwrap();
-    let cache_root = temp.path().join("cache");
-    let store = CacheVersionStoreV1::new(cache_root.clone(), CacheLimitsV1::default()).unwrap();
-    let request = admission_test_request();
-    let source_scope = admission_test_scope();
-    let response = admission_test_response("600.25");
-    let key = CacheKeyV1::from_request(&request, &source_scope).unwrap();
-    let identity = CacheLogicalIdentityV1::from_key(&key).unwrap();
-
-    store.set_transaction_fault_for_test(CacheTransactionFaultV1::AfterIdentityMarker);
-    assert!(matches!(
-        store.publish_bars_responses(
-            cache_input(
-                &request,
-                &source_scope,
-                response.clone(),
-                response,
-                admission_test_evidence(),
-            ),
-            1_800_000_090,
-            &SameFeedTolerancePolicyV1::default(),
-        ),
-        Err(CacheReconciliationError::UnknownOutcome)
-    ));
-
-    let logical_dir = cache_root
-        .join("logical")
-        .join(identity.fingerprint().unwrap());
-    assert!(logical_dir.join(".transaction-mode").exists());
-    assert!(!logical_dir.join("transaction.json").exists());
-    let reopened = CacheVersionStoreV1::new(cache_root, CacheLimitsV1::default()).unwrap();
-    assert!(matches!(
-        reopened.load_current(&key, 1_800_000_091),
-        Err(CacheReconciliationError::UnknownOutcome)
-    ));
-    assert!(matches!(
-        reopened.load_logical_current(&identity, "2026-10-08-regular", 1_800_000_091),
-        Err(CacheReconciliationError::UnknownOutcome)
-    ));
-}
+#[path = "transaction_tests.rs"]
+mod transaction_tests;
 
 #[cfg(target_os = "linux")]
 #[test]

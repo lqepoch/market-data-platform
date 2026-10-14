@@ -7,16 +7,16 @@ use super::logical_shards::{
 };
 use super::transaction_format::{
     CachePointerTransactionEnvelopeV1, CachePointerTransactionMirrorV1, CachePointerTransactionV1,
-    MAX_MIRROR_BYTES, MAX_TRANSACTION_BYTES, MIRROR_FILE, TRANSACTION_DOMAIN, TRANSACTION_FILE,
-    TRANSACTION_MODE_MAGIC, current_hash, current_manifest_bytes, ensure_transaction_mode,
-    make_mirror, path_exists, read_current_payload, read_current_payload_hash, read_mirror,
-    read_physical_logical_root, remove_created_transaction_mode, root_envelope_hash,
-    transaction_hash, transaction_id, transaction_mode_exists, validate_transaction, write_mirror,
+    MAX_MIRROR_BYTES, MAX_TRANSACTION_BYTES, MIRROR_FILE, TRANSACTION_FILE, TRANSACTION_MODE_MAGIC,
+    current_hash, current_manifest_bytes, ensure_transaction_mode, make_mirror, path_exists,
+    read_current_payload, read_current_payload_hash, read_mirror, read_physical_logical_root,
+    root_envelope_hash, transaction_hash, transaction_id, transaction_mode_exists,
+    validate_transaction, write_mirror,
 };
 use super::{
     CacheCurrentV1, CacheKeyV1, CacheReadResultV1, CacheReconciliationError, CacheVersionStoreV1,
-    Result, fresh_temp_component, hash_domain, read_optional_bounded, replace_plain_file,
-    sync_directory, write_new_synced,
+    Result, fresh_temp_component, read_optional_bounded, replace_plain_file, sync_directory,
+    write_new_synced,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -26,6 +26,7 @@ pub(crate) enum CacheTransactionFaultV1 {
     AfterSourceMirror = 3,
     AfterLogicalMirror = 4,
     AfterIdentityMarker = 5,
+    AfterBaseCommitpoint = 6,
 }
 
 impl CacheVersionStoreV1 {
@@ -137,6 +138,44 @@ impl CacheVersionStoreV1 {
         } else {
             read_physical_logical_root(self, &identity, &logical_identity_fingerprint)?
         };
+
+        let mut previous_transaction_sha256 = previous_head
+            .as_ref()
+            .map(|head| head.payload_sha256.clone());
+        let initial_base_bytes = if previous_head.is_none() {
+            let nonce = fresh_temp_component()?;
+            let transaction_id = transaction_id(
+                &logical_identity_fingerprint,
+                &source_key_fingerprint,
+                previous_source_current.as_ref(),
+                previous_logical_root.as_ref(),
+                now_unix_seconds,
+                &nonce,
+            )?;
+            let payload = CachePointerTransactionV1 {
+                format_version: 1,
+                transaction_id,
+                logical_identity_fingerprint_sha256: logical_identity_fingerprint.clone(),
+                source_key: key.clone(),
+                source_key_fingerprint_sha256: source_key_fingerprint.clone(),
+                previous_source_current: previous_source_current.clone(),
+                source_current: previous_source_current.clone(),
+                previous_logical_root: previous_logical_root.clone(),
+                logical_root: previous_logical_root.clone(),
+                committed_at_unix_seconds: now_unix_seconds,
+                transaction_nonce: nonce,
+                previous_transaction_sha256: None,
+                recovery_replaced_damaged_source_manifest,
+                initial_base: true,
+            };
+            let (base, bytes) =
+                encode_transaction(payload, &identity, &logical_identity_fingerprint)?;
+            previous_transaction_sha256 = Some(base.payload_sha256);
+            Some(bytes)
+        } else {
+            None
+        };
+
         let nonce = fresh_temp_component()?;
         let transaction_id = transaction_id(
             &logical_identity_fingerprint,
@@ -158,50 +197,33 @@ impl CacheVersionStoreV1 {
             logical_root,
             committed_at_unix_seconds: now_unix_seconds,
             transaction_nonce: nonce,
-            previous_transaction_sha256: previous_head
-                .as_ref()
-                .map(|head| head.payload_sha256.clone()),
+            previous_transaction_sha256,
             recovery_replaced_damaged_source_manifest,
+            initial_base: false,
         };
-        validate_transaction(&payload, &identity, &logical_identity_fingerprint)?;
-        let payload_bytes = serde_json::to_vec(&payload)?;
-        let envelope = CachePointerTransactionEnvelopeV1 {
-            payload,
-            payload_sha256: hash_domain(TRANSACTION_DOMAIN, &payload_bytes),
-        };
-        let transaction_bytes = serde_json::to_vec(&envelope)?;
-        if transaction_bytes.is_empty() || transaction_bytes.len() as u64 > MAX_TRANSACTION_BYTES {
-            return Err(CacheReconciliationError::LimitExceeded);
-        }
-        self.check_transaction_budget(&transaction_bytes, &envelope, prepared_logical.as_ref())?;
+        let (envelope, transaction_bytes) =
+            encode_transaction(payload, &identity, &logical_identity_fingerprint)?;
+        self.check_transaction_budget(
+            &transaction_bytes,
+            &envelope,
+            prepared_logical.as_ref(),
+            initial_base_bytes.as_deref(),
+        )?;
         if let Some(prepared) = prepared_logical.as_ref() {
             persist_logical_shards(self, &logical_identity_fingerprint, prepared)?;
         }
-        // Record identity-level transaction mode before installing the head so a crash with a
-        // missing head fails closed. The per-source marker is deliberately deferred until after
-        // the head commitpoint; otherwise a failed first transaction could hide a legacy current
-        // belonging to another source key in this provider-neutral identity.
-        let logical_mode_created = ensure_transaction_mode(&logical_dir)?;
-        self.inject_fault(CacheTransactionFaultV1::AfterIdentityMarker)?;
-        if let Err(error) = self.install_transaction_head(&logical_dir, &transaction_bytes) {
-            let committed = match read_optional_bounded(
-                &logical_dir.join(TRANSACTION_FILE),
-                MAX_TRANSACTION_BYTES,
-            ) {
-                Ok(Some(bytes)) => bytes == transaction_bytes,
-                Ok(None) => false,
-                Err(_) => return Err(CacheReconciliationError::UnknownOutcome),
-            };
-            if committed {
-                return Err(CacheReconciliationError::UnknownOutcome);
-            }
-            if previous_head.is_none()
-                && remove_created_transaction_mode(&logical_dir, logical_mode_created).is_err()
-            {
-                return Err(CacheReconciliationError::UnknownOutcome);
-            }
-            return Err(error);
+        // On first use, install a checksummed BASE head that reproduces only the already verified
+        // source/logical state. If the process stops before the identity marker or NEW head, reads
+        // can still select this unchanged state and a retry can continue from it.
+        if let Some(base_bytes) = initial_base_bytes.as_deref() {
+            self.install_transaction_head_resolving(&logical_dir, base_bytes)?;
+            self.inject_fault(CacheTransactionFaultV1::AfterBaseCommitpoint)?;
         }
+        // Once a valid BASE or prior committed head exists, the marker can no longer hide an
+        // uncommitted change. The NEW head below remains the only candidate-promotion point.
+        ensure_transaction_mode(&logical_dir)?;
+        self.inject_fault(CacheTransactionFaultV1::AfterIdentityMarker)?;
+        self.install_transaction_head_resolving(&logical_dir, &transaction_bytes)?;
         self.inject_fault(CacheTransactionFaultV1::AfterCommitpoint)?;
         self.materialize_pointer_transaction(&envelope)
             .map_err(|_| CacheReconciliationError::UnknownOutcome)?;
@@ -342,6 +364,9 @@ impl CacheVersionStoreV1 {
         }
         validate_transaction(&envelope.payload, identity, identity_fingerprint)
             .map_err(|_| CacheReconciliationError::UnknownOutcome)?;
+        if !logical_mode && !envelope.payload.initial_base {
+            return Err(CacheReconciliationError::UnknownOutcome);
+        }
         if let Some(root) = envelope.payload.logical_root.as_ref()
             && read_logical_current_from_envelope(self, identity, identity_fingerprint, root)
                 .map_err(|_| CacheReconciliationError::UnknownOutcome)?
@@ -560,14 +585,41 @@ impl CacheVersionStoreV1 {
         sync_directory(logical_dir).map_err(|_| CacheReconciliationError::UnknownOutcome)
     }
 
+    fn install_transaction_head_resolving(&self, logical_dir: &Path, bytes: &[u8]) -> Result<()> {
+        if let Err(error) = self.install_transaction_head(logical_dir, bytes) {
+            let committed = match read_optional_bounded(
+                &logical_dir.join(TRANSACTION_FILE),
+                MAX_TRANSACTION_BYTES,
+            ) {
+                Ok(Some(current)) => current == bytes,
+                Ok(None) => false,
+                Err(_) => return Err(CacheReconciliationError::UnknownOutcome),
+            };
+            if committed {
+                return Err(CacheReconciliationError::UnknownOutcome);
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
     fn check_transaction_budget(
         &self,
         next: &[u8],
         envelope: &CachePointerTransactionEnvelopeV1,
         prepared_logical: Option<&PreparedLogicalRootV2>,
+        initial_base: Option<&[u8]>,
     ) -> Result<()> {
         let mut additional =
             u64::try_from(next.len()).map_err(|_| CacheReconciliationError::LimitExceeded)?;
+        if let Some(base) = initial_base {
+            additional = additional
+                .checked_add(
+                    u64::try_from(base.len())
+                        .map_err(|_| CacheReconciliationError::LimitExceeded)?,
+                )
+                .ok_or(CacheReconciliationError::LimitExceeded)?;
+        }
         additional = additional
             .checked_add(self.materialization_reserve(envelope)?)
             .ok_or(CacheReconciliationError::LimitExceeded)?;
@@ -661,6 +713,23 @@ impl CacheVersionStoreV1 {
     fn inject_fault(&self, _fault: CacheTransactionFaultV1) -> Result<()> {
         Ok(())
     }
+}
+
+fn encode_transaction(
+    payload: CachePointerTransactionV1,
+    identity: &CacheLogicalIdentityV1,
+    identity_fingerprint: &str,
+) -> Result<(CachePointerTransactionEnvelopeV1, Vec<u8>)> {
+    validate_transaction(&payload, identity, identity_fingerprint)?;
+    let envelope = CachePointerTransactionEnvelopeV1 {
+        payload_sha256: transaction_hash(&payload)?,
+        payload,
+    };
+    let bytes = serde_json::to_vec(&envelope)?;
+    if bytes.is_empty() || bytes.len() as u64 > MAX_TRANSACTION_BYTES {
+        return Err(CacheReconciliationError::LimitExceeded);
+    }
+    Ok((envelope, bytes))
 }
 
 fn remove_if_present(path: &Path, directory: &Path) -> Result<()> {

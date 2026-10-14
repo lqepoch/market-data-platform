@@ -37,6 +37,8 @@ pub(super) struct CachePointerTransactionV1 {
     pub(super) transaction_nonce: String,
     pub(super) previous_transaction_sha256: Option<String>,
     pub(super) recovery_replaced_damaged_source_manifest: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(super) initial_base: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -77,6 +79,34 @@ pub(super) fn validate_transaction(
     {
         return Err(CacheReconciliationError::UnknownOutcome);
     }
+    if payload.initial_base {
+        let previous_source_hash = payload
+            .previous_source_current
+            .as_ref()
+            .map(current_hash)
+            .transpose()?;
+        let source_hash = payload
+            .source_current
+            .as_ref()
+            .map(current_hash)
+            .transpose()?;
+        let previous_root_hash = payload
+            .previous_logical_root
+            .as_ref()
+            .map(root_envelope_hash)
+            .transpose()?;
+        let root_hash = payload
+            .logical_root
+            .as_ref()
+            .map(root_envelope_hash)
+            .transpose()?;
+        if payload.previous_transaction_sha256.is_some()
+            || previous_source_hash != source_hash
+            || previous_root_hash != root_hash
+        {
+            return Err(CacheReconciliationError::UnknownOutcome);
+        }
+    }
     if let Some(current) = payload.source_current.as_ref()
         && (current.key_fingerprint_sha256 != payload.source_key_fingerprint_sha256
             || !valid_sha256(&current.version_id)
@@ -86,6 +116,10 @@ pub(super) fn validate_transaction(
         return Err(CacheReconciliationError::UnknownOutcome);
     }
     Ok(())
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 pub(super) fn transaction_id(
@@ -146,18 +180,6 @@ pub(super) fn ensure_transaction_mode(directory: &Path) -> Result<bool> {
         }
         Err(error) => Err(error),
     }
-}
-
-pub(super) fn remove_created_transaction_mode(directory: &Path, created: bool) -> Result<()> {
-    if !created {
-        return Ok(());
-    }
-    let path = directory.join(TRANSACTION_MODE_FILE);
-    if read_required_bounded(&path, 128)? != TRANSACTION_MODE_MAGIC {
-        return Err(CacheReconciliationError::UnknownOutcome);
-    }
-    fs::remove_file(path)?;
-    sync_directory(directory).map_err(|_| CacheReconciliationError::UnknownOutcome)
 }
 
 pub(super) fn transaction_mode_exists(directory: &Path) -> Result<bool> {

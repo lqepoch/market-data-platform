@@ -149,9 +149,11 @@ owner-only modes. For each key it holds a bounded `versions/<version-id>/` direc
 canonical Parquet, normalized comparison rows, and a version receipt, plus compact
 rejected-candidate audit entries. The mutable `logical/<identity>/transaction.json` is the single
 effective commitpoint for one source-key current pointer and its provider-neutral logical root.
-Per-key and logical `current.json` files are checksummed mirrors, not independent commitpoints. A
-fixed transaction-mode marker makes a missing or malformed transaction head return
-`UnknownOutcome` instead of falling back to a possibly divergent mirror.
+Per-key and logical `current.json` files are checksummed mirrors, not independent commitpoints. Once
+the identity transaction marker has been installed, a missing or malformed non-BASE head
+returns `UnknownOutcome` instead of falling back to a possibly divergent mirror. A valid checksummed
+first BASE head is the only unmarked transaction state readers accept; removing the marker from a
+later NEW head remains fail-closed.
 Version receipts bind the exact key, coverage, artifact sizes/hashes, Core schema fingerprints,
 source observations, row checksum/count, authority basis, generation, predecessor, and TTL.
 The current pointer contains a domain-separated checksum and the exact version-receipt hash.
@@ -166,19 +168,25 @@ mirrors materialized, synced, read back, and sealed with transaction-hash sideca
 rename, a failure leaves the previous effective pointer in place; after it, callers may receive
 `UnknownOutcome`, but readers resolve the whole new source/logical pair from the head. Every next
 mutation verifies and materializes the prior committed mirrors before replacing the head. The
-identity-level transaction marker is installed before the first head so a crash in that interval
-fails closed. The per-source marker is deferred until after the head commitpoint, so a failed
-pre-commit attempt cannot hide that source's legacy current while another source owns the head. A
-first transaction that is interrupted after the identity marker but before the head is detected
-returns `UnknownOutcome` rather than falling back to a mirror. An explicit `recover_to` may reassert
-a selected version or repair a damaged source mirror through the same transaction path; it does
-not replace a missing or corrupt transaction head because the associated logical state cannot then
-be reconstructed safely. Process death after immutable rename but before the transaction-head
-rename leaves an orphan version, never an auto-promoted cache entry.
+first transaction installs a checksummed BASE head containing only the already verified old source
+current and logical root (or `None`) before writing the identity-level transaction marker. A crash
+before that BASE rename leaves the prior unmarked state available; a crash after it but before the
+NEW head resolves to the same old state and can be retried. The NEW head remains the only candidate
+promotion point. Later transactions keep the identity marker, and a missing or malformed head with
+that marker returns `UnknownOutcome`; recovery never guesses a replacement logical state. A missing
+marker is accepted only with a valid BASE head, and BASE installation never materializes pointers
+for another source key. The per-source marker is deferred until after a committed head, so a failed
+attempt cannot hide a legacy current for another source key in this provider-neutral identity. An
+explicit `recover_to`
+may reassert a selected version or repair a damaged source mirror through the same transaction
+path; it does not replace a missing or corrupt transaction head because the associated logical
+state cannot then be reconstructed safely. Process death after immutable rename but before the BASE
+or NEW transaction-head rename leaves an orphan version, never an auto-promoted cache entry.
 
 Before persisting logical shards or installing a transaction head, the store reserves the new shard
 bytes plus bounded head/current/root/mirror temporary files and both transaction markers against
-the current tree total. A limit failure stays before the commitpoint; the store does not evict old
+the current tree total. On first use the reservation includes both the BASE head and the NEW-head
+temporary-file peak. A limit failure stays before the commitpoint; the store does not evict old
 versions to make room.
 
 Linux fault-injection tests exercise the pre-commit boundary, post-commit head, and each mirror
