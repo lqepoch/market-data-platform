@@ -206,7 +206,7 @@ impl ProviderPageSelection {
         encode_envelope(&envelope).map_err(|_| ProviderQueryError::InvalidCursor)
     }
 
-    pub(super) fn provider_cursor(&self) -> Option<&ProviderCursor> {
+    fn provider_cursor(&self) -> Option<&ProviderCursor> {
         self.provider_cursor.as_ref()
     }
 
@@ -226,7 +226,7 @@ impl ProviderPageSelection {
         Ok(())
     }
 
-    pub(super) fn cursor_for_provider_page(
+    fn cursor_for_provider_page(
         &self,
         provider_cursor: ProviderCursor,
     ) -> Result<String, ProviderQueryError> {
@@ -294,6 +294,16 @@ pub fn select_page(
     request: &BarsRequestV1,
     plan: &MarketBarsPlan,
 ) -> Result<ProviderPageSelection, ProviderQueryError> {
+    select_page_at(request, plan, current_unix_seconds()?)
+}
+
+/// Select using a caller-supplied current clock, independent of the plan's historical `as_of`.
+/// This keeps cursor TTL correct for deterministic historical snapshots and tests.
+pub fn select_page_at(
+    request: &BarsRequestV1,
+    plan: &MarketBarsPlan,
+    now_unix_seconds: u64,
+) -> Result<ProviderPageSelection, ProviderQueryError> {
     request
         .validate()
         .map_err(|_| ProviderQueryError::CursorQueryMismatch)?;
@@ -316,11 +326,10 @@ pub fn select_page(
         if envelope.plan_sha256 != plan_sha256 || envelope.as_of_utc != plan.as_of.as_str() {
             return Err(ProviderQueryError::CursorPlanChanged);
         }
-        let now = current_unix_seconds()?;
-        if now >= envelope.expires_at_unix_seconds {
+        if now_unix_seconds >= envelope.expires_at_unix_seconds {
             return Err(ProviderQueryError::CursorExpired);
         }
-        if now < envelope.issued_at_unix_seconds {
+        if now_unix_seconds < envelope.issued_at_unix_seconds {
             return Err(ProviderQueryError::InvalidCursor);
         }
         if envelope.timeline_position > plan.slices_recent_to_old.len() {
@@ -341,7 +350,7 @@ pub fn select_page(
             envelope.expires_at_unix_seconds,
         )
     } else {
-        let issued = unix_seconds(&plan.as_of)?;
+        let issued = now_unix_seconds;
         (
             0,
             None,
@@ -690,7 +699,7 @@ fn current_unix_seconds() -> Result<u64, ProviderQueryError> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
-        .and_then(|duration| u64::try_from(duration.as_secs()).ok())
+        .map(|duration| duration.as_secs())
         .ok_or(ProviderQueryError::InvalidCursor)
 }
 
@@ -710,7 +719,7 @@ mod tests {
         },
     };
 
-    use super::{ProviderCursor, select_page};
+    use super::{ProviderCursor, select_page, select_page_at};
 
     fn fixture(as_of: &str) -> (BarsRequestV1, MarketBarsPlan) {
         let start = DateTime::parse_from_rfc3339("2026-10-13T13:30:00Z")
@@ -813,6 +822,30 @@ mod tests {
         assert!(!outer_cursor.contains(provider_cursor));
         assert!(!selection.cache_key().contains(provider_cursor));
         assert!(!format!("{cache_input:?}").contains(provider_cursor));
+    }
+
+    #[test]
+    fn historical_plan_cursor_ttl_uses_the_injected_current_clock() {
+        let (request, plan) = fixture("2026-10-13T15:00:00Z");
+        let now = u64::try_from(
+            DateTime::parse_from_rfc3339("2026-10-14T18:00:00Z")
+                .expect("valid current clock")
+                .timestamp(),
+        )
+        .expect("clock is after the Unix epoch");
+
+        let first = select_page_at(&request, &plan, now).expect("first-page selection");
+        assert_eq!(first.issued_at_unix_seconds, now);
+        assert_eq!(first.expires_at_unix_seconds, now + 30 * 60);
+
+        let cursor = first
+            .cursor_for_provider_page(ProviderCursor::Futu("a".repeat(32)))
+            .expect("provider continuation");
+        let mut next_request = request;
+        next_request.cursor = Some(cursor);
+        let next = select_page_at(&next_request, &plan, now + 1)
+            .expect("historical plan remains valid at current clock");
+        assert_eq!(next.issued_at_unix_seconds, now);
     }
 
     #[test]

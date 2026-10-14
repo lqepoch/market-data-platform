@@ -12,7 +12,8 @@ use super::{
     cursor::{futu_cursor, futu_cursor_cache_input, make_futu_cursor, validate_provider_cursor},
     error::{ProviderConfigError, ProviderQueryError},
     projection::{
-        build_page, format_utc, make_row, next_bar_end, now_proto, parse_proto, provenance,
+        ProviderBarRowInput, build_page, format_utc, make_row, next_bar_end, now_proto,
+        parse_proto, provenance,
     },
     types::{ProviderPageFetch, ProviderRequestContext},
 };
@@ -79,8 +80,16 @@ impl FutuGateway {
         };
         let start = format_utc(group.fetch_window.start);
         let end = format_utc(group.fetch_window.end_exclusive);
-        if group.fetch_window.start.timestamp_subsec_nanos() % 1_000_000 != 0
-            || group.fetch_window.end_exclusive.timestamp_subsec_nanos() % 1_000_000 != 0
+        if !group
+            .fetch_window
+            .start
+            .timestamp_subsec_nanos()
+            .is_multiple_of(1_000_000)
+            || !group
+                .fetch_window
+                .end_exclusive
+                .timestamp_subsec_nanos()
+                .is_multiple_of(1_000_000)
         {
             // The Gateway's Node boundary stores request instants at millisecond precision.
             return Err(ProviderQueryError::ProviderCapabilityUnavailable);
@@ -177,21 +186,21 @@ impl FutuGateway {
                 }
                 continue;
             }
-            rows.push(make_row(
-                &plan.request,
-                group.resolution,
-                group.adjustment,
+            rows.push(make_row(ProviderBarRowInput {
+                request: &plan.request,
+                resolution: group.resolution,
+                adjustment: group.adjustment,
                 bar_start,
                 bar_end,
                 received_at,
-                fetched_at.clone(),
-                &bar.open,
-                &bar.high,
-                &bar.low,
-                &bar.close,
+                available_at: fetched_at.clone(),
+                open: &bar.open,
+                high: &bar.high,
+                low: &bar.low,
+                close: &bar.close,
                 volume,
-                PROVENANCE_ID,
-            )?);
+                provenance_id: PROVENANCE_ID,
+            })?);
         }
         if rows.is_empty() && !page.has_more && gaps.is_empty() {
             gaps.push(super::projection::gap_for_window(
@@ -352,8 +361,6 @@ fn map_status(status: u16) -> ProviderQueryError {
 fn map_transport_error(error: reqwest::Error) -> ProviderQueryError {
     if error.is_timeout() {
         ProviderQueryError::Timeout
-    } else if error.is_connect() {
-        ProviderQueryError::ProviderUnavailable
     } else {
         ProviderQueryError::ProviderUnavailable
     }

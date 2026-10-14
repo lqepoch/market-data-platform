@@ -29,7 +29,7 @@ use crate::{
     },
 };
 
-pub use cursor::{ProviderPageSelection, planning_as_of, select_page};
+pub use cursor::{ProviderPageSelection, planning_as_of, select_page, select_page_at};
 pub use error::{ProviderConfigError, ProviderQueryError};
 pub use types::{
     ProviderCacheIdentity, ProviderCachePolicy, ProviderPageFetch, ProviderRequestContext,

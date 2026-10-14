@@ -20,7 +20,8 @@ use super::{
     },
     error::ProviderQueryError,
     projection::{
-        build_page, format_utc, make_row, next_bar_end, now_proto, parse_proto, provenance,
+        ProviderBarRowInput, build_page, format_utc, make_row, next_bar_end, now_proto,
+        parse_proto, provenance,
     },
     types::{ProviderPageFetch, ProviderRequestContext},
 };
@@ -157,21 +158,22 @@ pub(super) async fn fetch_page(
         }
         let received_at = ProtoTimestampV2::parse(result.response_observed_at().as_str())
             .map_err(|_| ProviderQueryError::MalformedResponse)?;
-        rows.push(make_row(
-            &plan.request,
-            group.resolution,
-            group.adjustment,
+        let volume = bar.volume().to_string();
+        rows.push(make_row(ProviderBarRowInput {
+            request: &plan.request,
+            resolution: group.resolution,
+            adjustment: group.adjustment,
             bar_start,
             bar_end,
             received_at,
-            fetched_at.clone(),
-            bar.open().as_str(),
-            bar.high().as_str(),
-            bar.low().as_str(),
-            bar.close().as_str(),
-            &bar.volume().to_string(),
-            PROVENANCE_ID,
-        )?);
+            available_at: fetched_at.clone(),
+            open: bar.open().as_str(),
+            high: bar.high().as_str(),
+            low: bar.low().as_str(),
+            close: bar.close().as_str(),
+            volume: &volume,
+            provenance_id: PROVENANCE_ID,
+        })?);
     }
 
     if rows.is_empty() && !has_provider_cursor {

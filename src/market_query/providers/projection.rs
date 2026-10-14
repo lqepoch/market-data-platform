@@ -128,40 +128,42 @@ pub(super) fn build_page(
     Ok(response)
 }
 
-pub(super) fn make_row(
-    request: &BarsRequestV1,
-    resolution: BarResolutionV1,
-    adjustment: AdjustmentV1,
-    bar_start: DateTime<Utc>,
-    bar_end: DateTime<Utc>,
-    received_at: ProtoTimestampV2,
-    available_at: ProtoTimestampV2,
-    open: &str,
-    high: &str,
-    low: &str,
-    close: &str,
-    volume: &str,
-    provenance_id: &str,
-) -> Result<BarRowV1, ProviderQueryError> {
+pub(super) struct ProviderBarRowInput<'a> {
+    pub request: &'a BarsRequestV1,
+    pub resolution: BarResolutionV1,
+    pub adjustment: AdjustmentV1,
+    pub bar_start: DateTime<Utc>,
+    pub bar_end: DateTime<Utc>,
+    pub received_at: ProtoTimestampV2,
+    pub available_at: ProtoTimestampV2,
+    pub open: &'a str,
+    pub high: &'a str,
+    pub low: &'a str,
+    pub close: &'a str,
+    pub volume: &'a str,
+    pub provenance_id: &'a str,
+}
+
+pub(super) fn make_row(input: ProviderBarRowInput<'_>) -> Result<BarRowV1, ProviderQueryError> {
     let decimal = |value: &str| {
         market_contracts::DecimalString::new(value.to_owned())
             .map_err(|_| ProviderQueryError::MalformedResponse)
     };
     let row = BarRowV1 {
-        symbol: request.symbol.clone(),
-        asset_class: request.asset_class,
-        resolution,
-        adjustment,
-        bar_start_utc: proto_from_datetime(bar_start)?,
-        bar_end_exclusive_utc: proto_from_datetime(bar_end)?,
-        received_at_utc: received_at,
-        available_at_utc: available_at,
-        open: decimal(open)?,
-        high: decimal(high)?,
-        low: decimal(low)?,
-        close: decimal(close)?,
-        volume: decimal(volume)?,
-        provenance_id: provenance_id.to_owned(),
+        symbol: input.request.symbol.clone(),
+        asset_class: input.request.asset_class,
+        resolution: input.resolution,
+        adjustment: input.adjustment,
+        bar_start_utc: proto_from_datetime(input.bar_start)?,
+        bar_end_exclusive_utc: proto_from_datetime(input.bar_end)?,
+        received_at_utc: input.received_at,
+        available_at_utc: input.available_at,
+        open: decimal(input.open)?,
+        high: decimal(input.high)?,
+        low: decimal(input.low)?,
+        close: decimal(input.close)?,
+        volume: decimal(input.volume)?,
+        provenance_id: input.provenance_id.to_owned(),
         session_instance_id: PROVIDER_LOCAL_SESSION_ID.to_owned(),
         validation_state: BarsValidationStateV1::Provisional,
     };
@@ -213,14 +215,14 @@ fn merge_overlapping_gaps(
         if gap.start_utc >= gap.end_exclusive_utc {
             return Err(ProviderQueryError::MalformedResponse);
         }
-        if let Some(previous) = merged.last_mut() {
-            if gap.start_utc < previous.end_exclusive_utc {
-                if gap.end_exclusive_utc > previous.end_exclusive_utc {
-                    previous.end_exclusive_utc = gap.end_exclusive_utc;
-                }
-                previous.reason_code = CoverageGapReasonV1::Unknown;
-                continue;
+        if let Some(previous) = merged.last_mut()
+            && gap.start_utc < previous.end_exclusive_utc
+        {
+            if gap.end_exclusive_utc > previous.end_exclusive_utc {
+                previous.end_exclusive_utc = gap.end_exclusive_utc;
             }
+            previous.reason_code = CoverageGapReasonV1::Unknown;
+            continue;
         }
         merged.push(gap);
     }
