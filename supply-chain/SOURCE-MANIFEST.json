@@ -1,7 +1,7 @@
 {
   "artifacts": {
-    "supply-chain/NOTICE.txt": "a048a239112cc357304f17e4013c24eba3c89612ec2a69e69a0faff31c27a032",
-    "supply-chain/market-data-platform.cdx.json": "4165151c890c30d4cc068d862811e6f92915bc139654e1c6b6f159161e29f7e0"
+    "supply-chain/NOTICE.txt": "07c1e61cf9f3207113fe8fdeffb7675abd86d507aba02c5d105e8174330fe21b",
+    "supply-chain/market-data-platform.cdx.json": "a763d9e82d541c65b43a0e8503d23155b196d9e30d554390096b3f0fa1c5807d"
   },
   "component": {
     "license": "MIT",
@@ -34,11 +34,11 @@
   "inputs": [
     {
       "path": "Cargo.toml",
-      "sha256": "437235547fff4ae036806c90353e38d7e6510b96aeb09b6d1c4106b99dfbba51"
+      "sha256": "2d38c3f98449bd7bc548935c3e6b72f92c2e58171632b6d9b7e0210df0cabb9f"
     },
     {
       "path": "Cargo.lock",
-      "sha256": "fecfd3a5049e86d8c8bec77ae547a7c9cd8a4e8c2237a50f9f8bef5d2a0ca00d"
+      "sha256": "579c8dff2850753b447ae3afe1320f0fd00ef2110b89c4bd0aa55ed65b4256d0"
     },
     {
       "path": "Dockerfile",
@@ -46,7 +46,7 @@
     },
     {
       "path": "deny.toml",
-      "sha256": "a3b8d2a797e06f20202600785ddfff4a2b0c2e775c9fd23a33faa612c7b3da6f"
+      "sha256": "45d2c66f22aa602ee73b4f03cdb1a449741e6f86a318b384af5b94a08b95b551"
     },
     {
       "path": "LICENSE",
@@ -54,11 +54,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "a85c7553fb40999e840fb08c9bbbcdba01df2548318aa16127fed3f6c80edacd"
+      "sha256": "f5b48efe81eac23edeb222f080c0313015341f9c0dcf9eef74b8eaf7a7839833"
     },
     {
       "path": "AGENTS.md",
-      "sha256": "72158dbaf9eae1e2e11eaa2f13bd7d7d8106b9f2fc4ca1439162e991cb364d26"
+      "sha256": "58b82b45de85b1a644b64ce09089ff30750a408d0cfcbe397f90a2800acbe7b9"
     },
     {
       "path": ".github/workflows/ci.yml",
@@ -66,11 +66,11 @@
     },
     {
       "path": "docs/CI.md",
-      "sha256": "bf095772d3ae37a545d18a3ee4991e7626d833b86a88b465da7d3a9f077d13a0"
+      "sha256": "f41d2dd62f6a6b7e573235b5f6dcccd3097178d06ea3f6c978da27004bccc801"
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "sha256": "dfaf29f0bc66ba62328f2aeb178f1c25493679718e4255a74e98c73f036315f2"
+      "sha256": "086bafa792115d4666b53553d7a0537eda814d38a2dc77e20664abc907554137"
     },
     {
       "path": "docs/CHG-2026-001-MDP-HTTP-PROVENANCE.md",
@@ -102,19 +102,35 @@
     },
     {
       "path": "docs/SUPPLY_CHAIN.md",
-      "sha256": "91b4596205ee50ab18dde549657506efc020b719d74dd558527df9a102078ae9"
+      "sha256": "617d583b624b2b3f99696c47b9ee3133e6ab453b25596bb6d880fc6a304be2cf"
     },
     {
       "path": "docs/openapi-v1.yaml",
-      "sha256": "64563c3bcb7e2b43ce603fb622db20c14f8a55b29fe9ad77ede529f2eb2c2775"
+      "sha256": "4f308159674a92849100b6de7e2e1d8e13c1e40dde4ee3b78e895d3e57855aee"
+    },
+    {
+      "path": "docs/MARKET_QUERY_RUNTIME.md",
+      "sha256": "bad822b84f4d2b3c115f9ecdc3a307152b4e0f3ce9a0fea476e7822b9cf878b8"
+    },
+    {
+      "path": "docs/session-router.md",
+      "sha256": "e1a65b8ada983ba7ee785768bbb145425b3b53e69150d3678f3ad315f379a07a"
+    },
+    {
+      "path": "docs/policies/mdp-cache-reconciliation-v1.md",
+      "sha256": "b408144e49728d0b745705f4822cbb160f63b0df648b11ee98b8744f7cf5b8da"
     },
     {
       "path": "supply-chain/git-source-pins.json",
       "sha256": "7772b1c8f6da84dfa2dd24f32382d4c1665ec634f1b41b249733ac06d89b2a4f"
     },
     {
+      "path": "supply-chain/licenses/webpki-root-certs-1.0.9.LICENSE",
+      "sha256": "e271993808fec50ab29350b39539cdec611a9103f827e0aa26d61da70e2d33f8"
+    },
+    {
       "path": "scripts/supply_chain.py",
-      "sha256": "e0a2e05c8730a0589fd65946feab7af75a4e8141a104a9cc473f3bdbc61c66f2"
+      "sha256": "854a2c737a6647b0898dc702f6852d7e7e344eb99c9fa62e7a4aa9716388de6d"
     },
     {
       "path": "scripts/container_smoke.sh",
@@ -122,7 +138,7 @@
     },
     {
       "path": "tests/test_supply_chain.py",
-      "sha256": "2a363162ec994b56cf22bc87a84e92405c82337ed28103a39fbcc12591426b53"
+      "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
     }
   ],
   "locked_packages": [
@@ -655,6 +671,13 @@
       "checksum": "92d699e522242e69e3003b94ecc1f960f3a5e015aa7c5d7486e65ad01dd94f5e",
       "license": "MIT OR Apache-2.0",
       "name": "futures-core",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "version": "0.3.34"
+    },
+    {
+      "checksum": "53c0fa8157de1303bfffdaa1cc2a673bfffb60102f76b0ef4441659124373fed",
+      "license": "MIT OR Apache-2.0",
+      "name": "futures-io",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "version": "0.3.34"
     },
@@ -1730,6 +1753,13 @@
       "version": "0.30.0"
     },
     {
+      "checksum": "494815d09bf52b5548659851081238f0ca39ff638363907596da739561c62c52",
+      "license": "MIT",
+      "name": "tokio-util",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "version": "0.7.19"
+    },
+    {
       "checksum": "2b86d767906c6c42421dcba507eb9d203e779497710a47782a224bb871653053",
       "license": "MIT OR Apache-2.0",
       "name": "toml_datetime",
@@ -1959,6 +1989,13 @@
       "name": "wasm-bindgen-shared",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
       "version": "0.2.129"
+    },
+    {
+      "checksum": "9d1ec4f6517c9e11ae630e200b2b65d193279042e28edd4a2cda233e46670bbb",
+      "license": "MIT OR Apache-2.0",
+      "name": "wasm-streams",
+      "source": "registry+https://github.com/rust-lang/crates.io-index",
+      "version": "0.5.0"
     },
     {
       "checksum": "88261b9deccee56594c11a3460c462c41f58d148598fe70ad77070126a68aba4",
@@ -2256,7 +2293,7 @@
     "files": [
       {
         "path": "scripts/supply_chain.py",
-        "sha256": "e0a2e05c8730a0589fd65946feab7af75a4e8141a104a9cc473f3bdbc61c66f2"
+        "sha256": "854a2c737a6647b0898dc702f6852d7e7e344eb99c9fa62e7a4aa9716388de6d"
       },
       {
         "path": "src/aggregate.rs",
@@ -2264,7 +2301,7 @@
       },
       {
         "path": "src/archive.rs",
-        "sha256": "8c3b6cffc43b19bf3cadf08a525ce8a186b36b96936e09e09670d1f1ceb3fed5"
+        "sha256": "d7e86090525550e813469cc02d1b5f570209e5131fa62f0f1f7020ec2acfd95e"
       },
       {
         "path": "src/archive/capture_pair.rs",
@@ -2319,6 +2356,18 @@
         "sha256": "023f5f423f7b27edb9f13bdc7626b66f6af1e638eb131475ce7c11163c108209"
       },
       {
+        "path": "src/archive/reconciliation.rs",
+        "sha256": "3cf6d679177007b60d34f7441fec9692ae1a5ff503da76a1dd0bab77351ab8a5"
+      },
+      {
+        "path": "src/archive/reconciliation/store.rs",
+        "sha256": "512655d2b272912695d3de79b2baaa0a95e7cf1659fae08bcae76e111b4ddf0b"
+      },
+      {
+        "path": "src/archive/reconciliation/tests.rs",
+        "sha256": "c136fc1ced651b758fe597e274b84513f25ea443b5f9f7f1bee9091def2ef2f1"
+      },
+      {
         "path": "src/archive/tests.rs",
         "sha256": "31972dfcb2e5ca6d19b7c23032e4e0d9ff74a801e930be215430e74fcc8fa403"
       },
@@ -2340,43 +2389,107 @@
       },
       {
         "path": "src/http_api.rs",
-        "sha256": "3f64e81a4327315906e40439d63e7812ece0b12f405932bd4f0faca28650d1db"
+        "sha256": "6fdf530cda08897dffcb365170d88b0508d67899baf7820c14a602b1e29231be"
       },
       {
         "path": "src/http_api/auth.rs",
-        "sha256": "a86926453eebf8fe61699360dd5b3eab66f0adb9cac220950ceb33eadd8f229f"
+        "sha256": "a569eccdb5977072c31b6def6b5b62b6df853de58715e91375ef53595be26a29"
       },
       {
         "path": "src/http_api/market.rs",
         "sha256": "7c4112017d40580a62bb338cb0bb256e5400f4a0dd9149e9ba1412677373330d"
       },
       {
+        "path": "src/http_api/market_bars.rs",
+        "sha256": "1736ebbcb67e49863da865f9c52644a82dd9bfded8ed958dbc84f62331fbde2f"
+      },
+      {
+        "path": "src/http_api/market_bars/query.rs",
+        "sha256": "243aae9f6188df73da32d3a4e331bd69da55482627153e22aa08924f4bb38a05"
+      },
+      {
+        "path": "src/http_api/market_bars/response.rs",
+        "sha256": "9e34ec3875bd6e00073c9c983302675257969bc8b77fb5f3314f5ba95ce76371"
+      },
+      {
+        "path": "src/http_api/market_bars_tests.rs",
+        "sha256": "1e1efeac22152b2c19f18e81a4ef150dafb359dde2e286d25a49aaf6b147a78b"
+      },
+      {
         "path": "src/http_api/supervisor.rs",
-        "sha256": "ecb511ff234f4fb0ea61f54fd75e90369e6a04ad24b1feb992a010acea90cb0e"
+        "sha256": "f05924b161f92210eb74296452a39e98d62042eee7469f741ca09390fee8848d"
       },
       {
         "path": "src/http_api/tests.rs",
-        "sha256": "d42021c058306adbf8e6cf3a4ba67b6dbb8356e4f4873b5b26c89f84b6c6be86"
+        "sha256": "01a7d7cd991843c502157c9192f9734a95370343289c57ab72d7cde8eddd2b25"
       },
       {
         "path": "src/http_api/tests/pair_tests.rs",
-        "sha256": "eef80367e981bc9390953975596f20b926d6a4de4ef554486484363371960f18"
+        "sha256": "8fdcfe67a9b3dac1d7b2f344c7abe7a206209d5e2367fd67640ce3d8c92b6d45"
       },
       {
         "path": "src/lib.rs",
-        "sha256": "5b6bbaa054fb4259879739e95ac701b72b766a8ecf3bcbc52e7c40740ce5453d"
+        "sha256": "92a07dde722859b720e035ae410b1d9d4d8f6dbdf503124700b9a5bd6c7986bc"
       },
       {
         "path": "src/main.rs",
-        "sha256": "07ded373aeb1e0bb10b5936f5fd6a4a6a6242f3c00ec78dc43f97e51faa06d2a"
+        "sha256": "95a07e1594a5a38e1dd2b69721d86825ca8f937bf03ed8f033e455e2f919c677"
       },
       {
         "path": "src/market_calendar.rs",
         "sha256": "519303fc0c958c7b8c174de95015acc75788e3cc75aed160c94fbcb60e589016"
       },
       {
+        "path": "src/market_query.rs",
+        "sha256": "0394cf3df3a409037f0cbe1f04365b596d4d376782e2ac9f38cd9d1397bc4f72"
+      },
+      {
+        "path": "src/market_query/planning.rs",
+        "sha256": "35bb4697c5425dcf1e96b14d6000e6e91a9ed7ff2d4799ab4834d9f6b39267de"
+      },
+      {
+        "path": "src/market_query/planning_tests.rs",
+        "sha256": "9d3c919b53c990b4b908b30ddcb27d469dccd93d8d1fd700c6d3dd52d9c225ac"
+      },
+      {
+        "path": "src/market_query/providers.rs",
+        "sha256": "d057651f60a66fc5fcb459eab004875222d736861761d1d0aa3cac8519234ec2"
+      },
+      {
+        "path": "src/market_query/providers/alpaca.rs",
+        "sha256": "3819887622887351fe14df8a3a5b2b00e8eecff73bed554718a0bbf1bf89d7f6"
+      },
+      {
+        "path": "src/market_query/providers/cursor.rs",
+        "sha256": "66af04ef70ad3ae29e6488e47c048ec1f3f4c254bef8832686ac1f9f7b5ea152"
+      },
+      {
+        "path": "src/market_query/providers/error.rs",
+        "sha256": "b97974e63ef740fa19a6626819e28816e8d4363ca6240f3b8c9dff46f1402a1d"
+      },
+      {
+        "path": "src/market_query/providers/futu.rs",
+        "sha256": "cadeaea456e795b61b26b2b2bd7a863268afc0f0a75e0a4f5bcbae9a69132be5"
+      },
+      {
+        "path": "src/market_query/providers/projection.rs",
+        "sha256": "cf1a8a95a129803f69a5c76abccccae0e1248ca6789414fa1f0831b21e0c55fb"
+      },
+      {
+        "path": "src/market_query/providers/types.rs",
+        "sha256": "c42a2dcad431c7914b5be0417e0054a2023725c6d548c587e12c629ed92bb8e5"
+      },
+      {
+        "path": "src/market_query/providers/yfinance.rs",
+        "sha256": "34e02c4c62a5d6a344b73f36e7213dd2dc9f838f1b9c2c19b7ccc7e1984c70ae"
+      },
+      {
         "path": "src/parquet_store.rs",
-        "sha256": "76fa40a8a7faf0f8722f75be5e536ae7ff17568d96b2a480e320cba2fe267966"
+        "sha256": "d022ad57e6072313b7597c6ba417c95d03334a0caeea083119fdafd68ab21cdc"
+      },
+      {
+        "path": "src/parquet_store/bars_v1.rs",
+        "sha256": "f6d809cc37f45f380082297455fe571e5f88771243017156ae3e0bab7c0870cf"
       },
       {
         "path": "src/parquet_store/events_v3.rs",
@@ -2384,11 +2497,11 @@
       },
       {
         "path": "src/parquet_store/facts.rs",
-        "sha256": "ade52b0009fc706e3c7389a9e0023c1c39bbeaaf332f55b22f08219eb52f5368"
+        "sha256": "f9fbf5aa5084fbea8d15d9fa764c96781c10e44e79f5239f3d62b1bd291c73bc"
       },
       {
         "path": "src/parquet_store/metadata.rs",
-        "sha256": "6eaa32fabfaf3cfd827ed278f55e533752fe502ca37264e2967032436efe4b4b"
+        "sha256": "0507ceca4d3e697c2a94522046636f997108cf4f464c9ec95e4a6c11d4463b86"
       },
       {
         "path": "src/parquet_store/projection.rs",
@@ -2416,7 +2529,7 @@
       },
       {
         "path": "src/parquet_worker.rs",
-        "sha256": "9fe6048b6eefb3a6f724d68e64a426f3807d3f744952630206361f531138d593"
+        "sha256": "5e58cb5d15348c4239fa5d9f1aaaf9c95873dfe6aa79a93a2a5a539b547799d3"
       },
       {
         "path": "src/pipeline.rs",
@@ -2456,7 +2569,7 @@
       },
       {
         "path": "src/schema.rs",
-        "sha256": "d10e87034e53856282da2c54d2e192cd29397e3d8d4bb2e0a867e1ffed666f80"
+        "sha256": "1dd76863482dccdb22a5ef920288c6bfe57f46e6f91e5c8dd3578d7c972989d9"
       },
       {
         "path": "src/session_router.rs",
@@ -2500,10 +2613,10 @@
       },
       {
         "path": "tests/test_supply_chain.py",
-        "sha256": "2a363162ec994b56cf22bc87a84e92405c82337ed28103a39fbcc12591426b53"
+        "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "e3d5280b2b7f4286c41af4c1a005c095b5c108ac3abf549f0941928826732a31"
+    "sha256": "3a0526f7e33c9a472c1c1e2838a8f697238f700d60bc55113f4846e21421a176"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",

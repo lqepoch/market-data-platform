@@ -2230,6 +2230,36 @@
       "version": "0.3.34"
     },
     {
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#futures-io@0.3.34",
+      "description": "The `AsyncRead`, `AsyncWrite`, `AsyncSeek`, and `AsyncBufRead` traits for the futures-rs library. ",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://rust-lang.github.io/futures-rs"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-lang/futures-rs"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "53c0fa8157de1303bfffdaa1cc2a673bfffb60102f76b0ef4441659124373fed"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "name": "futures-io",
+      "purl": "pkg:cargo/futures-io@0.3.34",
+      "scope": "required",
+      "type": "library",
+      "version": "0.3.34"
+    },
+    {
       "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#futures-macro@0.3.34",
       "description": "The futures-rs procedural macro implementations. ",
       "externalReferences": [
@@ -6838,6 +6868,37 @@
     },
     {
       "author": "Tokio Contributors <team@tokio.rs>",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#tokio-util@0.7.19",
+      "description": "Additional utilities for working with Tokio. ",
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://tokio.rs"
+        },
+        {
+          "type": "vcs",
+          "url": "https://github.com/tokio-rs/tokio"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "494815d09bf52b5548659851081238f0ca39ff638363907596da739561c62c52"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "name": "tokio-util",
+      "purl": "pkg:cargo/tokio-util@0.7.19",
+      "scope": "required",
+      "type": "library",
+      "version": "0.7.19"
+    },
+    {
+      "author": "Tokio Contributors <team@tokio.rs>",
       "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.2",
       "description": "An event-driven, non-blocking I/O platform for writing asynchronous I/O backed applications. ",
       "externalReferences": [
@@ -7915,6 +7976,33 @@
       "scope": "required",
       "type": "library",
       "version": "0.2.129"
+    },
+    {
+      "author": "Mattias Buelens <mattias@buelens.com>",
+      "bom-ref": "registry+https://github.com/rust-lang/crates.io-index#wasm-streams@0.5.0",
+      "description": "Bridging between web streams and Rust streams using WebAssembly ",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/MattiasBuelens/wasm-streams/"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "9d1ec4f6517c9e11ae630e200b2b65d193279042e28edd4a2cda233e46670bbb"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "name": "wasm-streams",
+      "purl": "pkg:cargo/wasm-streams@0.5.0",
+      "scope": "required",
+      "type": "library",
+      "version": "0.5.0"
     },
     {
       "author": "The wasm-bindgen Developers",
@@ -9179,7 +9267,8 @@
         "registry+https://github.com/rust-lang/crates.io-index#thiserror@2.0.21",
         "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.2",
         "registry+https://github.com/rust-lang/crates.io-index#tracing@0.1.44",
-        "registry+https://github.com/rust-lang/crates.io-index#tracing-subscriber@0.3.20"
+        "registry+https://github.com/rust-lang/crates.io-index#tracing-subscriber@0.3.20",
+        "registry+https://github.com/rust-lang/crates.io-index#zeroize@1.9.1"
       ],
       "ref": "pkg:cargo/market-data-platform@0.1.0"
     },
@@ -9635,6 +9724,9 @@
       "ref": "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.34"
     },
     {
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#futures-io@0.3.34"
+    },
+    {
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#proc-macro2@1.0.107",
         "registry+https://github.com/rust-lang/crates.io-index#quote@1.0.47",
@@ -9651,9 +9743,11 @@
     {
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.34",
+        "registry+https://github.com/rust-lang/crates.io-index#futures-io@0.3.34",
         "registry+https://github.com/rust-lang/crates.io-index#futures-macro@0.3.34",
         "registry+https://github.com/rust-lang/crates.io-index#futures-sink@0.3.34",
         "registry+https://github.com/rust-lang/crates.io-index#futures-task@0.3.34",
+        "registry+https://github.com/rust-lang/crates.io-index#memchr@2.8.3",
         "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
         "registry+https://github.com/rust-lang/crates.io-index#slab@0.4.12"
       ],
@@ -10280,6 +10374,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#base64@0.23.1",
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
         "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.34",
+        "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.34",
         "registry+https://github.com/rust-lang/crates.io-index#http@1.5.0",
         "registry+https://github.com/rust-lang/crates.io-index#http-body@1.1.0",
         "registry+https://github.com/rust-lang/crates.io-index#http-body-util@0.1.5",
@@ -10300,12 +10395,14 @@
         "registry+https://github.com/rust-lang/crates.io-index#sync_wrapper@1.0.2",
         "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.2",
         "registry+https://github.com/rust-lang/crates.io-index#tokio-rustls@0.26.6",
+        "registry+https://github.com/rust-lang/crates.io-index#tokio-util@0.7.19",
         "registry+https://github.com/rust-lang/crates.io-index#tower@0.5.3",
         "registry+https://github.com/rust-lang/crates.io-index#tower-http@0.6.11",
         "registry+https://github.com/rust-lang/crates.io-index#tower-service@0.3.3",
         "registry+https://github.com/rust-lang/crates.io-index#url@2.5.8",
         "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen@0.2.129",
         "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen-futures@0.4.79",
+        "registry+https://github.com/rust-lang/crates.io-index#wasm-streams@0.5.0",
         "registry+https://github.com/rust-lang/crates.io-index#web-sys@0.3.106"
       ],
       "ref": "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.13.5"
@@ -10686,6 +10783,16 @@
     {
       "dependsOn": [
         "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
+        "registry+https://github.com/rust-lang/crates.io-index#futures-core@0.3.34",
+        "registry+https://github.com/rust-lang/crates.io-index#futures-sink@0.3.34",
+        "registry+https://github.com/rust-lang/crates.io-index#pin-project-lite@0.2.17",
+        "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.2"
+      ],
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#tokio-util@0.7.19"
+    },
+    {
+      "dependsOn": [
+        "registry+https://github.com/rust-lang/crates.io-index#bytes@1.12.1",
         "registry+https://github.com/rust-lang/crates.io-index#libc@0.2.190",
         "registry+https://github.com/rust-lang/crates.io-index#mio@1.2.4",
         "registry+https://github.com/rust-lang/crates.io-index#parking_lot@0.12.5",
@@ -10916,6 +11023,16 @@
         "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen-shared@0.2.129"
       ],
       "ref": "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen@0.2.129"
+    },
+    {
+      "dependsOn": [
+        "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.34",
+        "registry+https://github.com/rust-lang/crates.io-index#js-sys@0.3.106",
+        "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen@0.2.129",
+        "registry+https://github.com/rust-lang/crates.io-index#wasm-bindgen-futures@0.4.79",
+        "registry+https://github.com/rust-lang/crates.io-index#web-sys@0.3.106"
+      ],
+      "ref": "registry+https://github.com/rust-lang/crates.io-index#wasm-streams@0.5.0"
     },
     {
       "dependsOn": [

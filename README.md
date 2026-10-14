@@ -503,3 +503,11 @@ budget locks with readers, and leaves staging, active, unknown, and unverified f
 This repository's original source is MIT licensed in `LICENSE`. Dependencies retain their respective
 licenses; review the generated lockfile and dependency notices before redistribution. The private
 `qqq-sip-drive-archive` implementation is not copied into this repository and is not relicensed.
+
+## Unified market query runtime
+
+The opt-in source-preserving market bars and calendar routes, provider admission
+boundaries, dedicated cache configuration and rollback are documented in
+[`docs/MARKET_QUERY_RUNTIME.md`](docs/MARKET_QUERY_RUNTIME.md). The existing dataset
+archive API and its publication gates remain separate. Public build verification
+runs on GitHub Actions; no local Docker fallback is required.

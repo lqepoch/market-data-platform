@@ -3,8 +3,10 @@ info:
   title: LQEpoch Market Data Platform Read API
   version: 1.0.0
   description: >-
-    Read-only authenticated access to verified MDP datasets. Bars are the existing
-    lqepoch.us_equity_trade_bar_1m.v1 contract. They do not carry DatasetManifestV2
+    Read-only authenticated access to verified MDP datasets. Dataset bars use the existing
+    lqepoch.us_equity_trade_bar_1m.v1 contract. The separate /v1/market/bars route uses
+    the pinned trading-core Bars V1 query contract with exact decimal strings, source segments,
+    gaps and stable bounded pagination. They do not carry DatasetManifestV2
     completion evidence. A future BarV2 response must use a separately versioned contract. The
     optional Linux LocalTest Pair route verifies one exact existing chunk and does not establish a
     capture rollup or provider completeness. It is mounted only when explicit LocalTest state and
@@ -245,6 +247,166 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /v1/market/bars:
+    get:
+      operationId: getMarketBarsV1
+      summary: Read bounded source-preserving market bars
+      description: >-
+        Requires the opt-in runtime and a pinned calendar. The interval is [start,end) in UTC.
+        Research mode requires the verified research channel. Unknown feed, entitlement and
+        adjustment evidence cannot be promoted. Downgrade requires explicit caller permission.
+        All fields are required except cursor; unknown and duplicate parameters are rejected.
+      security: [{mdpDelegation: []}]
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/symbol"
+        - name: asset_class
+          in: query
+          required: true
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/asset_class"
+        - name: start
+          in: query
+          required: true
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/start"
+        - name: end
+          in: query
+          required: true
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/end"
+        - name: resolution
+          in: query
+          required: true
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/resolution"
+        - name: session_scope
+          in: query
+          required: true
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/session_scope"
+        - name: adjustment
+          in: query
+          required: true
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/adjustment"
+        - name: provider_mode
+          in: query
+          required: true
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/provider_mode"
+        - name: allow_daily_downgrade
+          in: query
+          required: true
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/allow_daily_downgrade"
+        - name: limit
+          in: query
+          required: true
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/limit"
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/cursor"
+      responses:
+        "200":
+          description: Complete or empty bounded response; this does not establish trusted provider authority.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsResponseV1"
+        "206":
+          description: Partial or unknown coverage, including continuation and classified gaps.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsResponseV1"
+        "400":
+          description: Invalid, duplicated or unknown query parameter.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "401":
+          description: Invalid market delegation or upstream authentication failure.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "403":
+          description: Unauthorized channel or provider access denied.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "410":
+          description: Continuation cursor expired; restart the fixed request.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "413":
+          description: Bounded response limit exceeded.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "422":
+          description: Unsupported resolution, adjustment or provider capability.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "429":
+          description: Provider request quota exceeded.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "502":
+          description: Provider response rejected.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "503":
+          description: Disabled runtime, missing calendar or unavailable provider/cache.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "504":
+          description: Supervised query or provider deadline expired.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+  /v1/market/sessions:
+    get:
+      operationId: getMarketSessionInstancesV1
+      summary: Read pinned calendar instances without inventing trading sessions
+      security: [{mdpDelegation: []}]
+      parameters:
+        - name: start
+          in: query
+          required: true
+          schema: {type: string, format: date-time}
+          description: UTC timestamp ending in Z; half-open range bounded to 366 days.
+        - name: end
+          in: query
+          required: true
+          schema: {type: string, format: date-time}
+          description: UTC timestamp ending in Z; half-open range bounded to 366 days.
+      responses:
+        "200":
+          description: Original calendar days and instances with input SHA and immutable version.
+        "400":
+          description: Invalid or excessive time window.
+        "401":
+          description: Missing or invalid market delegation.
+        "503":
+          description: Pinned calendar absent or requested range not covered.
   /v1/providers/capabilities:
     get:
       summary: Discover provider ownership without asserting entitlement or coverage

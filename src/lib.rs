@@ -10,6 +10,7 @@ pub mod config;
 pub mod error;
 pub mod http_api;
 pub mod market_calendar;
+pub mod market_query;
 pub mod parquet_store;
 #[doc(hidden)]
 pub mod parquet_worker;

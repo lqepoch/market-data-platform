@@ -199,6 +199,7 @@ fn pair_service_with_deadline(
     let state = Arc::new(ServiceState {
         auth_configured: auth.is_some(),
         market_calendar: None,
+        market_bars: None,
         query_client,
         reader: query_reader,
         #[cfg(target_os = "linux")]

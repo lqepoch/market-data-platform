@@ -55,6 +55,7 @@ fn service(
     let state = Arc::new(ServiceState {
         auth_configured: auth.is_some(),
         market_calendar: None,
+        market_bars: None,
         query_client,
         reader,
         #[cfg(target_os = "linux")]
@@ -379,6 +380,7 @@ async fn cache_policy_covers_query_supervisor_overload() {
     let state = Arc::new(ServiceState {
         auth_configured: true,
         market_calendar: None,
+        market_bars: None,
         query_client,
         reader,
         #[cfg(target_os = "linux")]

@@ -23,8 +23,9 @@ use market_data_platform::{
         RemoteArchiveReader, RemoteCacheCleaner, RemoteCacheLimits,
     },
     schema::{
-        EVENT_SCHEMA_ID, EVENT_SCHEMA_V2_ID, EVENT_SCHEMA_V3_ID, MINUTE_BAR_SCHEMA_ID,
-        RAW_FRAME_SCHEMA_ID, RAW_FRAME_SCHEMA_V2_ID, RAW_JSON_FRAME_SCHEMA_V2_ID,
+        EVENT_SCHEMA_ID, EVENT_SCHEMA_V2_ID, EVENT_SCHEMA_V3_ID, MARKET_BARS_SCHEMA_V1_ID,
+        MINUTE_BAR_SCHEMA_ID, RAW_FRAME_SCHEMA_ID, RAW_FRAME_SCHEMA_V2_ID,
+        RAW_JSON_FRAME_SCHEMA_V2_ID,
     },
 };
 
@@ -270,6 +271,7 @@ enum SchemaArg {
     MarketRawFrameV2,
     MarketRawJsonFrameV2,
     UsEquityTradeBar1mV1,
+    MarketBarsV1,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -282,6 +284,7 @@ enum NamespaceArg {
 enum ParquetWorkerAction {
     Verify,
     QueryBars,
+    ReadMarketBarsV1,
     VerifyCapturePairV2,
 }
 
@@ -304,6 +307,7 @@ impl SchemaArg {
             Self::MarketRawFrameV2 => RAW_FRAME_SCHEMA_V2_ID,
             Self::MarketRawJsonFrameV2 => RAW_JSON_FRAME_SCHEMA_V2_ID,
             Self::UsEquityTradeBar1mV1 => MINUTE_BAR_SCHEMA_ID,
+            Self::MarketBarsV1 => MARKET_BARS_SCHEMA_V1_ID,
         }
     }
 }
@@ -492,6 +496,15 @@ async fn run(command: Command) -> Result<()> {
                 use std::io::Write;
                 output.flush()?;
                 Ok(())
+            }
+            ParquetWorkerAction::ReadMarketBarsV1 => {
+                let rows = parquet_worker::cli_worker_read_market_bars_v1(
+                    &parquet,
+                    max_object_bytes,
+                    max_rows,
+                    max_result_bytes,
+                )?;
+                print_json_compact(&rows)
             }
             ParquetWorkerAction::VerifyCapturePairV2 => {
                 let request = parquet_worker::CapturePairV2WorkerRequest {

@@ -27,6 +27,7 @@ use crate::{
 
 mod auth;
 mod market;
+mod market_bars;
 mod supervisor;
 
 pub use auth::AuthConfig;
@@ -43,6 +44,7 @@ const QUERY_DEADLINE: Duration = Duration::from_secs(120);
 struct ServiceState {
     auth_configured: bool,
     market_calendar: Option<crate::market_calendar::LoadedMarketCalendar>,
+    market_bars: Option<Arc<market_bars::MarketBarsRuntime>>,
     query_client: QueryClient,
     reader: Arc<RemoteArchiveReader>,
     #[cfg(target_os = "linux")]
@@ -191,6 +193,7 @@ pub async fn serve_with_pair_read_config(
     let state = Arc::new(ServiceState {
         auth_configured: auth.is_some(),
         market_calendar: crate::market_calendar::LoadedMarketCalendar::from_environment()?,
+        market_bars: market_bars::MarketBarsRuntime::from_environment()?,
         query_client,
         reader,
         #[cfg(target_os = "linux")]
@@ -223,7 +226,9 @@ pub async fn serve_with_pair_read_config(
 fn app_router(state: Arc<ServiceState>, auth: Option<AuthConfig>) -> Router {
     let protected_routes = Router::new()
         .route("/v1/datasets/{dataset_id}/bars", get(get_bars))
-        .merge(market::routes());
+        .merge(market::routes())
+        .route("/v1/market/bars", get(market_bars::get_market_bars))
+        .route("/v1/market/sessions", get(market_bars::get_market_sessions));
     #[cfg(target_os = "linux")]
     let protected_routes = if state.pair_query_available {
         protected_routes.route(
