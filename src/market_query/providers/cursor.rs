@@ -52,7 +52,7 @@ impl CursorSigner {
 
     fn from_configured_secret(secret: String) -> Result<Self, ProviderConfigError> {
         let secret = Zeroizing::new(secret);
-        if secret.as_bytes().len() < 32
+        if secret.len() < 32
             || secret
                 .chars()
                 .any(|character| character.is_whitespace() || character.is_control())
@@ -893,6 +893,7 @@ fn unix_seconds(timestamp: &ProtoTimestampV2) -> Result<u64, ProviderQueryError>
     u64::try_from(value.timestamp()).map_err(|_| ProviderQueryError::InvalidCursor)
 }
 
+#[cfg(test)]
 fn current_unix_seconds() -> Result<u64, ProviderQueryError> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
