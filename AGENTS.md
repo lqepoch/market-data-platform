@@ -37,6 +37,24 @@ The nine-repository map is a [governance candidate in Draft PR #20](https://gith
   counts are canonical decimal strings while CLI JSON retains numbers. HTTP must not imply
   DatasetManifestV2 completion evidence. LocalTest HTTP is diagnostic-only and explicitly
   synthetic/unknown. Keep browser reads behind a trusted BFF; never expose cache or rclone config.
+- `archive::reconciliation` is a separate crate-private local cache-version store. Derive keys
+  before fetch from the request and stable actual route scope: provider/feed (preserve `unknown`),
+  stable non-secret route identity, hashed entitlement realm, entitlement, numeric encoding,
+  requested/effective resolution, adjustment, asset class, symbol/session/window/calendar,
+  request-cursor digest, and Core-owned schema fingerprint. Keep response/coverage hashes in
+  immutable receipts, never in
+  lookup keys; never store credentials or raw cursors. One cached snapshot must represent one actual
+  provider/feed. Persist raw and canonical Parquet with immutable
+  version receipts, verify both through the existing bounded Linux worker, and atomically update
+  the local current manifest only after readback. Incomplete, truncated, gapped, unexhausted, Futu,
+  or binary-float input remains provisional; historical bars may omit stream sequence evidence,
+  while any absent page/exhaustion fact prevents a complete cache claim. Production authority stays
+  closed until a trusted provider-admission proof is wired; same-feed Alpaca conflict rejects
+  replacement and preserves the old verified current version. Rollback and recovery require an
+  explicitly selected verified version. Do not wire this store to remote archive writers or existing QQQ Drive / Stock
+  S3OSS writers. Non-Linux must return `Unsupported` without inline Parquet decode. See
+  `docs/policies/mdp-cache-reconciliation-v1.md`; the HTTP owner must propagate returned
+  invalidation after integrating the adapter.
 - The optional `offline-capture-synthetic` feature may replay only the broker-owned fixed
   `AlpacaOpraTradeV1` MessagePack fixture through its existing runner. Preserve `alpaca/opra` and
   unknown entitlement. Mark Pair manifests `LocalArchive` because they describe exact local finite

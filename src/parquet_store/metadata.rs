@@ -11,6 +11,11 @@ use parquet::{
 
 use crate::{MarketDataError, Result};
 
+const BARS_V1_SOURCE_PROVIDER_KEY: &str = "lqepoch.bars_v1.source.provider";
+const BARS_V1_SOURCE_FEED_KEY: &str = "lqepoch.bars_v1.source.feed";
+const BARS_V1_SOURCE_ENTITLEMENT_KEY: &str = "lqepoch.bars_v1.source.entitlement";
+const BARS_V1_SOURCE_ENCODING_KEY: &str = "lqepoch.bars_v1.source.numeric_encoding";
+
 use super::{
     MAX_PARQUET_ROW_GROUP_UNCOMPRESSED_BYTES, MAX_PARQUET_ROW_GROUPS,
     MAX_PARQUET_TOTAL_UNCOMPRESSED_BYTES, PARQUET_DATA_PAGE_BYTES, PARQUET_ROW_GROUP_ROWS,
@@ -30,6 +35,85 @@ pub(super) fn trusted_schema_metadata(schema_id: &str) -> Result<HashMap<String,
         (SCHEMA_DESCRIPTOR_METADATA_KEY.to_owned(), canonical_json),
         (SCHEMA_FINGERPRINT_METADATA_KEY.to_owned(), fingerprint),
     ]))
+}
+
+pub(super) fn bars_v1_source_metadata(
+    response: &market_contracts::BarsResponseV1,
+) -> Result<Vec<KeyValue>> {
+    use market_contracts::BarsEntitlementStatusV1;
+
+    let first = response
+        .source_provenance
+        .first()
+        .ok_or(MarketDataError::Contract)?;
+    if response.source_provenance.iter().any(|source| {
+        source.provider != first.provider
+            || source.feed != first.feed
+            || source.entitlement_status != first.entitlement_status
+            || source.numeric_encoding != first.numeric_encoding
+    }) {
+        return Err(MarketDataError::MixedProvenance);
+    }
+    let entitlement = match first.entitlement_status {
+        BarsEntitlementStatusV1::Authorized => "authorized",
+        BarsEntitlementStatusV1::Unauthorized => "unauthorized",
+        BarsEntitlementStatusV1::Unknown => "unknown",
+        BarsEntitlementStatusV1::Mixed => return Err(MarketDataError::MixedProvenance),
+    };
+    Ok(vec![
+        KeyValue::new(BARS_V1_SOURCE_PROVIDER_KEY, first.provider.clone()),
+        KeyValue::new(BARS_V1_SOURCE_FEED_KEY, first.feed.clone()),
+        KeyValue::new(BARS_V1_SOURCE_ENTITLEMENT_KEY, entitlement),
+        KeyValue::new(BARS_V1_SOURCE_ENCODING_KEY, first.numeric_encoding.as_str()),
+    ])
+}
+
+pub(super) fn bars_v1_source_from_metadata(
+    values: Option<&Vec<KeyValue>>,
+) -> Result<market_contracts::MarketDataSourceV1> {
+    use market_contracts::{EntitlementState, NumericEncodingV1};
+
+    let mut source = HashMap::new();
+    if let Some(values) = values {
+        for entry in values {
+            if entry.key.starts_with("lqepoch.bars_v1.source.") {
+                let value = entry
+                    .value
+                    .as_deref()
+                    .ok_or(MarketDataError::ParquetSchema)?;
+                if source.insert(entry.key.as_str(), value).is_some() {
+                    return Err(MarketDataError::ParquetSchema);
+                }
+            }
+        }
+    }
+    if source.len() != 4 {
+        return Err(MarketDataError::ParquetSchema);
+    }
+    let get = |key| {
+        source
+            .get(key)
+            .copied()
+            .ok_or(MarketDataError::ParquetSchema)
+    };
+    let entitlement = match get(BARS_V1_SOURCE_ENTITLEMENT_KEY)? {
+        "authorized" => EntitlementState::Authorized,
+        "unauthorized" => EntitlementState::Unauthorized,
+        "unknown" => EntitlementState::Unknown,
+        _ => return Err(MarketDataError::ParquetSchema),
+    };
+    let numeric_encoding: NumericEncodingV1 = serde_json::from_value(serde_json::Value::String(
+        get(BARS_V1_SOURCE_ENCODING_KEY)?.to_owned(),
+    ))
+    .map_err(|_| MarketDataError::ParquetSchema)?;
+    market_contracts::MarketDataSourceV1::new(
+        get(BARS_V1_SOURCE_PROVIDER_KEY)?.to_owned(),
+        get(BARS_V1_SOURCE_FEED_KEY)?.to_owned(),
+        entitlement,
+        numeric_encoding,
+        None,
+    )
+    .map_err(|_| MarketDataError::ParquetSchema)
 }
 
 pub(super) fn validate_optional_schema_metadata(

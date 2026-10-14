@@ -262,6 +262,18 @@ datasets, and preserves unknown, malformed, incomplete, or unverified directorie
 does not load rclone configuration or contact Drive. Browser access remains behind an authenticated
 BFF.
 
+The crate-private `archive::reconciliation` module keeps a separate local, immutable-version cache
+for raw/canonical market-bar snapshots. Its pre-fetch key includes the actual provider/feed, stable
+non-secret route and entitlement scope, asset class, request dimensions, and Core-owned schema
+fingerprint; response and coverage hashes remain in the immutable receipt. A checksummed atomic
+current manifest selects only a verified version. The store retains provisional sources, rejects
+material same-feed conflicts without replacing the previous verified current, and exposes explicit
+verified-version rollback/recovery. This store has no
+provider or remote-archive writer and is not wired to the HTTP bars route until that route's owner
+maps and validates the frozen Core rows/provenance. See
+[`mdp-cache-reconciliation-v1.md`](policies/mdp-cache-reconciliation-v1.md) for its evidence,
+limits, and failure behavior.
+
 The HTTP service is a read-only facade over the verified query path. The regular bars route is
 `GET /v1/datasets/{dataset_id}/bars`, with required `namespace` and `symbol` query parameters. The
 JSON response is `{summary: ..., rows: TradeMinuteBarV1[]}` and uses the existing V1 bar

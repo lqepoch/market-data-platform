@@ -1,0 +1,115 @@
+# MDP Cache Reconciliation V1
+
+This policy describes the crate-private local cache reconciliation module in
+`src/archive/reconciliation`. The HTTP route and provider fetch logic are owned elsewhere. The
+module does not write to the existing QQQ Drive or Stock S3OSS archives, contact providers, or
+create an entitlement/completeness certificate.
+
+## Identity and coverage
+
+`CacheKeyV1` is derived before a provider fetch from the request and a stable
+`CacheQuerySourceScopeV1`. It fingerprints the selected actual provider and feed (`unknown` remains
+`unknown`), stable non-secret route identity, SHA-256 of the stable entitlement realm, entitlement
+state, expected numeric encoding, asset class, requested and effective resolution, provider mode,
+adjustment, symbol, session scope and calendar-derived session instances, half-open UTC request
+window, optional calendar version, request-cursor digest, and Core-owned schema ID/version/
+fingerprint. It contains no
+credential or raw page cursor. `auto` requests for distinct actual providers remain distinct keys.
+Response hashes, row hashes, observation times and random provenance IDs are version evidence, never
+lookup dimensions. One cache snapshot represents one actual provider/feed; mixed-source responses
+are rejected.
+
+Each coverage receipt retains the adapter's response-observed/receive timestamp. Each segment binds
+the SDK/provider observation SHA-256, canonical-row SHA-256, lineage-receipt hash, optional
+source-sequence range, and row counts. `source_observation_sha256`
+identifies SDK-normalized observations or Gateway observation bytes; it is not an HTTP wire-body
+hash and must not include credentials. If the adapter has no observation-byte hash, the cache
+computes a deterministic digest of the raw Core rows. Historical bars do not require tick/stream
+sequence numbers. Unknown sequences do not block a complete history result when the requested time
+range, page count, page exhaustion, and Core gap facts are known. Missing page count or exhaustion,
+a known gap, or truncation prevents a complete cache claim. Such rows can still be stored
+provisionally. If page facts do not support completeness, the cache downgrades a Core `Complete`
+response and its complete segments to `Partial` before publication. Provider cursors are never
+persisted; only their SHA-256 digest can be retained.
+
+The caller derives the pre-fetch key, then supplies the SDK-observation `BarsResponseV1`, the
+adapter's canonical `BarsResponseV1`, and `ProviderPageEvidenceV1` to
+`CacheVersionStoreV1::publish_bars_responses`. The cache preserves exact Core decimal tokens in the
+raw Parquet object, uses Core `ExactDecimal` for canonical normalization and deduplication, and
+validates every provenance/session reference before publish. The compact exact-decimal
+`CanonicalRowV1` view is generated internally for reconciliation. The module does not reconstruct
+row-level provider identity from a response summary or accept caller-supplied artifact paths.
+
+A cache hit is shaped with
+`read.bars_evidence.to_cached_response(read.bars_rows, BarsCacheStatusV1::Hit)`. The reader rejects
+expired entries and verifies the full receipt before returning. Truncated responses may be retained
+as provisional evidence, but cannot be replayed because provider cursor contents are not stored. Map
+`NotFound` to a cache miss; treat `Unsupported`, `UnknownOutcome`, `Readback`, and `Conflict` as
+unavailable/fail-closed cache state, not as authorization or coverage proof. A caller may fetch fresh
+data after a cache error only if its independent provider route and entitlement checks pass.
+
+## Authority and reconciliation
+
+Production publication currently has no trusted provider-admission proof and therefore remains
+`Provisional`, including Alpaca SIP/BOATS. The admission gate is intentionally closed while actual
+feed and entitlement evidence is unavailable; a requested feed or top-level summary cannot
+substitute for source provenance. Test-only synthetic evidence exercises authoritative rollback and
+conflict paths but is not provider or production evidence. OPRA is never a historical stock-bars
+authority candidate. Cache status does not establish adapter or user entitlement.
+
+When an eligible same-feed candidate is compared with an already verified authoritative current
+version, rows are normalized with Core `ExactDecimal`, deduplicated by stable identity, and compared
+field by field. Conflicting duplicate identities fail. Decimal changes are accepted only within
+explicit per-field tolerances; non-decimal changes conflict. The default tolerance is exact equality,
+permits no new rows, and permits no removed rows. A same-feed conflict writes a compact
+credential-free rejection audit and leaves the verified current pointer untouched. Operators or the
+owning adapter can surface the `CacheInvalidationV1` returned after a successful replacement,
+rollback, or recovery.
+
+Provisional snapshots are retained as immutable versions. They can become current only when there
+is no verified authoritative current version for that exact key. They cannot replace an
+authoritative current version.
+
+## Durable publication and recovery
+
+The store root is local and private (`0700` directories, `0600` files). For each key it holds a
+mutable `current.json`, a bounded `versions/<version-id>/` directory with raw and canonical Parquet,
+normalized comparison rows, and a version receipt, plus compact rejected-candidate audit entries.
+Version receipts bind the exact key, coverage, artifact sizes/hashes, Core schema fingerprints,
+source observations, row checksum/count, authority basis, generation, predecessor, and TTL.
+The current pointer contains a domain-separated checksum and the exact version-receipt hash.
+
+Publish takes process-shared per-key and total-budget file locks. It writes both Core-schema Parquet
+objects into private staging, verifies them through the existing bounded Linux worker, checks
+source facts/schema/row counts, hashes and reads back the objects, syncs files/directories, and
+renames the complete stage to an immutable version. Only then does it write and atomically replace
+`current.json`, sync the key directory, and read back/check the manifest checksum. If an error occurs
+before pointer replacement, the previous pointer remains current. An error after replacement can
+have an unknown outcome; callers must reload and verify current rather than retry blindly. Process
+death after immutable rename but before pointer replacement leaves an orphan version, never an
+auto-promoted cache entry.
+
+`list_verified_versions` fully verifies candidate versions so an operator can choose a target.
+`rollback_to` requires a verified current pointer; `recover_to` can repair a missing/damaged pointer
+only when given an explicit still-fresh version ID. Neither method scans and promotes an orphan
+automatically. Expired versions are retained for audit and are not eligible for load, rollback, or
+recovery. Cache invalidation returned by a pointer change is the signal the caller must propagate to
+downstream query caches.
+
+The synchronous cancellable facade checks cancellation before starting. Once publication enters its
+bounded atomic section, it completes and joins all worker processes; if cancellation arrives during
+that operation the facade reports `UnknownOutcome`, requiring a current-manifest reload instead of
+a blind retry. A cancelled read discards its verified result. The store enforces per-object,
+metadata, total-tree, row, and per-key version caps. Expired data is not automatically evicted.
+Capacity exhaustion fails closed; cleanup policy must be separately reviewed so verified rollback
+targets and forensic evidence are not removed implicitly.
+
+## Platform and verification boundary
+
+Parquet readback uses the existing bounded `parquet-worker` process. On non-Linux systems the cache
+store returns `Unsupported`; it does not fall back to inline decoding. Therefore the Linux-only
+publish/read/rollback/recovery integration test is `NOT_RUN` on macOS. The owning change has not run
+local Cargo build or test commands; the Linux GitHub Actions run is required for executable
+validation. The module is crate-private and becomes usable by the HTTP query path only when its
+owner wires the adapter and pins the frozen Core contract containing the trusted canonical BarsV1
+schema.

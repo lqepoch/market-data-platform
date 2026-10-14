@@ -5,11 +5,11 @@
 
 use arrow_schema::{DataType, Field, Schema, TimeUnit};
 use market_contracts::parquet_schema::{
-    MARKET_EVENT_PARQUET_SCHEMA_ID, MARKET_EVENT_PARQUET_SCHEMA_V2_ID,
-    MARKET_EVENT_PARQUET_SCHEMA_V3_ID, MARKET_RAW_FRAME_PARQUET_SCHEMA_ID,
-    MARKET_RAW_FRAME_PARQUET_SCHEMA_V2_ID, MARKET_RAW_JSON_FRAME_PARQUET_SCHEMA_V2_ID,
-    ParquetSchemaDescriptorV1, ParquetSchemaError, US_EQUITY_TRADE_BAR_1M_SCHEMA_ID,
-    trusted_parquet_schema, trusted_schema_fingerprint,
+    MARKET_BARS_PARQUET_SCHEMA_V1_ID, MARKET_EVENT_PARQUET_SCHEMA_ID,
+    MARKET_EVENT_PARQUET_SCHEMA_V2_ID, MARKET_EVENT_PARQUET_SCHEMA_V3_ID,
+    MARKET_RAW_FRAME_PARQUET_SCHEMA_ID, MARKET_RAW_FRAME_PARQUET_SCHEMA_V2_ID,
+    MARKET_RAW_JSON_FRAME_PARQUET_SCHEMA_V2_ID, ParquetSchemaDescriptorV1, ParquetSchemaError,
+    US_EQUITY_TRADE_BAR_1M_SCHEMA_ID, trusted_parquet_schema, trusted_schema_fingerprint,
 };
 
 use crate::{MarketDataError, Result};
@@ -21,6 +21,7 @@ pub const RAW_FRAME_SCHEMA_ID: &str = MARKET_RAW_FRAME_PARQUET_SCHEMA_ID;
 pub const RAW_FRAME_SCHEMA_V2_ID: &str = MARKET_RAW_FRAME_PARQUET_SCHEMA_V2_ID;
 pub const RAW_JSON_FRAME_SCHEMA_V2_ID: &str = MARKET_RAW_JSON_FRAME_PARQUET_SCHEMA_V2_ID;
 pub const MINUTE_BAR_SCHEMA_ID: &str = US_EQUITY_TRADE_BAR_1M_SCHEMA_ID;
+pub const MARKET_BARS_SCHEMA_V1_ID: &str = MARKET_BARS_PARQUET_SCHEMA_V1_ID;
 
 pub fn descriptor(schema_id: &str) -> Result<ParquetSchemaDescriptorV1> {
     trusted_parquet_schema(schema_id).map_err(map_schema_error)
@@ -95,6 +96,7 @@ mod tests {
     fn core_registered_schema_golden_hashes_are_consumed() {
         let events = arrow_schema(EVENT_SCHEMA_ID).unwrap();
         let bars = arrow_schema(MINUTE_BAR_SCHEMA_ID).unwrap();
+        let market_bars = arrow_schema(MARKET_BARS_SCHEMA_V1_ID).unwrap();
         assert_eq!(
             fingerprint(EVENT_SCHEMA_ID, &events).unwrap(),
             "d02712364494c7c60e60e8e6e2e05fb4d63fd5944f67e7e4af0f45f7408875f6"
@@ -102,6 +104,13 @@ mod tests {
         assert_eq!(
             fingerprint(MINUTE_BAR_SCHEMA_ID, &bars).unwrap(),
             "5e761a91d880e0002aeafe6dc2083b7c8a0ff2ba486d5d93582fbb4479146cb0"
+        );
+        let descriptor = descriptor(MARKET_BARS_SCHEMA_V1_ID).unwrap();
+        assert_eq!(descriptor.schema_id, MARKET_BARS_SCHEMA_V1_ID);
+        assert_eq!(market_bars.fields().len(), descriptor.fields.len());
+        assert_eq!(
+            fingerprint(MARKET_BARS_SCHEMA_V1_ID, &market_bars).unwrap(),
+            trusted_schema_fingerprint(MARKET_BARS_SCHEMA_V1_ID).unwrap()
         );
     }
 

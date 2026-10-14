@@ -31,9 +31,9 @@ use crate::{
     aggregate::validate_stock_symbol,
     queue::CollectionMessage,
     schema::{
-        EVENT_SCHEMA_ID, EVENT_SCHEMA_V2_ID, EVENT_SCHEMA_V3_ID, MINUTE_BAR_SCHEMA_ID,
-        RAW_FRAME_SCHEMA_ID, RAW_FRAME_SCHEMA_V2_ID, RAW_JSON_FRAME_SCHEMA_V2_ID, arrow_schema,
-        fingerprint, validate_arrow_schema,
+        EVENT_SCHEMA_ID, EVENT_SCHEMA_V2_ID, EVENT_SCHEMA_V3_ID, MARKET_BARS_SCHEMA_V1_ID,
+        MINUTE_BAR_SCHEMA_ID, RAW_FRAME_SCHEMA_ID, RAW_FRAME_SCHEMA_V2_ID,
+        RAW_JSON_FRAME_SCHEMA_V2_ID, arrow_schema, fingerprint, validate_arrow_schema,
     },
 };
 
@@ -47,6 +47,7 @@ const MAX_PARQUET_ROW_GROUPS: usize = 1024;
 const MAX_PARQUET_ROW_GROUP_UNCOMPRESSED_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_PARQUET_TOTAL_UNCOMPRESSED_BYTES: u64 = 512 * 1024 * 1024;
 
+mod bars_v1;
 mod events_v3;
 mod facts;
 mod metadata;
@@ -77,6 +78,27 @@ pub struct ParquetVerification {
     pub symbols: Vec<String>,
     pub time_range: Option<DatasetTimeRangeV1>,
     pub source_timestamp_missing_rows: u64,
+}
+
+/// Write a Core Bars V1 Parquet object without performing an inline readback.
+/// Cache publication must verify and decode this object through the bounded worker first.
+pub(crate) fn write_market_bars_v1_object_with_limit(
+    path: &Path,
+    response: &market_contracts::BarsResponseV1,
+    max_bytes: u64,
+) -> Result<()> {
+    bars_v1::write_response_object_with_limit(path, response, max_bytes)
+}
+
+/// Decode typed Core Bars V1 rows from a producer-owned local Parquet object.
+/// External objects must use [`crate::parquet_worker::read_market_bars_v1`].
+pub(crate) fn read_market_bars_v1_with_limits(
+    path: &Path,
+    max_object_bytes: u64,
+    max_rows: usize,
+    max_result_bytes: u64,
+) -> Result<Vec<market_contracts::BarRowV1>> {
+    bars_v1::read_rows_with_limit(path, max_object_bytes, max_rows, max_result_bytes)
 }
 
 /// Counts from a verified raw-frame/event-v2 local object pair.
@@ -533,6 +555,13 @@ pub fn verify_with_limit(
     validate_decode_budget(builder.metadata().as_ref())?;
     validate_arrow_schema(schema_id, builder.schema().as_ref())?;
     validate_optional_schema_metadata(schema_id, builder.metadata().as_ref(), builder.schema())?;
+    let bars_v1_source = if schema_id == MARKET_BARS_SCHEMA_V1_ID {
+        Some(bars_v1::source_from_footer(
+            builder.metadata().file_metadata().key_value_metadata(),
+        )?)
+    } else {
+        None
+    };
     let schema_hash = fingerprint(schema_id, builder.schema().as_ref())?;
     let footer_rows = u64::try_from(builder.metadata().file_metadata().num_rows())
         .map_err(|_| MarketDataError::Parquet)?;
@@ -567,6 +596,14 @@ pub fn verify_with_limit(
             MINUTE_BAR_SCHEMA_ID => {
                 for row in decode_bar_batch(&batch)? {
                     facts.observe_bar(&row)?;
+                }
+            }
+            MARKET_BARS_SCHEMA_V1_ID => {
+                let source = bars_v1_source
+                    .as_ref()
+                    .ok_or(MarketDataError::ParquetSchema)?;
+                for row in bars_v1::decode_batch(&batch)? {
+                    facts.observe_market_bar_v1(&row, source)?;
                 }
             }
             RAW_FRAME_SCHEMA_ID => {
@@ -798,13 +835,33 @@ fn write_batch_atomic(
     )
 }
 
-fn write_batch_atomic_with_compression(
+pub(super) fn write_batch_atomic_with_compression(
     path: &Path,
     schema: SchemaRef,
     batch: &RecordBatch,
     max_bytes: u64,
     compression: Compression,
     schema_id: &str,
+) -> Result<()> {
+    write_batch_atomic_with_extra_metadata(
+        path,
+        schema,
+        batch,
+        max_bytes,
+        compression,
+        schema_id,
+        Vec::new(),
+    )
+}
+
+pub(super) fn write_batch_atomic_with_extra_metadata(
+    path: &Path,
+    schema: SchemaRef,
+    batch: &RecordBatch,
+    max_bytes: u64,
+    compression: Compression,
+    schema_id: &str,
+    extra_metadata: Vec<KeyValue>,
 ) -> Result<()> {
     if max_bytes == 0 {
         return Err(MarketDataError::InvalidInput);
@@ -828,7 +885,17 @@ fn write_batch_atomic_with_compression(
         written_bytes: 0,
         over_limit: Arc::clone(&over_limit),
     };
-    let schema_metadata = trusted_schema_metadata(schema_id)?;
+    let mut schema_metadata = trusted_schema_metadata(schema_id)?;
+    for entry in &extra_metadata {
+        let value = entry.value.as_ref().ok_or(MarketDataError::ParquetSchema)?;
+        if entry.key.is_empty()
+            || schema_metadata
+                .insert(entry.key.clone(), value.clone())
+                .is_some()
+        {
+            return Err(MarketDataError::ParquetSchema);
+        }
+    }
     let writer_schema = Arc::new(
         schema
             .as_ref()
