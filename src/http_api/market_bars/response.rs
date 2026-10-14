@@ -107,16 +107,15 @@ fn response_from_mapped_page(
 
     let mut cursor = mapped.continuation_cursor.clone();
     let mut truncated = mapped.truncated;
-    if add_next_group_cursor && cursor.is_none() {
-        if let Some(selection) = selection {
-            if let Some(next_group) = selection
-                .cursor_for_next_group()
-                .map_err(provider_query_error_to_market_data)?
-            {
-                cursor = Some(next_group);
-                truncated = true;
-            }
-        }
+    if add_next_group_cursor
+        && cursor.is_none()
+        && let Some(selection) = selection
+        && let Some(next_group) = selection
+            .cursor_for_next_group()
+            .map_err(provider_query_error_to_market_data)?
+    {
+        cursor = Some(next_group);
+        truncated = true;
     }
     if truncated && cursor.is_none() {
         return Err(crate::MarketDataError::Provider(
@@ -391,12 +390,12 @@ pub(super) fn normalize_gaps(gaps: Vec<BarCoverageGapV1>) -> crate::Result<Vec<B
         events.push((start, true, gap.reason_code));
         events.push((end, false, gap.reason_code));
     }
-    events.sort_by_key(|event| event.0.clone());
+    events.sort_by_key(|event| event.0);
     let mut active = [0u32; 7];
     let mut normalized: Vec<BarCoverageGapV1> = Vec::new();
     let mut index = 0;
     while index < events.len() {
-        let boundary = events[index].0.clone();
+        let boundary = events[index].0;
         let mut next = index;
         while next < events.len() && events[next].0 == boundary {
             let (_, entering, reason) = events[next];
@@ -409,24 +408,25 @@ pub(super) fn normalize_gaps(gaps: Vec<BarCoverageGapV1>) -> crate::Result<Vec<B
             next += 1;
         }
         if let Some((next_boundary, _, _)) = events.get(next) {
-            let next_boundary = next_boundary.clone();
-            if boundary < next_boundary {
-                if let Some(reason) = dominant_gap_reason(&active) {
-                    let start = timestamp_from_datetime(boundary.clone())?;
-                    let end = timestamp_from_datetime(next_boundary)?;
-                    if let Some(previous) = normalized.last_mut() {
-                        if previous.reason_code == reason && previous.end_exclusive_utc == start {
-                            previous.end_exclusive_utc = end;
-                            index = next;
-                            continue;
-                        }
-                    }
-                    normalized.push(BarCoverageGapV1 {
-                        start_utc: start,
-                        end_exclusive_utc: end,
-                        reason_code: reason,
-                    });
+            let next_boundary = *next_boundary;
+            if boundary < next_boundary
+                && let Some(reason) = dominant_gap_reason(&active)
+            {
+                let start = timestamp_from_datetime(boundary)?;
+                let end = timestamp_from_datetime(next_boundary)?;
+                if let Some(previous) = normalized.last_mut()
+                    && previous.reason_code == reason
+                    && previous.end_exclusive_utc == start
+                {
+                    previous.end_exclusive_utc = end;
+                    index = next;
+                    continue;
                 }
+                normalized.push(BarCoverageGapV1 {
+                    start_utc: start,
+                    end_exclusive_utc: end,
+                    reason_code: reason,
+                });
             }
         }
         index = next;
@@ -481,7 +481,7 @@ pub(super) fn subtract_complete_segment_gaps(
         }
         let start = timestamp_datetime(&segment.start_utc)?;
         let end = timestamp_datetime(&segment.end_exclusive_utc)?;
-        let mut cursor = start.clone();
+        let mut cursor = start;
         let mut gap_index = gap_intervals.partition_point(|(_, gap_end)| gap_end <= &start);
         while let Some((gap_start, gap_end)) = gap_intervals.get(gap_index) {
             if gap_start >= &end {
@@ -489,12 +489,12 @@ pub(super) fn subtract_complete_segment_gaps(
             }
             if &cursor < gap_start {
                 let mut remaining = segment.clone();
-                remaining.start_utc = timestamp_from_datetime(cursor.clone())?;
+                remaining.start_utc = timestamp_from_datetime(cursor)?;
                 remaining.end_exclusive_utc =
-                    timestamp_from_datetime(std::cmp::min(gap_start.clone(), end.clone()))?;
+                    timestamp_from_datetime(std::cmp::min(*gap_start, end))?;
                 result.push(remaining);
             }
-            cursor = std::cmp::max(cursor, gap_end.clone());
+            cursor = std::cmp::max(cursor, *gap_end);
             if cursor >= end {
                 break;
             }

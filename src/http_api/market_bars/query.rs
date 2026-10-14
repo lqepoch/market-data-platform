@@ -162,9 +162,13 @@ pub(super) async fn run_market_bars_query(
                 prepared.cache_status,
             )?,
             Ok(ProviderFetchOutcome::Provider(page)) => {
-                let selection = prepared.selection.as_ref().ok_or_else(|| {
-                    crate::MarketDataError::Provider(crate::error::ProviderFailure::InvalidResponse)
-                })?;
+                let selection =
+                    prepared
+                        .selection
+                        .as_ref()
+                        .ok_or(crate::MarketDataError::Provider(
+                            crate::error::ProviderFailure::InvalidResponse,
+                        ))?;
                 let raw_page = page.response.clone();
                 let cache_page = response_for_cache_page(
                     &finalize_request,
