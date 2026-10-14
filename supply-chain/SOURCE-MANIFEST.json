@@ -42,7 +42,7 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "12905667c67094735341c746a6bc87e71255945f18593da122b16fbb58014568"
+      "sha256": "20e7ef388eafbae1313ed225f1e223fa78da79eb271ca1f61f7b4ee96d2088d9"
     },
     {
       "path": "deny.toml",
@@ -102,7 +102,7 @@
     },
     {
       "path": "docs/SUPPLY_CHAIN.md",
-      "sha256": "617d583b624b2b3f99696c47b9ee3133e6ab453b25596bb6d880fc6a304be2cf"
+      "sha256": "31086184a441a0991ab9a2f326d575fafaa9176b356ab1675e982b0b717fc4fb"
     },
     {
       "path": "docs/openapi-v1.yaml",
@@ -2357,15 +2357,15 @@
       },
       {
         "path": "src/archive/reconciliation.rs",
-        "sha256": "3cf6d679177007b60d34f7441fec9692ae1a5ff503da76a1dd0bab77351ab8a5"
+        "sha256": "936f37d20a382ff4c847f9a980ee604974382e98a40fb3f53fa8e2c0ce980099"
       },
       {
         "path": "src/archive/reconciliation/store.rs",
-        "sha256": "512655d2b272912695d3de79b2baaa0a95e7cf1659fae08bcae76e111b4ddf0b"
+        "sha256": "77a611109bdb9570cbe76345d2cc24a4b276e7aadd1940f96955518be0d33e66"
       },
       {
         "path": "src/archive/reconciliation/tests.rs",
-        "sha256": "c136fc1ced651b758fe597e274b84513f25ea443b5f9f7f1bee9091def2ef2f1"
+        "sha256": "e8e84db48c98a4c9fd2054e75e0667e70b75039fffab3c21563e859f00ac3a51"
       },
       {
         "path": "src/archive/tests.rs",
@@ -2397,7 +2397,7 @@
       },
       {
         "path": "src/http_api/market.rs",
-        "sha256": "383f3390b6113d1037df25fe2410e241dd2ce2e9669b4bc1847a4cc316d4755d"
+        "sha256": "8a0731572a1a74b0bf1677e91b3694c2a5848c93400db79fe5de0ec283fc496f"
       },
       {
         "path": "src/http_api/market_bars.rs",
@@ -2405,7 +2405,7 @@
       },
       {
         "path": "src/http_api/market_bars/query.rs",
-        "sha256": "243aae9f6188df73da32d3a4e331bd69da55482627153e22aa08924f4bb38a05"
+        "sha256": "0627040c65319bc759bc0bf3ea3ca894a03c9fbef392502a0ea7b1275771eca3"
       },
       {
         "path": "src/http_api/market_bars/response.rs",
@@ -2417,7 +2417,7 @@
       },
       {
         "path": "src/http_api/supervisor.rs",
-        "sha256": "f05924b161f92210eb74296452a39e98d62042eee7469f741ca09390fee8848d"
+        "sha256": "32406b5262333fb8348791a04fff77c6330dc7f23244f9a0486c0a67d84965de"
       },
       {
         "path": "src/http_api/tests.rs",
@@ -2457,11 +2457,11 @@
       },
       {
         "path": "src/market_query/providers/alpaca.rs",
-        "sha256": "3819887622887351fe14df8a3a5b2b00e8eecff73bed554718a0bbf1bf89d7f6"
+        "sha256": "09e22b81e5155b44b798824ac78d37ec4a6fb834195c1b836c33c4b8f44bd1ea"
       },
       {
         "path": "src/market_query/providers/cursor.rs",
-        "sha256": "66af04ef70ad3ae29e6488e47c048ec1f3f4c254bef8832686ac1f9f7b5ea152"
+        "sha256": "edaea2ac8a28a40feab9c25c19bb4e8f47c592f476061cc37563ce112af048cb"
       },
       {
         "path": "src/market_query/providers/error.rs",
@@ -2501,7 +2501,7 @@
       },
       {
         "path": "src/parquet_store/metadata.rs",
-        "sha256": "0507ceca4d3e697c2a94522046636f997108cf4f464c9ec95e4a6c11d4463b86"
+        "sha256": "41db27e76becc9aa5cc180f95c2e6feb77d5375316648e5c4657d45cf1637e44"
       },
       {
         "path": "src/parquet_store/projection.rs",
@@ -2616,7 +2616,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "e90524de0226f1b90da4092366bd443cc4c42a0cc14f9fdfcd25c5d609fde3a9"
+    "sha256": "ec9d8e9dd28ab6c79076d2c67d4e28258307a3f1c7f8a9c38bfe0ad5b469c560"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",

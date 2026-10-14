@@ -72,3 +72,9 @@ Google Drive and do not use market-data credentials.
 ## Exact Broker REST TLS certificate-data review
 
 The pinned Broker REST adapter adds `reqwest 0.13.5` → `rustls-platform-verifier 0.7.1` → `webpki-root-certs 1.0.9`. The last package distributes Mozilla trust-anchor data under [CDLA-Permissive-2.0](https://spdx.org/licenses/CDLA-Permissive-2.0.html). Its redistribution condition is met by retaining the complete package license at `supply-chain/licenses/webpki-root-certs-1.0.9.LICENSE` (SHA-256 `e271993808fec50ab29350b39539cdec611a9103f827e0aa26d61da70e2d33f8`). `Cargo.lock` retains the registry package checksum. The cargo-deny exception is restricted to this exact package/version, and the supply-chain validator rejects any wider exception set; advisories, duplicate-version and unknown-source rejection remain in effect. This is certificate-data licensing, not a Yahoo/Alpaca market-data license or entitlement grant.
+
+The runtime-only LocalTest Dockerfile accompanies its binary with the repository
+LICENSE, locked dependency NOTICE, and reviewed dependency license texts under
+`/usr/share/doc/mdp`. Binary distributors must retain these accompanying notices;
+this repository does not establish an image publication or production acceptance.
+Public image builds belong in GitHub Actions; this task does not start local Docker.
