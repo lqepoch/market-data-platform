@@ -444,6 +444,19 @@ fn hash_cache_entitlement_scope(
     hex::encode(digest.finalize())
 }
 
+/// Bind provisional cache reuse to both the operator-selected profile and the authenticated
+/// principal. This identity is provider-neutral and intentionally excludes credentials, tokens,
+/// request windows, calendar versions, and provider/feed labels.
+fn hash_cache_rights_profile(profile: &str, principal_scope_sha256: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"mdp-market-bars-cache-rights-profile-v1\0");
+    for value in [profile, principal_scope_sha256] {
+        digest.update((value.len() as u64).to_be_bytes());
+        digest.update(value.as_bytes());
+    }
+    hex::encode(digest.finalize())
+}
+
 fn current_timestamp() -> Result<ProtoTimestampV2, MarketBarsHttpError> {
     let now = Utc::now().to_rfc3339_opts(SecondsFormat::Nanos, true);
     ProtoTimestampV2::parse(&now).map_err(|_| MarketBarsHttpError::Unavailable)

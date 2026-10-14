@@ -16,7 +16,7 @@ use super::response::{
 };
 use super::{
     MarketBarsRuntime, PROVIDER_DEADLINE, current_timestamp, hash_cache_entitlement_scope,
-    unix_seconds_now,
+    hash_cache_rights_profile, unix_seconds_now,
 };
 
 struct PreparedMarketBars {
@@ -257,6 +257,7 @@ fn cache_preflight(
         provider: identity.provider.clone(),
         feed: identity.feed.clone(),
         source_scope_id: identity.source_scope_id.clone(),
+        rights_profile_sha256: hash_cache_rights_profile(profile, principal_scope_sha256),
         entitlement_scope_sha256: hash_cache_entitlement_scope(
             profile,
             principal_scope_sha256,

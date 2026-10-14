@@ -13,9 +13,9 @@ use market_contracts::{
 use tower::ServiceExt;
 
 use super::{
-    MAX_QUERY_BYTES, MarketBarsHttpError, parse_bars_request, parse_query,
-    parse_utc_window_endpoint, principal_may_request_research, read_gateway_delegation,
-    valid_cache_scope_id,
+    MAX_QUERY_BYTES, MarketBarsHttpError, hash_cache_rights_profile, parse_bars_request,
+    parse_query, parse_utc_window_endpoint, principal_may_request_research,
+    read_gateway_delegation, valid_cache_scope_id,
 };
 use crate::{
     http_api::{ServiceState, app_router, auth::test_support, supervisor::QuerySupervisor},
@@ -176,7 +176,31 @@ fn cache_scope_profile_is_a_bounded_non_secret_identifier() {
 }
 
 #[test]
+fn cache_rights_profile_hash_partitions_operator_profiles_and_verified_principals() {
+    let terminal = test_support::terminal_principal();
+    let research = test_support::research_principal();
 
+    let terminal_hash =
+        hash_cache_rights_profile("alpaca-primary-v1", terminal.principal_scope_sha256());
+    let same_scope_hash =
+        hash_cache_rights_profile("alpaca-primary-v1", terminal.principal_scope_sha256());
+    let other_profile_hash =
+        hash_cache_rights_profile("alpaca-secondary-v1", terminal.principal_scope_sha256());
+    let other_principal_hash =
+        hash_cache_rights_profile("alpaca-primary-v1", research.principal_scope_sha256());
+
+    assert_eq!(terminal_hash, same_scope_hash);
+    assert_ne!(terminal_hash, other_profile_hash);
+    assert_ne!(terminal_hash, other_principal_hash);
+    assert_eq!(terminal_hash.len(), 64);
+    assert!(
+        terminal_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    );
+}
+
+#[test]
 fn runtime_summary_reports_attemptability_without_claiming_provider_authority() {
     let capabilities = [crate::session_router::SourceCapability {
         provider: crate::session_router::Provider::Alpaca,
