@@ -6,9 +6,16 @@ licenses and sources, wildcard versions, and unreviewed duplicate versions. Ther
 exceptions. The `bans.skip` entries name only exact currently observed duplicate package versions
 and include the reason for each compatibility exception; new duplicate versions remain denied.
 The JWT verifier pins jsonwebtoken 10.3.0 with default features disabled and only its `aws_lc_rs`
-backend enabled. Application validation still allows HS256 only. This avoids pulling the optional
-RSA implementation into this verifier's dependency graph; no advisory is suppressed to obtain that
-result.
+backend enabled. Application validation still allows HS256 only. Runtime market-bar cursor
+authentication also uses the already-pinned `aws-lc-rs 1.18.1` HMAC-SHA256 implementation, so the
+repository does not add a second crypto backend solely for cursor MACs. This avoids pulling the
+optional RSA implementation into the JWT verifier's dependency graph; no advisory is suppressed to
+obtain either result.
+
+The current lock resolves `rustls 0.23.46`. Its [upstream release notes](https://github.com/rustls/rustls/releases/tag/v/0.23.46)
+list security-relevant fixes, and the [upstream manifest](https://raw.githubusercontent.com/rustls/rustls/v/0.23.46/rustls/Cargo.toml)
+declares `Apache-2.0 OR ISC OR MIT`, which fits the license allowlist below. Keep the RustSec
+advisory ignore list empty and update the lock to a fixed upstream release when new advisories apply.
 
 The license allowlist contains only SPDX identifiers observed in the locked graph:
 Apache-2.0, Apache-2.0 WITH LLVM-exception, BSD-2-Clause, BSD-3-Clause, CC0-1.0, ISC, MIT,
