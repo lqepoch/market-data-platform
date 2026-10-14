@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use ring::hmac;
+use aws_lc_rs::hmac;
 
 use super::*;
 use crate::archive::reconciliation::authority::AdmissionVerifyErrorV1;

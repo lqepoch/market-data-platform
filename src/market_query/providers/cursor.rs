@@ -1,9 +1,9 @@
 use std::{env, fmt, sync::Arc};
 
+use aws_lc_rs::{hmac, rand::SystemRandom};
 use market_contracts::{
     BarsEntitlementStatusV1, BarsRequestV1, NumericEncodingV1, ProtoTimestampV2,
 };
-use ring::{hmac, rand::SystemRandom};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
@@ -852,7 +852,7 @@ fn decode_envelope(
         .ok_or(ProviderQueryError::InvalidCursor)?;
     if body_hex.is_empty()
         || body_hex.len() % 2 != 0
-        || tag_hex.len() != hmac::HMAC_SHA256.digest_algorithm().output_len() * 2
+        || tag_hex.len() != hmac::HMAC_SHA256.tag_len() * 2
         || !body_hex
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
@@ -1025,6 +1025,7 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use aws_lc_rs::hmac;
     use chrono::{DateTime, Duration, NaiveDate, Utc};
     use market_contracts::{
         AdjustmentV1, AssetClassV1, BarResolutionV1, BarsProviderModeV1, BarsRequestV1,
@@ -1052,6 +1053,26 @@ mod tests {
             select_page_at, select_page_at_for_rights, select_page_at_with_test_key,
         },
     };
+
+    #[test]
+    fn aws_lc_hmac_sha256_matches_rfc4231_test_case_one() {
+        let key = hmac::Key::new(hmac::HMAC_SHA256, &[0x0b; 20]);
+        let tag = hmac::sign(&key, b"Hi There");
+
+        assert_eq!(
+            hex::encode(tag),
+            "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+        );
+        assert!(
+            hmac::verify(
+                &key,
+                b"Hi There",
+                &hex::decode("b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7")
+                    .expect("RFC 4231 HMAC tag bytes")
+            )
+            .is_ok()
+        );
+    }
 
     fn fixture(as_of: &str) -> (BarsRequestV1, MarketBarsPlan) {
         let start = DateTime::parse_from_rfc3339("2026-10-13T13:30:00Z")
