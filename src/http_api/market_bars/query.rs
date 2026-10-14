@@ -2,12 +2,13 @@
 
 use std::sync::Arc;
 
+use chrono::SecondsFormat;
 use market_contracts::{
     BarsCacheStatusV1, BarsEntitlementStatusV1, BarsRequestV1, BarsResponseV1, EntitlementState,
     ProtoTimestampV2,
 };
 
-use super::super::auth::VerifiedMarketPrincipal;
+use super::super::{QueryFailure, auth::VerifiedMarketPrincipal};
 use super::response::{
     planning_error_to_market_data, provider_error_is_http_fatal,
     provider_query_error_to_market_data, response_for_cache_page, response_for_provider_failure,
