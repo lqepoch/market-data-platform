@@ -6,7 +6,8 @@
 //! completeness. Futu transport is implemented against the existing loopback Gateway route but is
 //! not planner-eligible until separately reviewed provider evidence is supplied. Yahoo remains a
 //! provider-native research observation path because its adjustment semantics cannot satisfy the
-//! strict Core Bars V1 adjustment contract.
+//! strict Core Bars V1 adjustment contract. Outer pagination cursors use a runtime-owned HMAC key;
+//! the HTTP adapter supplies a rights-profile digest derived from its verified principal.
 
 mod admission;
 mod alpaca;
@@ -32,7 +33,7 @@ use crate::{
     },
 };
 
-pub use cursor::{ProviderPageSelection, planning_as_of, select_page, select_page_at};
+pub use cursor::ProviderPageSelection;
 pub use error::{ProviderConfigError, ProviderQueryError};
 pub use types::{
     ProviderCacheIdentity, ProviderCachePolicy, ProviderPageFetch, ProviderRequestContext,
@@ -46,6 +47,7 @@ pub struct MarketBarsProviderRuntime {
     futu: futu::FutuGateway,
     yfinance: yfinance::YFinanceBridge,
     futu_admissions: Vec<VerifiedProviderAdmissionV1>,
+    cursor_signer: cursor::CursorSigner,
 }
 
 impl fmt::Debug for MarketBarsProviderRuntime {
@@ -63,9 +65,12 @@ impl fmt::Debug for MarketBarsProviderRuntime {
 impl MarketBarsProviderRuntime {
     /// Read optional server-side provider configuration. Missing provider credentials leave that
     /// provider unavailable; a partial Alpaca pair or malformed setting fails initialization.
+    /// The cursor signing key persists only when `MDP_MARKET_CURSOR_SIGNING_KEY` is set;
+    /// otherwise a process-local CSPRNG key invalidates outstanding cursors on restart.
     ///
     /// This function does not make a network request and never enables order APIs.
     pub fn from_environment() -> Result<Self, ProviderConfigError> {
+        let cursor_signer = cursor::CursorSigner::from_environment()?;
         let alpaca = alpaca_client_from_environment()?;
         let futu_port = parse_port("MDP_FUTU_GATEWAY_PORT", 8_080)?;
         let futu = futu::FutuGateway::new(futu_port)?;
@@ -75,6 +80,7 @@ impl MarketBarsProviderRuntime {
             futu,
             yfinance,
             futu_admissions: Vec::new(),
+            cursor_signer,
         };
         Ok(runtime.with_verified_provider_admissions(Vec::new()))
     }
@@ -125,27 +131,26 @@ impl MarketBarsProviderRuntime {
         )
     }
 
-    /// Read the pinned snapshot time from the opaque cursor, or return the caller's current time
-    /// for a first page. This keeps session planning stable across pagination.
+    /// Read the pinned snapshot time from a signed cursor, or return the caller's current time for
+    /// a first page. This keeps planning stable while binding continuations to the verified
+    /// principal rights profile supplied by the authenticated HTTP adapter.
     pub fn planning_as_of(
         &self,
         request: &BarsRequestV1,
         observed_now: &ProtoTimestampV2,
+        rights_profile_sha256: &str,
     ) -> Result<ProtoTimestampV2, ProviderQueryError> {
-        cursor::planning_as_of(request, observed_now)
+        cursor::planning_as_of(
+            request,
+            observed_now,
+            &self.cursor_signer,
+            rights_profile_sha256,
+        )
     }
 
-    /// Select the current provider group and expose only its safe cache identity to the handler.
-    pub fn select_page(
-        &self,
-        request: &BarsRequestV1,
-        plan: &MarketBarsPlan,
-    ) -> Result<ProviderPageSelection, ProviderQueryError> {
-        cursor::select_page(request, plan)
-    }
-
-    /// Select a provider run and attach only the opaque admissions validated for its exact plan.
-    pub fn select_page_for_request(
+    /// Select a provider run and bind its cursor to the verified principal rights profile.
+    /// `rights_profile_sha256` must come from the authenticated HTTP adapter, not request input.
+    pub fn select_page_at(
         &self,
         request: &BarsRequestV1,
         plan: &MarketBarsPlan,
@@ -159,7 +164,25 @@ impl MarketBarsProviderRuntime {
             &self.futu_admissions,
             now_unix_seconds,
         )?;
-        cursor::select_page_with_admissions(request, plan, admissions, now_unix_seconds)
+        cursor::select_page_with_admissions(
+            request,
+            plan,
+            admissions,
+            rights_profile_sha256,
+            &self.cursor_signer,
+            now_unix_seconds,
+        )
+    }
+
+    /// Compatibility name for callers that distinguish request admission from clock selection.
+    pub fn select_page_for_request(
+        &self,
+        request: &BarsRequestV1,
+        plan: &MarketBarsPlan,
+        rights_profile_sha256: &str,
+        now_unix_seconds: u64,
+    ) -> Result<ProviderPageSelection, ProviderQueryError> {
+        self.select_page_at(request, plan, rights_profile_sha256, now_unix_seconds)
     }
 
     /// Fetch one provider page and retain source-observation evidence for the cache writer.

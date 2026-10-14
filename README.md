@@ -510,4 +510,6 @@ The opt-in source-preserving market bars and calendar routes, provider admission
 boundaries, dedicated cache configuration and rollback are documented in
 [`docs/MARKET_QUERY_RUNTIME.md`](docs/MARKET_QUERY_RUNTIME.md). The existing dataset
 archive API and its publication gates remain separate. Public build verification
-runs on GitHub Actions; no local Docker fallback is required.
+runs on GitHub Actions; no local Docker fallback is required. Market-bars continuation
+cursors are authenticated and principal-bound; their dedicated signing-key lifecycle is
+documented with the runtime configuration.

@@ -408,7 +408,7 @@ mod tests {
     use crate::{
         market_query::{
             planning::{MarketBarsPlan, ProviderQueryGroup},
-            providers::{ProviderRequestContext, cursor::select_page},
+            providers::{ProviderRequestContext, cursor::test_support::select_page},
         },
         session_router::{
             CalendarVerificationStatus, DataInterval, PlannedSlice, PlannedSource, SessionRank,

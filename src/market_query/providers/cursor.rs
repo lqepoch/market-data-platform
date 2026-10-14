@@ -1,10 +1,12 @@
-use std::fmt;
+use std::{env, fmt, sync::Arc};
 
 use market_contracts::{
     BarsEntitlementStatusV1, BarsRequestV1, NumericEncodingV1, ProtoTimestampV2,
 };
+use ring::{hmac, rand::SystemRandom};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use zeroize::Zeroizing;
 
 use crate::{
     archive::reconciliation::authority::VerifiedProviderAdmissionV1,
@@ -17,14 +19,69 @@ use crate::{
 };
 
 use super::{
-    error::ProviderQueryError,
+    error::{ProviderConfigError, ProviderQueryError},
     projection::parse_proto,
     types::{ProviderCacheIdentity, ProviderCachePolicy},
 };
 
-const CURSOR_PREFIX: &str = "mdp1:";
+const CURSOR_PREFIX: &str = "mdp2:";
+const CURSOR_MAC_DOMAIN: &[u8] = b"lqepoch.mdp.market-bars-cursor.v2\0";
+const CURSOR_SIGNING_KEY_ENV: &str = "MDP_MARKET_CURSOR_SIGNING_KEY";
 const CURSOR_TTL_SECS: u64 = 30 * 60;
 const MAX_CURSOR_BYTES: usize = market_contracts::MAX_BARS_CURSOR_BYTES_V1;
+const CURSOR_ENVELOPE_VERSION: u8 = 2;
+
+/// Runtime-local HMAC key. The key material is never formatted or serialized.
+#[derive(Clone)]
+pub(super) struct CursorSigner {
+    key: Arc<hmac::Key>,
+}
+
+impl CursorSigner {
+    pub(super) fn from_environment() -> Result<Self, ProviderConfigError> {
+        match env::var(CURSOR_SIGNING_KEY_ENV) {
+            Ok(secret) => Self::from_configured_secret(secret),
+            Err(env::VarError::NotPresent) => {
+                let key = hmac::Key::generate(hmac::HMAC_SHA256, &SystemRandom::new())
+                    .map_err(|_| ProviderConfigError::CursorKeyGeneration)?;
+                Ok(Self { key: Arc::new(key) })
+            }
+            Err(env::VarError::NotUnicode(_)) => Err(ProviderConfigError::InvalidValue),
+        }
+    }
+
+    fn from_configured_secret(secret: String) -> Result<Self, ProviderConfigError> {
+        let secret = Zeroizing::new(secret);
+        if secret.as_bytes().len() < 32
+            || secret
+                .chars()
+                .any(|character| character.is_whitespace() || character.is_control())
+        {
+            return Err(ProviderConfigError::InvalidValue);
+        }
+        Ok(Self {
+            key: Arc::new(hmac::Key::new(hmac::HMAC_SHA256, secret.as_bytes())),
+        })
+    }
+
+    #[cfg(test)]
+    fn for_test() -> Self {
+        Self::for_test_with_key(b"fixed-test-only-market-bars-cursor-signing-key")
+    }
+
+    #[cfg(test)]
+    fn for_test_with_key(key: &[u8]) -> Self {
+        Self {
+            key: Arc::new(hmac::Key::new(hmac::HMAC_SHA256, key)),
+        }
+    }
+}
+
+impl fmt::Debug for CursorSigner {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("CursorSigner([REDACTED])")
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +96,8 @@ struct CursorEnvelope {
     timeline_position: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     admission_set_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rights_profile_sha256: Option<String>,
     provider_cursor: Option<ProviderCursor>,
 }
 
@@ -75,6 +134,7 @@ pub struct ProviderPageSelection {
     admission_set_sha256: Option<String>,
     futu_admissions: Vec<VerifiedProviderAdmissionV1>,
     rights_profile_sha256: Option<String>,
+    cursor_signer: CursorSigner,
 }
 
 impl fmt::Debug for ProviderPageSelection {
@@ -165,9 +225,12 @@ impl ProviderPageSelection {
         let Some(next_group_index) = self.next_run_group_index else {
             return Ok(None);
         };
-        encode_envelope(&self.envelope(next_group_index, self.run.next_timeline_position, None))
-            .map(Some)
-            .map_err(|_| ProviderQueryError::InvalidCursor)
+        encode_envelope(
+            &self.envelope(next_group_index, self.run.next_timeline_position, None),
+            &self.cursor_signer,
+        )
+        .map(Some)
+        .map_err(|_| ProviderQueryError::InvalidCursor)
     }
 
     /// Rewrap a cache-verified provider-local cursor in this request's current plan envelope.
@@ -236,7 +299,8 @@ impl ProviderPageSelection {
             Some(provider_cursor),
         );
         envelope.expires_at_unix_seconds = expires_at_unix_seconds;
-        encode_envelope(&envelope).map_err(|_| ProviderQueryError::InvalidCursor)
+        encode_envelope(&envelope, &self.cursor_signer)
+            .map_err(|_| ProviderQueryError::InvalidCursor)
     }
 
     fn provider_cursor(&self) -> Option<&ProviderCursor> {
@@ -263,11 +327,14 @@ impl ProviderPageSelection {
         &self,
         provider_cursor: ProviderCursor,
     ) -> Result<String, ProviderQueryError> {
-        encode_envelope(&self.envelope(
-            self.run.group_index,
-            self.timeline_position,
-            Some(provider_cursor),
-        ))
+        encode_envelope(
+            &self.envelope(
+                self.run.group_index,
+                self.timeline_position,
+                Some(provider_cursor),
+            ),
+            &self.cursor_signer,
+        )
         .map_err(|_| ProviderQueryError::InvalidCursor)
     }
 
@@ -278,7 +345,7 @@ impl ProviderPageSelection {
         provider_cursor: Option<ProviderCursor>,
     ) -> CursorEnvelope {
         CursorEnvelope {
-            version: 1,
+            version: CURSOR_ENVELOPE_VERSION,
             request_sha256: self.request_sha256.clone(),
             plan_sha256: self.plan_sha256.clone(),
             as_of_utc: self.as_of_utc.clone(),
@@ -287,25 +354,42 @@ impl ProviderPageSelection {
             group_index,
             timeline_position,
             admission_set_sha256: self.admission_set_sha256.clone(),
+            rights_profile_sha256: self.rights_profile_sha256.clone(),
             provider_cursor,
         }
     }
 }
 
 /// Keep the original plan snapshot time stable across all pages of a cursor.
-pub fn planning_as_of(
+pub(super) fn planning_as_of(
     request: &BarsRequestV1,
     observed_now: &ProtoTimestampV2,
+    signer: &CursorSigner,
+    rights_profile_sha256: &str,
+) -> Result<ProtoTimestampV2, ProviderQueryError> {
+    planning_as_of_inner(request, observed_now, signer, Some(rights_profile_sha256))
+}
+
+fn planning_as_of_inner(
+    request: &BarsRequestV1,
+    observed_now: &ProtoTimestampV2,
+    signer: &CursorSigner,
+    rights_profile_sha256: Option<&str>,
 ) -> Result<ProtoTimestampV2, ProviderQueryError> {
     request
         .validate()
         .map_err(|_| ProviderQueryError::CursorQueryMismatch)?;
+    if rights_profile_sha256.is_some_and(|digest| !valid_digest(digest)) {
+        return Err(ProviderQueryError::InvalidCursor);
+    }
     let Some(cursor) = request.cursor.as_deref() else {
         return Ok(observed_now.clone());
     };
-    let envelope = decode_envelope(cursor)?;
+    let envelope = decode_envelope(cursor, signer)?;
     let request_sha256 = request_digest(request)?;
-    if envelope.request_sha256 != request_sha256 {
+    if envelope.request_sha256 != request_sha256
+        || envelope.rights_profile_sha256.as_deref() != rights_profile_sha256
+    {
         return Err(ProviderQueryError::CursorQueryMismatch);
     }
     let observed_unix = unix_seconds(observed_now)?;
@@ -323,37 +407,35 @@ pub fn planning_as_of(
     ProtoTimestampV2::parse(&envelope.as_of_utc).map_err(|_| ProviderQueryError::InvalidCursor)
 }
 
-/// Select the current provider group or validate and consume its continuation cursor.
-pub fn select_page(
-    request: &BarsRequestV1,
-    plan: &MarketBarsPlan,
-) -> Result<ProviderPageSelection, ProviderQueryError> {
-    select_page_at(request, plan, current_unix_seconds()?)
-}
-
-/// Select using a caller-supplied current clock, independent of the plan's historical `as_of`.
-/// This keeps cursor TTL correct for deterministic historical snapshots and tests.
-pub fn select_page_at(
-    request: &BarsRequestV1,
-    plan: &MarketBarsPlan,
-    now_unix_seconds: u64,
-) -> Result<ProviderPageSelection, ProviderQueryError> {
-    select_page_inner(request, plan, None, now_unix_seconds)
-}
-
 pub(super) fn select_page_with_admissions(
     request: &BarsRequestV1,
     plan: &MarketBarsPlan,
     admissions: super::admission::ValidatedFutuAdmissions,
+    rights_profile_sha256: &str,
+    signer: &CursorSigner,
     now_unix_seconds: u64,
 ) -> Result<ProviderPageSelection, ProviderQueryError> {
-    select_page_inner(request, plan, Some(admissions), now_unix_seconds)
+    if !valid_digest(rights_profile_sha256)
+        || admissions.rights_profile_sha256 != rights_profile_sha256
+    {
+        return Err(ProviderQueryError::CursorQueryMismatch);
+    }
+    select_page_inner(
+        request,
+        plan,
+        Some(admissions),
+        Some(rights_profile_sha256.to_owned()),
+        signer,
+        now_unix_seconds,
+    )
 }
 
 fn select_page_inner(
     request: &BarsRequestV1,
     plan: &MarketBarsPlan,
     admissions: Option<super::admission::ValidatedFutuAdmissions>,
+    rights_profile_sha256: Option<String>,
+    signer: &CursorSigner,
     now_unix_seconds: u64,
 ) -> Result<ProviderPageSelection, ProviderQueryError> {
     request
@@ -367,6 +449,12 @@ fn select_page_inner(
     let admission_set_sha256 = admissions
         .as_ref()
         .and_then(|admissions| admissions.binding_sha256.clone());
+    if rights_profile_sha256
+        .as_deref()
+        .is_some_and(|digest| !valid_digest(digest))
+    {
+        return Err(ProviderQueryError::InvalidCursor);
+    }
     let (
         timeline_position,
         expected_group_index,
@@ -374,8 +462,11 @@ fn select_page_inner(
         issued_at_unix_seconds,
         expires_at_unix_seconds,
     ) = if let Some(cursor) = request.cursor.as_deref() {
-        let envelope = decode_envelope(cursor)?;
+        let envelope = decode_envelope(cursor, signer)?;
         if envelope.request_sha256 != request_sha256 {
+            return Err(ProviderQueryError::CursorQueryMismatch);
+        }
+        if envelope.rights_profile_sha256 != rights_profile_sha256 {
             return Err(ProviderQueryError::CursorQueryMismatch);
         }
         if envelope.plan_sha256 != plan_sha256 || envelope.as_of_utc != plan.as_of.as_str() {
@@ -472,16 +563,9 @@ fn select_page_inner(
             provider_cursor.as_ref(),
         ),
         admission_set_sha256.as_deref(),
+        rights_profile_sha256.as_deref(),
     ))?;
-    let (futu_admissions, rights_profile_sha256) = admissions.map_or_else(
-        || (Vec::new(), None),
-        |admissions| {
-            (
-                admissions.admissions,
-                Some(admissions.rights_profile_sha256),
-            )
-        },
-    );
+    let futu_admissions = admissions.map_or_else(Vec::new, |admissions| admissions.admissions);
     Ok(ProviderPageSelection {
         request_sha256,
         plan_sha256,
@@ -496,8 +580,9 @@ fn select_page_inner(
         cache_identity,
         cache_policy,
         admission_set_sha256,
-        futu_admissions,
         rights_profile_sha256,
+        futu_admissions,
+        cursor_signer: signer.clone(),
     })
 }
 
@@ -715,29 +800,68 @@ fn digest_text(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }
 
-fn encode_envelope(envelope: &CursorEnvelope) -> Result<String, ProviderQueryError> {
+fn encode_envelope(
+    envelope: &CursorEnvelope,
+    signer: &CursorSigner,
+) -> Result<String, ProviderQueryError> {
     let body = serde_json::to_vec(envelope).map_err(|_| ProviderQueryError::InvalidCursor)?;
-    let token = format!("{CURSOR_PREFIX}{}", hex::encode(body));
+    let mut signed_body = Vec::with_capacity(CURSOR_MAC_DOMAIN.len() + body.len());
+    signed_body.extend_from_slice(CURSOR_MAC_DOMAIN);
+    signed_body.extend_from_slice(&body);
+    let tag = hmac::sign(signer.key.as_ref(), &signed_body);
+    let token = format!("{CURSOR_PREFIX}{}.{}", hex::encode(body), hex::encode(tag));
     if token.len() > MAX_CURSOR_BYTES {
         return Err(ProviderQueryError::InvalidCursor);
     }
     Ok(token)
 }
 
-fn decode_envelope(token: &str) -> Result<CursorEnvelope, ProviderQueryError> {
+fn decode_envelope(
+    token: &str,
+    signer: &CursorSigner,
+) -> Result<CursorEnvelope, ProviderQueryError> {
     let encoded = token
         .strip_prefix(CURSOR_PREFIX)
-        .filter(|encoded| !encoded.is_empty() && encoded.len() % 2 == 0)
+        .filter(|encoded| !encoded.is_empty())
         .ok_or(ProviderQueryError::InvalidCursor)?;
-    if token.len() > MAX_CURSOR_BYTES || !encoded.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    if token.len() > MAX_CURSOR_BYTES {
         return Err(ProviderQueryError::InvalidCursor);
     }
-    let body = hex::decode(encoded).map_err(|_| ProviderQueryError::InvalidCursor)?;
+    let (body_hex, tag_hex) = encoded
+        .split_once('.')
+        .ok_or(ProviderQueryError::InvalidCursor)?;
+    if body_hex.is_empty()
+        || body_hex.len() % 2 != 0
+        || tag_hex.len() != hmac::HMAC_SHA256.digest_algorithm().output_len() * 2
+        || !body_hex
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        || !tag_hex
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(ProviderQueryError::InvalidCursor);
+    }
+    let body = hex::decode(body_hex).map_err(|_| ProviderQueryError::InvalidCursor)?;
+    let tag = hex::decode(tag_hex).map_err(|_| ProviderQueryError::InvalidCursor)?;
+    let mut signed_body = Vec::with_capacity(CURSOR_MAC_DOMAIN.len() + body.len());
+    signed_body.extend_from_slice(CURSOR_MAC_DOMAIN);
+    signed_body.extend_from_slice(&body);
+    hmac::verify(signer.key.as_ref(), &signed_body, &tag)
+        .map_err(|_| ProviderQueryError::InvalidCursor)?;
     let envelope: CursorEnvelope =
         serde_json::from_slice(&body).map_err(|_| ProviderQueryError::InvalidCursor)?;
-    if envelope.version != 1
+    if envelope.version != CURSOR_ENVELOPE_VERSION
         || !valid_digest(&envelope.request_sha256)
         || !valid_digest(&envelope.plan_sha256)
+        || envelope
+            .admission_set_sha256
+            .as_deref()
+            .is_some_and(|digest| !valid_digest(digest))
+        || envelope
+            .rights_profile_sha256
+            .as_deref()
+            .is_some_and(|digest| !valid_digest(digest))
         || envelope.expires_at_unix_seconds <= envelope.issued_at_unix_seconds
         || envelope
             .expires_at_unix_seconds
@@ -751,7 +875,10 @@ fn decode_envelope(token: &str) -> Result<CursorEnvelope, ProviderQueryError> {
 }
 
 fn valid_digest(value: &str) -> bool {
-    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn valid_futu_cursor(value: &str) -> bool {
@@ -775,14 +902,121 @@ fn current_unix_seconds() -> Result<u64, ProviderQueryError> {
 }
 
 #[cfg(test)]
+pub(crate) mod test_support {
+    use market_contracts::{BarsRequestV1, ProtoTimestampV2};
+
+    use crate::market_query::planning::MarketBarsPlan;
+
+    use super::{
+        CursorSigner, ProviderPageSelection, ProviderQueryError, current_unix_seconds,
+        planning_as_of_inner, select_page_inner,
+    };
+
+    pub(crate) fn planning_as_of(
+        request: &BarsRequestV1,
+        observed_now: &ProtoTimestampV2,
+    ) -> Result<ProtoTimestampV2, ProviderQueryError> {
+        planning_as_of_inner(request, observed_now, &CursorSigner::for_test(), None)
+    }
+
+    pub(crate) fn planning_as_of_for_rights(
+        request: &BarsRequestV1,
+        observed_now: &ProtoTimestampV2,
+        rights_profile_sha256: &str,
+    ) -> Result<ProtoTimestampV2, ProviderQueryError> {
+        planning_as_of_inner(
+            request,
+            observed_now,
+            &CursorSigner::for_test(),
+            Some(rights_profile_sha256),
+        )
+    }
+
+    pub(crate) fn planning_as_of_with_test_key(
+        request: &BarsRequestV1,
+        observed_now: &ProtoTimestampV2,
+        rights_profile_sha256: Option<&str>,
+        signing_key: &[u8],
+    ) -> Result<ProtoTimestampV2, ProviderQueryError> {
+        planning_as_of_inner(
+            request,
+            observed_now,
+            &CursorSigner::for_test_with_key(signing_key),
+            rights_profile_sha256,
+        )
+    }
+
+    pub(crate) fn select_page(
+        request: &BarsRequestV1,
+        plan: &MarketBarsPlan,
+    ) -> Result<ProviderPageSelection, ProviderQueryError> {
+        select_page_at(request, plan, current_unix_seconds()?)
+    }
+
+    pub(crate) fn select_page_at(
+        request: &BarsRequestV1,
+        plan: &MarketBarsPlan,
+        now_unix_seconds: u64,
+    ) -> Result<ProviderPageSelection, ProviderQueryError> {
+        select_page_inner(
+            request,
+            plan,
+            None,
+            None,
+            &CursorSigner::for_test(),
+            now_unix_seconds,
+        )
+    }
+
+    pub(crate) fn select_page_at_for_rights(
+        request: &BarsRequestV1,
+        plan: &MarketBarsPlan,
+        rights_profile_sha256: &str,
+        now_unix_seconds: u64,
+    ) -> Result<ProviderPageSelection, ProviderQueryError> {
+        select_page_inner(
+            request,
+            plan,
+            None,
+            Some(rights_profile_sha256.to_owned()),
+            &CursorSigner::for_test(),
+            now_unix_seconds,
+        )
+    }
+
+    pub(crate) fn select_page_at_with_test_key(
+        request: &BarsRequestV1,
+        plan: &MarketBarsPlan,
+        rights_profile_sha256: Option<String>,
+        signing_key: &[u8],
+        now_unix_seconds: u64,
+    ) -> Result<ProviderPageSelection, ProviderQueryError> {
+        select_page_inner(
+            request,
+            plan,
+            None,
+            rights_profile_sha256,
+            &CursorSigner::for_test_with_key(signing_key),
+            now_unix_seconds,
+        )
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use chrono::{DateTime, Duration, NaiveDate, Utc};
     use market_contracts::{
         AdjustmentV1, AssetClassV1, BarResolutionV1, BarsProviderModeV1, BarsRequestV1,
-        ProtoTimestampV2, SessionScopeV1,
+        EntitlementState, NumericEncodingV1, ProtoTimestampV2, SessionScopeV1,
     };
+    use serde_json::Value;
+    use sha2::{Digest, Sha256};
 
     use crate::{
+        archive::reconciliation::{
+            CacheKeyV1, CacheQuerySourceScopeV1, ProviderCursorKindV1,
+            ValidatedProviderCursorReceiptV1,
+        },
         market_query::planning::{MarketBarsPlan, ProviderQueryGroup},
         session_router::{
             AlpacaFeed, CalendarVerificationStatus, DataInterval, PlannedSlice, PlannedSource,
@@ -790,7 +1024,13 @@ mod tests {
         },
     };
 
-    use super::{ProviderCursor, select_page, select_page_at};
+    use super::{
+        ProviderCursor,
+        test_support::{
+            planning_as_of, planning_as_of_for_rights, planning_as_of_with_test_key, select_page,
+            select_page_at, select_page_at_for_rights, select_page_at_with_test_key,
+        },
+    };
 
     fn fixture(as_of: &str) -> (BarsRequestV1, MarketBarsPlan) {
         let start = DateTime::parse_from_rfc3339("2026-10-13T13:30:00Z")
@@ -858,6 +1098,28 @@ mod tests {
         (request, plan)
     }
 
+    fn mutate_envelope(token: &str, update: impl FnOnce(&mut Value)) -> String {
+        let encoded = token.strip_prefix(super::CURSOR_PREFIX).expect("v2 cursor");
+        let (body_hex, tag_hex) = encoded.split_once('.').expect("body and tag");
+        let mut envelope: Value = serde_json::from_slice(&hex::decode(body_hex).unwrap()).unwrap();
+        update(&mut envelope);
+        format!(
+            "{}{}.{}",
+            super::CURSOR_PREFIX,
+            hex::encode(serde_json::to_vec(&envelope).unwrap()),
+            tag_hex
+        )
+    }
+
+    fn observed_time(unix_seconds: u64) -> ProtoTimestampV2 {
+        let timestamp = DateTime::<Utc>::from_timestamp(
+            i64::try_from(unix_seconds).expect("fixture clock fits signed Unix time"),
+            0,
+        )
+        .expect("valid fixture clock");
+        ProtoTimestampV2::parse(&timestamp.to_rfc3339()).expect("Core timestamp")
+    }
+
     #[test]
     fn cache_key_ignores_the_plan_clock_but_changes_with_provider_page_cursor() {
         let first_as_of = Utc::now();
@@ -917,6 +1179,201 @@ mod tests {
         let next = select_page_at(&next_request, &plan, now + 1)
             .expect("historical plan remains valid at current clock");
         assert_eq!(next.issued_at_unix_seconds, now);
+    }
+
+    #[test]
+    fn hmac_rejects_tampered_timeline_times_provider_cursor_and_tag() {
+        let now = 1_800_000_000;
+        let (request, plan) = fixture("2026-10-13T15:00:00Z");
+        let selection = select_page_at(&request, &plan, now).expect("first page");
+        let provider_cursor = selection
+            .cursor_for_provider_page(ProviderCursor::Futu("a".repeat(32)))
+            .expect("signed provider cursor");
+        let mut continued_request = request.clone();
+        continued_request.cursor = Some(provider_cursor.clone());
+        let observed_now = observed_time(now);
+        assert!(planning_as_of(&continued_request, &observed_now).is_ok());
+
+        let tampered = [
+            mutate_envelope(&provider_cursor, |value| {
+                value["timeline_position"] = Value::from(1);
+            }),
+            mutate_envelope(&provider_cursor, |value| {
+                value["issued_at_unix_seconds"] = Value::from(now - 1);
+            }),
+            mutate_envelope(&provider_cursor, |value| {
+                value["expires_at_unix_seconds"] = Value::from(now + 29 * 60);
+            }),
+            mutate_envelope(&provider_cursor, |value| {
+                value["provider_cursor"]["value"] = Value::from("b".repeat(32));
+            }),
+        ];
+        for cursor in tampered {
+            continued_request.cursor = Some(cursor);
+            assert_eq!(
+                planning_as_of(&continued_request, &observed_now),
+                Err(super::ProviderQueryError::InvalidCursor)
+            );
+        }
+
+        let (_, tag) = provider_cursor
+            .strip_prefix(super::CURSOR_PREFIX)
+            .unwrap()
+            .split_once('.')
+            .unwrap();
+        let replacement = if tag.starts_with('0') { '1' } else { '0' };
+        let mut tag_tampered = provider_cursor.clone();
+        let tag_start = tag_tampered.len() - tag.len();
+        tag_tampered.replace_range(tag_start..tag_start + 1, &replacement.to_string());
+        continued_request.cursor = Some(tag_tampered);
+        assert_eq!(
+            planning_as_of(&continued_request, &observed_now),
+            Err(super::ProviderQueryError::InvalidCursor)
+        );
+
+        continued_request.cursor = Some(provider_cursor.clone());
+        assert_eq!(
+            planning_as_of(
+                &continued_request,
+                &observed_time(now + super::CURSOR_TTL_SECS)
+            ),
+            Err(super::ProviderQueryError::CursorExpired)
+        );
+
+        continued_request.cursor = Some("mdp1:expired-unsigned-cursor".to_owned());
+        assert_eq!(
+            planning_as_of(&continued_request, &observed_now),
+            Err(super::ProviderQueryError::InvalidCursor)
+        );
+    }
+
+    #[test]
+    fn configured_signing_key_is_validated_and_redacted() {
+        assert_eq!(
+            super::CursorSigner::from_configured_secret("too-short".to_owned()).unwrap_err(),
+            super::ProviderConfigError::InvalidValue
+        );
+        assert_eq!(
+            super::CursorSigner::from_configured_secret(format!("{} key", "x".repeat(32)))
+                .unwrap_err(),
+            super::ProviderConfigError::InvalidValue
+        );
+
+        let secret = "persistent-test-signing-key-with-at-least-32-bytes";
+        let signer = super::CursorSigner::from_configured_secret(secret.to_owned())
+            .expect("valid persistent signing key");
+        assert!(!format!("{signer:?}").contains(secret));
+    }
+
+    #[test]
+    fn cursor_rejects_wrong_runtime_key_and_principal_rights_profile() {
+        let now = 1_800_000_000;
+        let (request, plan) = fixture("2026-10-13T15:00:00Z");
+        let signing_key = b"first-runtime-test-key-with-sufficient-entropy";
+        let other_key = b"other-runtime-test-key-with-sufficient-entropy";
+        let signer = super::CursorSigner::for_test_with_key(signing_key);
+        let signed_selection =
+            select_page_at_with_test_key(&request, &plan, None, signing_key, now)
+                .expect("first runtime selection");
+        let signed_cursor = signed_selection
+            .cursor_for_provider_page(ProviderCursor::Futu("a".repeat(32)))
+            .expect("signed cursor");
+        assert!(!signed_cursor.contains(std::str::from_utf8(signing_key).unwrap()));
+        let mut continued_request = request.clone();
+        continued_request.cursor = Some(signed_cursor);
+        let observed_now = observed_time(now + 1);
+        assert_eq!(
+            planning_as_of_with_test_key(&continued_request, &observed_now, None, other_key),
+            Err(super::ProviderQueryError::InvalidCursor)
+        );
+        assert!(!format!("{signer:?}").contains("first-runtime-test-key"));
+
+        let first_profile = "a".repeat(64);
+        let other_profile = "b".repeat(64);
+        let scoped_selection = select_page_at_for_rights(&request, &plan, &first_profile, now)
+            .expect("scoped selection");
+        continued_request.cursor = Some(
+            scoped_selection
+                .cursor_for_provider_page(ProviderCursor::Futu("c".repeat(32)))
+                .expect("scoped cursor"),
+        );
+        assert_eq!(
+            planning_as_of_for_rights(&continued_request, &observed_now, &other_profile),
+            Err(super::ProviderQueryError::CursorQueryMismatch)
+        );
+        assert_eq!(
+            planning_as_of_for_rights(&continued_request, &observed_now, &first_profile),
+            Ok(plan.as_of.clone())
+        );
+        assert_eq!(
+            select_page_at_for_rights(&continued_request, &plan, &other_profile, now + 1)
+                .unwrap_err(),
+            super::ProviderQueryError::CursorQueryMismatch
+        );
+    }
+
+    #[test]
+    fn cached_provider_cursor_rewrap_uses_the_earlier_expiry() {
+        let now = 1_800_000_000;
+        let (request, plan) = fixture("2026-10-13T15:00:00Z");
+        let rights_profile_sha256 = "5".repeat(64);
+        let selection = select_page_at_for_rights(&request, &plan, &rights_profile_sha256, now)
+            .expect("first page");
+        let cache_request = BarsRequestV1 {
+            cursor: Some(selection.cache_key().to_owned()),
+            ..request.clone()
+        };
+        let realm = "4".repeat(64);
+        let scope = CacheQuerySourceScopeV1 {
+            provider: selection.cache_identity().provider.clone(),
+            feed: selection.cache_identity().feed.clone(),
+            source_scope_id: selection.cache_identity().source_scope_id.clone(),
+            entitlement_scope_sha256: realm.clone(),
+            rights_profile_sha256: rights_profile_sha256.clone(),
+            entitlement: EntitlementState::Unknown,
+            numeric_encoding: NumericEncodingV1::BinaryFloat64ShortestDecimal,
+            effective_resolution: BarResolutionV1::OneDay,
+            session_instance_ids: selection.cache_identity().session_instance_ids.clone(),
+            market_calendar_version: selection.cache_identity().market_calendar_version.clone(),
+        };
+        let cache_key = CacheKeyV1::from_request(&cache_request, &scope).unwrap();
+        let payload_json = serde_json::to_string(&"d".repeat(32)).unwrap();
+        let mut payload_digest = Sha256::new();
+        payload_digest.update(b"lqepoch.mdp.provider-page-cursor.v1\0");
+        payload_digest.update(payload_json.as_bytes());
+        let payload_sha256 = hex::encode(payload_digest.finalize());
+        let receipt_value = serde_json::json!({
+            "kind": ProviderCursorKindV1::Futu,
+            "payload_json": payload_json,
+            "payload_sha256": payload_sha256,
+            "key_fingerprint_sha256": cache_key.fingerprint().unwrap(),
+            "provider": cache_key.provider.clone(),
+            "feed": cache_key.feed.clone(),
+            "entitlement_scope_sha256": realm.clone(),
+            "expires_at_unix_seconds": now + 120,
+        });
+        let receipt: ValidatedProviderCursorReceiptV1 =
+            serde_json::from_value(receipt_value).unwrap();
+
+        let wrapped = selection
+            .cursor_after_cached_provider_page(&receipt, &cache_key, now + 10)
+            .expect("rewrap validated cached SDK cursor");
+        let mut continued_request = request;
+        continued_request.cursor = Some(wrapped);
+        let next =
+            select_page_at_for_rights(&continued_request, &plan, &rights_profile_sha256, now + 119)
+                .expect("cached cursor remains valid before receipt expiry");
+        assert_eq!(next.expires_at_unix_seconds, now + 120);
+        assert_eq!(
+            select_page_at_for_rights(
+                &continued_request,
+                &plan,
+                &rights_profile_sha256,
+                now + 120,
+            )
+            .unwrap_err(),
+            super::ProviderQueryError::CursorExpired
+        );
     }
 
     #[test]

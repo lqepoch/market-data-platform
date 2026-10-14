@@ -12,6 +12,13 @@ the verified research channel. No order operation is added.
 
 - `MDP_MARKET_BARS_ENABLED=true` enables the runtime; default is disabled. Revert
   this flag and EqoBoard `EQO_MDP_MARKET_BARS_ENABLED` to return to existing paths.
+- Optional `MDP_MARKET_CURSOR_SIGNING_KEY` is a dedicated persistent cursor secret. It must be at
+  least 32 UTF-8 bytes and contain no whitespace or control characters. Generate it from a
+  cryptographically secure random source; do not reuse broker, Gateway, OIDC, or other signing
+  credentials. When absent, the service creates a process-local key from the operating-system
+  CSPRNG, so restart invalidates outstanding cursors. Restarting with a changed configured key also
+  invalidates existing cursors. Replicas that serve the same clients must use the same dedicated
+  key. The key is held server-side and never enters a cursor, cache record, log, or debug output.
 - Set `MDP_MARKET_CALENDAR_FILE` and `MDP_MARKET_CALENDAR_SHA256` together. Startup
   verifies the bounded 16 MiB snapshot, its SHA and structural session identity.
   The calendar's own verification status remains independent of its content hash.
@@ -64,8 +71,18 @@ All query fields except `cursor` are required. Supported resolutions are 1m, 5m,
 non-UTC timestamps. Pages advance through contiguous provider runs in source-time
 order. Their opaque cursor fixes the plan cutoff and request; continue every page
 before claiming coverage. The SDK's private cursor is cached only with validated
-provider, feed, rights realm, payload hash and expiration; it is not exposed as an
-outer cursor. Expired or absent page receipts cause a cache miss.
+provider, feed, rights realm, payload hash and expiration. The provider-local continuation
+locator is embedded in the signed outer token, but is never a credential or part of the cache
+identity. Expired or absent page receipts cause a cache miss.
+
+Outer continuations use versioned `mdp2` tokens authenticated with HMAC-SHA256. The
+MAC covers the request and plan digests, fixed snapshot time, provider-run position,
+provider cursor, issuance/expiry times, admission set, and authenticated principal
+rights-profile digest. Tokens are limited to 30 minutes and reject payload, tag,
+runtime-key, or principal-profile changes before planning or fetching. The previous
+unsigned `mdp1` form is rejected; clients must restart the query after deployment.
+The token is authenticated, not encrypted; provider adapters must never put credentials
+or Gateway delegations in provider-local cursor values.
 
 Raw observations and calendar-normalized canonical projections are distinct
 immutable Parquet artifacts with exact decimal OHLCV lineage. Receive/fetch time

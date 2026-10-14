@@ -56,4 +56,6 @@ pub enum ProviderConfigError {
     InvalidValue,
     #[error("provider client could not be initialized")]
     ClientInitialization,
+    #[error("market cursor signing key could not be generated")]
+    CursorKeyGeneration,
 }
