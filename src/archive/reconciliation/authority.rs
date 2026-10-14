@@ -451,6 +451,53 @@ pub(super) fn validate_stored_receipt_binding(
     dataset.validate()
 }
 
+/// Re-verify an immutable version's original signed admission at read time. The injected
+/// verifier owns the current issuer/key allowlist and revocation policy; a valid cache receipt
+/// checksum alone never grants current permission to serve authoritative data.
+pub(super) fn verify_stored_provider_admission_v1(
+    receipt: &ProviderAdmissionReceiptV1,
+    key: &CacheKeyV1,
+    now_unix_seconds: u64,
+    verifier: &dyn TrustedProviderAdmissionVerifierV1,
+) -> Result<()> {
+    if receipt.issuer.is_empty()
+        || receipt.key_id.is_empty()
+        || receipt.signature_base64.is_empty()
+        || receipt.signature_base64.len() > MAX_ADMISSION_RECEIPT_BYTES
+        || receipt.issued_at_unix_seconds > now_unix_seconds
+        || now_unix_seconds >= receipt.expires_at_unix_seconds
+        || receipt.expires_at_unix_seconds <= receipt.issued_at_unix_seconds
+        || receipt.expires_at_unix_seconds - receipt.issued_at_unix_seconds
+            > MAX_ADMISSION_TTL_SECONDS
+    {
+        return Err(CacheReconciliationError::AdmissionExpired);
+    }
+    let dataset = receipt
+        .claims
+        .dataset_binding
+        .as_ref()
+        .ok_or(CacheReconciliationError::AdmissionMismatch)?;
+    validate_stored_receipt_binding(receipt, key, dataset)?;
+    let encoded = serde_json::to_vec(receipt)?;
+    if encoded.len() > MAX_ADMISSION_RECEIPT_BYTES {
+        return Err(CacheReconciliationError::LimitExceeded);
+    }
+    let payload = signed_payload(receipt)?;
+    verifier
+        .verify_signature(
+            &receipt.issuer,
+            &receipt.key_id,
+            &payload,
+            &receipt.signature_base64,
+        )
+        .map_err(|_| CacheReconciliationError::BlockedExternal)
+}
+
+#[cfg(test)]
+pub(super) fn signed_payload_for_test(receipt: &ProviderAdmissionReceiptV1) -> Result<Vec<u8>> {
+    signed_payload(receipt)
+}
+
 fn validate_runtime_evidence(
     evidence: &ProviderAdmissionEvidenceV1,
     claims: &ProviderAdmissionClaimsV1,

@@ -88,9 +88,34 @@ credential-free rejection audit and leaves the verified current pointer untouche
 owning adapter can surface the `CacheInvalidationV1` returned after a successful replacement,
 rollback, or recovery.
 
+Cross-source reconciliation uses a separate bounded logical index partitioned by the verified
+rights-profile hash, instrument, requested/effective resolution, adjustment, calendar version, and
+trusted schema. It deliberately omits provider/feed, entitlement realm, request window, page cursor,
+and session ID. The partition maps at most 2048 actual `session_instance_id` values to immutable
+version references. For every overlapping session, the cache compares only the exact shared
+half-open interval covered by contiguous `Complete` canonical segments and rows. It does not clip
+bars, infer session identity from provider-local IDs, compare after-hours rows as regular-session
+data, or treat a partial/truncated page as complete. Disjoint or incomplete overlap does not advance
+that session's logical pointer.
+
+The cache finishes every session comparison before publishing any pointer. One material conflict
+rejects the entire candidate update, including a first authoritative Alpaca candidate that conflicts
+with a complete Futu provisional baseline. The raw/canonical candidate and receipt remain as an
+immutable `conflict_rejected` version for review, a credential-free rejection audit is written, and
+neither the provider current pointer nor any session in the prior logical manifest advances. A
+conflict-rejected version is visible in `list_verified_versions` for audit but cannot be selected by
+automatic load, rollback, or recovery. Minor decimal differences are accepted only under the
+explicit persisted same-feed or cross-provider tolerance policy. A successful multi-session update
+replaces one checksummed bounded logical manifest atomically; the manifest is capped at 2048 sessions
+and 4 MiB, and capacity exhaustion keeps the new immutable raw/canonical version while leaving the
+previous logical manifest unchanged. The result and version receipt expose an overflow flag; callers
+must not present an overflowed logical index as complete coverage.
+
 Provisional snapshots are retained as immutable versions. They can become current only when there
 is no verified authoritative current version for that exact key. They cannot replace an
-authoritative current version.
+authoritative current version. A complete provisional session may seed the logical comparison
+baseline, but it never gains authority from being indexed; a later provider candidate must pass the
+cross-source tolerance gate before the logical pointer can advance.
 
 ## Durable publication and recovery
 
@@ -115,12 +140,17 @@ have an unknown outcome; callers must reload and verify current rather than retr
 death after immutable rename but before pointer replacement leaves an orphan version, never an
 auto-promoted cache entry.
 
-`list_verified_versions` fully verifies candidate versions so an operator can choose a target.
-`rollback_to` requires a verified current pointer; `recover_to` can repair a missing/damaged pointer
-only when given an explicit still-fresh version ID. Neither method scans and promotes an orphan
-automatically. Expired versions are retained for audit and are not eligible for load, rollback, or
-recovery. Cache invalidation returned by a pointer change is the signal the caller must propagate to
-downstream query caches.
+`list_verified_versions` verifies immutable data and receipt integrity, but its authority field is a
+historical publication result, not current permission to serve that data. `rollback_to` and
+`recover_to` accept provisional targets without an issuer verifier; production-authoritative targets
+require `rollback_to_with_verifier` or `recover_to_with_verifier`, which recheck the retained signed
+admission, expiry, issuer allowlist, and revocation policy. Authoritative reads similarly require
+`load_current_with_verifier` or `load_logical_current_with_verifier`; the default production read
+path fails closed for authoritative versions. Neither pointer operation scans and promotes an orphan
+automatically. Conflict-rejected versions are not eligible rollback/recovery targets. Expired versions
+are retained for audit and are not eligible for load, rollback, or recovery. Cache invalidation
+returned by a pointer change includes every session changed by one logical-manifest commit and is the
+signal the caller must propagate to downstream query caches.
 
 The synchronous cancellable facade checks cancellation before starting. Once publication enters its
 bounded atomic section, it completes and joins all worker processes; if cancellation arrives during
