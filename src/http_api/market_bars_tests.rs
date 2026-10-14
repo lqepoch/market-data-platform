@@ -30,6 +30,16 @@ fn bars_uri(extra: &str) -> Uri {
     format!("/v1/market/bars?{query}").parse().unwrap()
 }
 
+fn market_bars_test_runtime() -> crate::market_query::providers::MarketBarsProviderRuntime {
+    crate::market_query::providers::MarketBarsProviderRuntime::from_environment()
+        .expect("test provider runtime has a valid cursor signer configuration")
+}
+
+fn market_bars_test_rights_profile_sha256() -> String {
+    let principal = test_support::terminal_principal();
+    hash_cache_rights_profile("", principal.principal_scope_sha256())
+}
+
 #[test]
 fn parses_core_bars_v1_query_without_losing_the_opaque_cursor() {
     let request = parse_bars_request(&bars_uri("&cursor=opaque-page-token"))
@@ -369,7 +379,16 @@ fn canonical_cache_hit_page_is_revalidated_without_losing_rows_or_provisional_st
         &calendar,
     )
     .unwrap();
-    let selection = crate::market_query::providers::select_page(&request, &plan).unwrap();
+    let provider_runtime = market_bars_test_runtime();
+    let rights_profile_sha256 = market_bars_test_rights_profile_sha256();
+    let selection = provider_runtime
+        .select_page_at(
+            &request,
+            &plan,
+            &rights_profile_sha256,
+            super::unix_seconds_now(),
+        )
+        .unwrap();
     let row_start = request.start.clone();
     let row_end = ProtoTimestampV2::parse("2026-01-05T14:31:00Z").unwrap();
     let received_at = ProtoTimestampV2::parse("2026-01-05T14:32:01Z").unwrap();
@@ -593,8 +612,22 @@ fn exhausted_cache_hit_advances_to_the_next_provider_run_without_provider_cursor
     let plan =
         crate::market_query::planning::plan_market_bars(&request, &as_of, &capabilities, &calendar)
             .unwrap();
-    let selection =
-        crate::market_query::providers::select_page_at(&request, &plan, now_unix_seconds).unwrap();
+    let provider_runtime = market_bars_test_runtime();
+    let rights_profile_sha256 = market_bars_test_rights_profile_sha256();
+    assert!(matches!(
+        provider_runtime.select_page_at(&request, &plan, &rights_profile_sha256, now_unix_seconds,),
+        Err(crate::market_query::providers::ProviderQueryError::ProviderCapabilityUnavailable)
+    ));
+    // This synthetic fixture only exercises cache replay mechanics. It does not grant Futu
+    // admission, create a provider claim, or make a network request.
+    let selection = provider_runtime
+        .select_page_at_synthetic_for_test(
+            &request,
+            &plan,
+            &rights_profile_sha256,
+            now_unix_seconds,
+        )
+        .unwrap();
     assert_eq!(plan.provider_groups.len(), 2);
     assert_eq!(
         selection.provider_group().source,
@@ -710,8 +743,9 @@ fn exhausted_cache_hit_advances_to_the_next_provider_run_without_provider_cursor
     .unwrap()
     .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let observed_now = ProtoTimestampV2::parse(&observed_now).unwrap();
-    let next_as_of =
-        crate::market_query::providers::planning_as_of(&next_request, &observed_now).unwrap();
+    let next_as_of = provider_runtime
+        .planning_as_of(&next_request, &observed_now, &rights_profile_sha256)
+        .unwrap();
     assert_eq!(next_as_of, as_of);
     let next_plan = crate::market_query::planning::plan_market_bars(
         &next_request,
@@ -720,9 +754,14 @@ fn exhausted_cache_hit_advances_to_the_next_provider_run_without_provider_cursor
         &calendar,
     )
     .unwrap();
-    let next_selection =
-        crate::market_query::providers::select_page_at(&next_request, &next_plan, now_unix_seconds)
-            .unwrap();
+    let next_selection = provider_runtime
+        .select_page_at(
+            &next_request,
+            &next_plan,
+            &rights_profile_sha256,
+            now_unix_seconds,
+        )
+        .unwrap();
     assert_eq!(
         next_selection.provider_group().source,
         crate::session_router::PlannedSource::Alpaca {
