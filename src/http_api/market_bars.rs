@@ -101,10 +101,61 @@ pub(crate) struct MarketBarsPageAdmissionContext<'a> {
     pub(crate) raw_observations: &'a BarsResponseV1,
     pub(crate) canonical_response: &'a BarsResponseV1,
     pub(crate) page_evidence: &'a crate::archive::reconciliation::ProviderPageEvidenceV1,
+    pub(crate) dataset_binding:
+        crate::archive::reconciliation::authority::ProviderAdmissionDatasetBindingV1,
     pub(crate) phase_slices:
         &'a [crate::archive::reconciliation::authority::ProviderPhaseSliceV1],
     pub(crate) policy: &'a crate::archive::reconciliation::authority::ReconciliationPolicyV1,
     pub(crate) now_unix_seconds: u64,
+}
+
+impl<'a> MarketBarsPageAdmissionContext<'a> {
+    pub(crate) fn new(
+        request: &'a BarsRequestV1,
+        source_scope: &'a crate::archive::reconciliation::CacheQuerySourceScopeV1,
+        raw_observations: &'a BarsResponseV1,
+        canonical_response: &'a BarsResponseV1,
+        page_evidence: &'a crate::archive::reconciliation::ProviderPageEvidenceV1,
+        phase_slices: &'a [crate::archive::reconciliation::authority::ProviderPhaseSliceV1],
+        policy: &'a crate::archive::reconciliation::authority::ReconciliationPolicyV1,
+        now_unix_seconds: u64,
+    ) -> Option<Self> {
+        let dataset_binding =
+            crate::archive::reconciliation::provider_admission_dataset_binding_for_bars_responses(
+                request,
+                source_scope,
+                raw_observations,
+                canonical_response,
+                page_evidence,
+                policy,
+            )
+            .ok()?;
+        let context = Self {
+            request,
+            source_scope,
+            raw_observations,
+            canonical_response,
+            page_evidence,
+            dataset_binding,
+            phase_slices,
+            policy,
+            now_unix_seconds,
+        };
+        context.is_valid().then_some(context)
+    }
+
+    fn is_valid(&self) -> bool {
+        self.now_unix_seconds > 0
+            && !self.phase_slices.is_empty()
+            && self.phase_slices.iter().all(|phase| {
+                self.source_scope
+                    .session_instance_ids
+                    .contains(&phase.session_instance_id)
+            })
+            && self.dataset_binding.coverage_complete
+            && !self.dataset_binding.has_gaps
+            && !self.dataset_binding.truncated
+    }
 }
 
 pub(crate) trait MarketBarsPageAdmissionEvidenceSource: Send + Sync {
@@ -243,6 +294,19 @@ impl MarketBarsRuntime {
             .filter(|event| event.rights_profile_sha256 == rights_profile_sha256)
             .cloned()
             .collect()
+    }
+
+    /// Derive the caller's cache partition inside the runtime and return only that principal's
+    /// event history. Neither the operator profile nor either digest crosses the HTTP boundary.
+    pub(super) fn cache_invalidation_events_for_principal(
+        &self,
+        principal: &VerifiedMarketPrincipal,
+    ) -> Vec<MarketBarsCacheInvalidationEvent> {
+        let rights_profile_sha256 = hash_cache_rights_profile(
+            self.cache_scope_id.as_deref().unwrap_or(""),
+            principal.principal_scope_sha256(),
+        );
+        self.cache_invalidation_events_for_rights_profile(&rights_profile_sha256)
     }
 
     pub(super) fn record_cache_invalidation_event(&self, event: MarketBarsCacheInvalidationEvent) {

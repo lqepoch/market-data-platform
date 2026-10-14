@@ -7,6 +7,9 @@ verification. Static registration preserves source ownership and unknown entitle
 trade and news integrations fail with HTTP 501 and `UNSUPPORTED_PROVIDER_CAPABILITY`, never an empty
 successful market result. Discovery does not inspect private cache roots or authorize archive
 publication. The new market cache status does not represent the existing archive cache's receipts.
+The authenticated `/v1/market/cache/status` response also exposes at most 128 principal-filtered,
+process-local invalidation/readback summaries; it is no-store, the event buffer disappears on
+restart, and the summaries do not prove data coverage or entitlement.
 
 - `broker-connectors`: sole provider SDK, Alpaca REST/WebSocket transport, MessagePack decoder,
   timestamp extensions, subscription ACK state, reconnect generation, and feed-specific limits.

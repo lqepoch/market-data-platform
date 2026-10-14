@@ -97,6 +97,15 @@ promotion; the initial runtime has no trusted provider issuer. Synthetic test
 admission is excluded from production. Existing archive publication gates remain
 closed. See `policies/mdp-cache-reconciliation-v1.md` for lineage and rollback.
 
+`GET /v1/market/cache/status` requires the same verified `market:read` delegation and includes at
+most 128 in-memory invalidation/readback summaries filtered by the verified principal and current
+operator cache profile. The response is `no-store` and omits principal/profile hashes, cache
+fingerprints, rows, and credentials. The event buffer is process-local and is lost on restart; an
+event records a logical-cache pointer change and reread only. `coverage_asserted` is always false,
+so these events do not prove completeness, market-data coverage, freshness, or entitlement. When
+the market-bars runtime is absent, the route returns an empty list with
+`invalidation_events_status=unavailable`.
+
 ## Verification boundary
 
 Public builds, Rust tests/clippy and persistent worker tests run only in GitHub

@@ -23,6 +23,7 @@ use sha2::{Digest, Sha256};
 use tower::ServiceExt;
 
 use super::{
+    MAX_CACHE_INVALIDATION_EVENTS, MarketBarsCacheInvalidationEvent,
     MarketBarsPageAdmissionContext, MarketBarsPageAdmissionEvidenceSource, MarketBarsRuntime,
     SyntheticMarketBarsPageSource, hash_cache_rights_profile,
 };
@@ -33,7 +34,7 @@ use crate::{
             AdmissionVerifyErrorV1, ProviderAdmissionClaimsV1, ProviderAdmissionEvidenceV1,
             ProviderAdmissionReceiptV1, ProviderPhaseSliceV1, ReconciliationPolicyV1,
             TrustedProviderAdmissionVerifierV1, UnavailableProviderAdmissionVerifierV1,
-            provider_admission_dataset_binding_for_bars_responses, signed_payload_for_test,
+            signed_payload_for_test,
         },
     },
     http_api::{ServiceState, app_router, auth::test_support, supervisor::QuerySupervisor},
@@ -242,10 +243,10 @@ impl MarketBarsPageAdmissionEvidenceSource for SyntheticAdmissionEvidenceSource 
             source_scope,
             raw_observations,
             canonical_response,
-            page_evidence,
+            dataset_binding,
             phase_slices,
-            policy,
             now_unix_seconds,
+            ..
         } = context;
         self.calls.fetch_add(1, Ordering::SeqCst);
         if (self.mutation != EvidenceMutation::WrongPrincipal
@@ -260,15 +261,7 @@ impl MarketBarsPageAdmissionEvidenceSource for SyntheticAdmissionEvidenceSource 
         {
             return None;
         }
-        let mut dataset_binding = provider_admission_dataset_binding_for_bars_responses(
-            request,
-            source_scope,
-            raw_observations,
-            canonical_response,
-            page_evidence,
-            policy,
-        )
-        .ok()?;
+        let mut dataset_binding = dataset_binding;
         if self.mutation == EvidenceMutation::WrongDataset {
             dataset_binding.canonical_rows_sha256 = "e".repeat(64);
         }
@@ -785,6 +778,173 @@ async fn verified_principal_rights_partition_prevents_cross_principal_cache_reus
         research_events[0].identity_fingerprint_sha256
     );
     harness.supervisor.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn cache_status_returns_principal_scoped_bounded_and_sanitized_events_over_http() {
+    let mut harness = harness(SyntheticFacts::KnownSipAuthorized, false).await;
+    let terminal_token = test_support::terminal_token("market:read");
+    let bar_response = send_bars_request(&harness.app, &terminal_token).await;
+    assert_eq!(bar_response.status(), StatusCode::OK);
+    let _ = response_json(bar_response).await;
+
+    let terminal_response = send_cache_status_request(&harness.app, &terminal_token).await;
+    assert_eq!(terminal_response.status(), StatusCode::OK);
+    assert_no_store(&terminal_response);
+    let terminal_body = response_json(terminal_response).await;
+    assert_eq!(terminal_body["schema_version"], "market-cache-status-v1");
+    assert_eq!(terminal_body["cache_status"], "not_inspected");
+    assert_eq!(terminal_body["invalidation_events_status"], "available");
+    assert_eq!(
+        terminal_body["canonical_market_cache_configured"].as_bool(),
+        Some(true)
+    );
+    assert!(terminal_body["runtime"].is_object());
+    assert_eq!(terminal_body["volatile"].as_bool(), Some(true));
+    assert_eq!(terminal_body["restart_lost"].as_bool(), Some(true));
+    assert_eq!(terminal_body["coverage_asserted"].as_bool(), Some(false));
+    assert_eq!(
+        terminal_body["invalidation_events"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        terminal_body["invalidation_events"][0]["reread_status"],
+        "reread_verified"
+    );
+
+    // Exercise the ring bound through the same HTTP projection; all fixture events remain in
+    // the terminal partition and contain no real provider identity or credentials.
+    let terminal_rights = rights_for_terminal();
+    for generation in 0..(MAX_CACHE_INVALIDATION_EVENTS as u64 + 1) {
+        harness
+            .runtime
+            .record_cache_invalidation_event(MarketBarsCacheInvalidationEvent {
+                rights_profile_sha256: terminal_rights.clone(),
+                identity_fingerprint_sha256: Some("a".repeat(64)),
+                session_instance_id: Some("synthetic-session".to_owned()),
+                logical_generation: Some(generation),
+                logical_updated_at_unix_seconds: Some(1_800_000_000 + generation),
+                reread_status: "reread_verified",
+                current_provider: Some("synthetic".to_owned()),
+                current_feed: Some("synthetic".to_owned()),
+                current_authority: Some("provisional".to_owned()),
+            });
+    }
+    let bounded_response = send_cache_status_request(&harness.app, &terminal_token).await;
+    assert_eq!(bounded_response.status(), StatusCode::OK);
+    let bounded_body = response_json(bounded_response).await;
+    let events = bounded_body["invalidation_events"].as_array().unwrap();
+    assert_eq!(events.len(), MAX_CACHE_INVALIDATION_EVENTS);
+    assert_eq!(events[0]["logical_generation"], "1");
+    assert_eq!(events[events.len() - 1]["logical_generation"], "128");
+    let serialized = bounded_body.to_string();
+    for private_field in [
+        "rights_profile_sha256",
+        "identity_fingerprint_sha256",
+        "profile",
+        "cache_scope_id",
+        "entitlement_scope_sha256",
+        "credential",
+        "token",
+        "rows",
+        "sha256",
+    ] {
+        assert!(
+            !serialized.contains(private_field),
+            "private field {private_field} appeared in cache-event HTTP response"
+        );
+    }
+
+    let research_response =
+        send_cache_status_request(&harness.app, &test_support::research_token("market:read")).await;
+    assert_eq!(research_response.status(), StatusCode::OK);
+    let research_body = response_json(research_response).await;
+    assert!(
+        research_body["invalidation_events"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    harness.supervisor.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn cache_status_requires_market_read_and_returns_empty_events_without_runtime() {
+    let mut harness = harness(SyntheticFacts::KnownSipAuthorized, false).await;
+    let unauthorized =
+        send_cache_status_request(&harness.app, &test_support::terminal_token("market:write"))
+            .await;
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+    assert_no_store(&unauthorized);
+    harness.supervisor.shutdown().await.unwrap();
+
+    let (_temp, app, mut supervisor) = app_without_market_bars().await;
+    let unavailable =
+        send_cache_status_request(&app, &test_support::terminal_token("market:read")).await;
+    assert_eq!(unavailable.status(), StatusCode::OK);
+    assert_no_store(&unavailable);
+    let body = response_json(unavailable).await;
+    assert_eq!(body["invalidation_events_status"], "unavailable");
+    assert_eq!(
+        body["canonical_market_cache_configured"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(body["volatile"].as_bool(), Some(true));
+    assert_eq!(body["restart_lost"].as_bool(), Some(true));
+    assert_eq!(body["coverage_asserted"].as_bool(), Some(false));
+    assert!(body["invalidation_events"].as_array().unwrap().is_empty());
+    supervisor.shutdown().await.unwrap();
+}
+
+async fn app_without_market_bars() -> (tempfile::TempDir, axum::Router, QuerySupervisor) {
+    let temp = tempfile::tempdir().unwrap();
+    let archive_root = temp.path().join("archive");
+    std::fs::create_dir_all(&archive_root).unwrap();
+    let reader = Arc::new(
+        RemoteArchiveReader::local_test_isolated(
+            LocalTestTransport::new(archive_root).unwrap(),
+            temp.path().join("query-cache"),
+            RemoteCacheLimits::default(),
+        )
+        .unwrap(),
+    );
+    let (supervisor, query_client) = QuerySupervisor::start(Arc::clone(&reader), None);
+    let state = Arc::new(ServiceState {
+        auth_configured: true,
+        market_calendar: None,
+        market_bars: None,
+        query_client,
+        reader,
+        pair_query_available: false,
+    });
+    let app = app_router(state, Some(test_support::auth_config()));
+    (temp, app, supervisor)
+}
+
+async fn send_cache_status_request(app: &axum::Router, token: &str) -> axum::response::Response {
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/market/cache/status")
+        .header("authorization", format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    app.clone().oneshot(request).await.unwrap()
+}
+
+fn assert_no_store(response: &axum::response::Response) {
+    assert!(
+        response
+            .headers()
+            .get_all(axum::http::header::CACHE_CONTROL)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .flat_map(|value| value.split(','))
+            .any(|directive| directive.trim().eq_ignore_ascii_case("no-store")),
+        "cache event responses must be marked no-store"
+    );
 }
 
 async fn send_bars_request(app: &axum::Router, token: &str) -> axum::response::Response {

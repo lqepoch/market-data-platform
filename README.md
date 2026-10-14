@@ -25,7 +25,10 @@ and local documentation.
   `/v1/market/quotes`, `/v1/market/trades`, and `/v1/news` return
   `UNSUPPORTED_PROVIDER_CAPABILITY` until their read paths are integrated. `/v1/market/cache/status`
   describes only the new market cache, independently of the existing verified archive cache.
-  These routes use the same short-lived `market:read` delegation and outer `no-store` policy.
+  `/v1/market/cache/status` also returns at most 128 no-store invalidation summaries filtered to
+  the authenticated principal and operator cache profile. Its process-local event buffer is lost
+  on restart and does not prove market-data coverage or entitlement. These routes use the same
+  short-lived `market:read` delegation and outer `no-store` policy.
 
 - Synthetic replay passes JSONL validation, bounded collection, trade-bar aggregation, Arrow/Parquet
   writes, shared schema fingerprint checks, footer/readback verification, local immutable archive,

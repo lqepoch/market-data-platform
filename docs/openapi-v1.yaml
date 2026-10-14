@@ -418,11 +418,24 @@ paths:
           description: Missing or invalid market delegation
   /v1/market/cache/status:
     get:
-      summary: Discover unified market cache availability without exposing private storage
+      summary: Discover cache availability and the authenticated principal's volatile invalidation events
+      description: >-
+        The event list is bounded to 128 process-local summaries for the verified principal and
+        operator cache profile. Events disappear on restart and report cache-pointer
+        invalidation/readback only; they do not assert market-data coverage, completeness,
+        freshness, or entitlement. The response omits profile hashes, cache fingerprints, rows,
+        and credentials.
       security: [{mdpDelegation: []}]
       responses:
         '200':
-          description: Unified market cache status, separate from the archive cache
+          description: Unified cache status and principal-scoped invalidation events, separate from the archive cache
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketCacheStatus"
         '401':
           description: Missing or invalid market delegation
   /v1/market/quotes:
@@ -472,6 +485,56 @@ components:
         other and from Gateway keys. Each BFF signer receives only its matching MDP key; the MDP
         verifier receives both.
   schemas:
+    MarketCacheStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - cache_status
+        - canonical_market_cache_configured
+        - runtime
+        - coverage_asserted
+        - note
+        - invalidation_events_status
+        - invalidation_events
+        - volatile
+        - restart_lost
+      properties:
+        schema_version: {type: string, const: market-cache-status-v1}
+        cache_status: {type: string, enum: [not_inspected, unavailable]}
+        canonical_market_cache_configured: {type: boolean}
+        runtime:
+          type: [object, "null"]
+          additionalProperties: true
+        note: {type: string}
+        invalidation_events_status: {type: string, enum: [available, unavailable]}
+        invalidation_events:
+          type: array
+          maxItems: 128
+          items:
+            $ref: "#/components/schemas/MarketCacheInvalidationEvent"
+        volatile: {type: boolean, const: true}
+        restart_lost: {type: boolean, const: true}
+        coverage_asserted: {type: boolean, const: false}
+    MarketCacheInvalidationEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - session_instance_id
+        - logical_generation
+        - logical_updated_at_unix_seconds
+        - reread_status
+        - current_provider
+        - current_feed
+        - current_authority
+      properties:
+        session_instance_id: {type: [string, "null"]}
+        logical_generation: {$ref: "#/components/schemas/NullableWireU64"}
+        logical_updated_at_unix_seconds: {$ref: "#/components/schemas/NullableWireU64"}
+        reread_status: {type: string, enum: [reread_verified, reread_unavailable]}
+        current_provider: {type: [string, "null"]}
+        current_feed: {type: [string, "null"]}
+        current_authority: {type: [string, "null"], enum: [authoritative, provisional, null]}
     NewsItemV1:
       description: >-
         Reserved independent read-only news contract. The current /v1/news endpoint returns 501.
@@ -776,3 +839,7 @@ components:
     WireU64:
       type: string
       pattern: "^(0|[1-9][0-9]*)$"
+    NullableWireU64:
+      oneOf:
+        - {$ref: "#/components/schemas/WireU64"}
+        - type: "null"
