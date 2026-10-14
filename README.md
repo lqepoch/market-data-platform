@@ -66,6 +66,17 @@ and local documentation.
   collection `available_at`; it does not backdate availability to the source event time.
 - Realtime watermark completion is a separate mode and is not represented by the historical/synthetic
   EOF path.
+- The separate crate-private `archive::reconciliation` store persists Core Bars V1 raw observations
+  and mapped canonical rows as immutable Parquet versions. Raw provider-local sessions and rows
+  filtered by the trusted calendar mapper remain in the raw object; only request-validated
+  canonical coverage is served from a cache hit. Truncated pages can resume only through an
+  A02-validated provider-local page locator in the private query-bound receipt or a next-group
+  selection. The MDP outer cursor, Gateway delegation, and credentials are never persisted, and
+  replay does not extend the provider cursor's expiry. A new or empty cache root gets a fixed
+  private ownership marker; an unmarked non-empty root is rejected without permission/content
+  changes. The store remains provisional without
+  trusted source-admission evidence and is not wired to existing Drive/S3OSS archive writers. See
+  [the cache reconciliation policy](docs/policies/mdp-cache-reconciliation-v1.md).
 
 ## Public runner commands
 

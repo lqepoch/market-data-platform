@@ -34,19 +34,35 @@ persisted; only their SHA-256 digest can be retained.
 
 The caller derives the pre-fetch key, then supplies the SDK-observation `BarsResponseV1`, the
 adapter's canonical `BarsResponseV1`, and `ProviderPageEvidenceV1` to
-`CacheVersionStoreV1::publish_bars_responses`. The cache preserves exact Core decimal tokens in the
-raw Parquet object, uses Core `ExactDecimal` for canonical normalization and deduplication, and
-validates every provenance/session reference before publish. The compact exact-decimal
-`CanonicalRowV1` view is generated internally for reconciliation. The module does not reconstruct
-row-level provider identity from a response summary or accept caller-supplied artifact paths.
+`CacheVersionStoreV1::publish_bars_responses`. The raw observation response is Core-validated and
+persisted unchanged, including provider-local session IDs and rows later filtered by the trusted
+calendar mapper. The canonical response is validated against the request and key window; its
+trusted sessions, segments, gaps, and completeness facts alone define cache coverage. Each
+canonical row must link to a raw observation by exact instrument, half-open timestamps, provenance,
+and Core `ExactDecimal`-normalized OHLCV; the provider-local session ID is ignored for that link,
+and filtered raw rows remain in the raw Parquet object without entering canonical coverage. The
+cache validates both row/evidence envelopes and repeats the lineage/count checks after bounded
+Parquet readback. The compact exact-decimal `CanonicalRowV1` view is generated internally for
+reconciliation. The module does not reconstruct row-level provider identity from a response summary
+or accept caller-supplied artifact paths.
 
 A cache hit is shaped with
-`read.bars_evidence.to_cached_response(read.bars_rows, BarsCacheStatusV1::Hit)`. The reader rejects
-expired entries and verifies the full receipt before returning. Truncated responses may be retained
-as provisional evidence, but cannot be replayed because provider cursor contents are not stored. Map
-`NotFound` to a cache miss; treat `Unsupported`, `UnknownOutcome`, `Readback`, and `Conflict` as
-unavailable/fail-closed cache state, not as authorization or coverage proof. A caller may fetch fresh
-data after a cache error only if its independent provider route and entitlement checks pass.
+`read.bars_evidence.to_cached_response(read.bars_rows, BarsCacheStatusV1::Hit, continuation_cursor)`.
+The read verifies the full version receipt, row Parquet, coverage, and lineage before returning. A
+truncated page can be replayed only when the provider adapter can rewrap the next-group selection or
+the private receipt contains its validated provider-local SDK cursor. Only that typed provider-page
+locator may be retained; the MDP outer cursor, caller headers, Gateway delegation, and credentials
+are never stored. The receipt is `0600` inside the cache's `0700` tree, and binds the cursor hash,
+provider kind, actual provider/feed, entitlement realm, and exact cache-key fingerprint. Its expiry
+is bounded to the provider cursor's original lifetime (at most 30 minutes); the adapter checks
+expiry and issues a fresh outer cursor for the current `as_of` without extending the locator's
+lifetime. Cursor receipts are omitted from `Debug` output. A truncated page without a usable
+provider receipt or next-group continuation is not returned as a cache hit. Map `NotFound` to a
+cache miss. A truncated page with a missing or expired cursor receipt returns `Expired` and must be
+treated as a miss so the provider page is fetched again; never advance to the next query group from
+that page. Treat `Unsupported`, `UnknownOutcome`, `Readback`, and `Conflict` as unavailable/
+fail-closed cache state, not as authorization or coverage proof. A caller may fetch fresh data after
+a cache error only if its independent provider route and entitlement checks pass.
 
 ## Authority and reconciliation
 
@@ -72,7 +88,11 @@ authoritative current version.
 
 ## Durable publication and recovery
 
-The store root is local and private (`0700` directories, `0600` files). For each key it holds a
+The store root is local and private (`0700` directories, `0600` files). A new root or an existing
+empty directory is claimed with the fixed `.mdp-cache-owner` marker using create-only semantics.
+An unmarked non-empty directory is rejected before changing permissions or contents; the store
+does not migrate another cache or archive root. Reopening requires the exact marker and private
+owner-only modes. For each key it holds a
 mutable `current.json`, a bounded `versions/<version-id>/` directory with raw and canonical Parquet,
 normalized comparison rows, and a version receipt, plus compact rejected-candidate audit entries.
 Version receipts bind the exact key, coverage, artifact sizes/hashes, Core schema fingerprints,

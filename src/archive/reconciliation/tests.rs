@@ -108,6 +108,187 @@ fn duplicate_identity_with_conflicting_values_is_rejected() {
 }
 
 #[test]
+fn provider_cursor_receipt_is_query_bound_expiring_and_redacted() {
+    let cache_key = key("alpaca", "sip", EntitlementState::Authorized);
+    let secret_page_locator = "synthetic-alpaca-page-locator";
+    let input = ProviderCursorCacheInputV1::new(
+        ProviderCursorKindV1::Alpaca,
+        serde_json::to_string(secret_page_locator).unwrap(),
+        1_800_000_120,
+    )
+    .unwrap();
+    let receipt =
+        ValidatedProviderCursorReceiptV1::bind_to_key(input, &cache_key, 1_800_000_000).unwrap();
+    assert_eq!(receipt.kind(), ProviderCursorKindV1::Alpaca);
+    assert_eq!(receipt.payload_json(), "\"synthetic-alpaca-page-locator\"");
+    assert_eq!(receipt.expires_at_unix_seconds(), 1_800_000_120);
+    receipt.validate_for_cache_key(&cache_key).unwrap();
+    assert!(!format!("{receipt:?}").contains(secret_page_locator));
+
+    let mut different_realm = cache_key.clone();
+    different_realm.entitlement_scope_sha256 = "7".repeat(64);
+    assert!(receipt.validate_for_cache_key(&different_realm).is_err());
+    assert!(
+        ProviderCursorCacheInputV1::new(
+            ProviderCursorKindV1::Futu,
+            serde_json::to_string("not-a-valid-cursor").unwrap(),
+            1_800_000_120,
+        )
+        .is_err()
+    );
+    let expired = ProviderCursorCacheInputV1::new(
+        ProviderCursorKindV1::Alpaca,
+        "\"expired-locator\"".to_owned(),
+        1_800_000_000,
+    )
+    .unwrap();
+    assert!(matches!(
+        ValidatedProviderCursorReceiptV1::bind_to_key(expired, &cache_key, 1_800_000_000),
+        Err(CacheReconciliationError::Expired)
+    ));
+}
+
+#[test]
+fn cache_root_marker_initializes_an_empty_directory_and_allows_restart() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("cache-root");
+    std::fs::create_dir(&root).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let first = CacheVersionStoreV1::new(root.clone(), CacheLimitsV1::default()).unwrap();
+    drop(first);
+    assert_eq!(
+        std::fs::read(root.join(".mdp-cache-owner")).unwrap(),
+        b"lqepoch.mdp.cache-root.v1\n"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(root.join(".mdp-cache-owner"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+
+    let _second = CacheVersionStoreV1::new(root.clone(), CacheLimitsV1::default()).unwrap();
+    assert!(root.join("keys").is_dir());
+    assert!(root.join("locks").is_dir());
+}
+
+#[test]
+fn cache_root_rejects_foreign_nonempty_directory_without_mutating_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("foreign-cache");
+    std::fs::create_dir(&root).unwrap();
+    let foreign_file = root.join("existing-data");
+    std::fs::write(&foreign_file, b"foreign-owned-data").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let before_bytes = std::fs::read(&foreign_file).unwrap();
+    #[cfg(unix)]
+    let before_mode = {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(&root).unwrap().permissions().mode() & 0o777
+    };
+
+    assert!(matches!(
+        CacheVersionStoreV1::new(root.clone(), CacheLimitsV1::default()),
+        Err(CacheReconciliationError::ForeignNonEmptyRoot)
+    ));
+
+    assert_eq!(std::fs::read(&foreign_file).unwrap(), before_bytes);
+    assert!(!root.join(".mdp-cache-owner").exists());
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+            before_mode
+        );
+    }
+}
+
+#[test]
+fn cache_root_rejects_invalid_ownership_marker_without_mutating_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("invalid-owned-cache");
+    std::fs::create_dir(&root).unwrap();
+    let marker = root.join(".mdp-cache-owner");
+    std::fs::write(&marker, b"foreign-marker\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let before_marker = std::fs::read(&marker).unwrap();
+    #[cfg(unix)]
+    let before_mode = {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(&root).unwrap().permissions().mode() & 0o777
+    };
+
+    assert!(matches!(
+        CacheVersionStoreV1::new(root.clone(), CacheLimitsV1::default()),
+        Err(CacheReconciliationError::ForeignNonEmptyRoot)
+    ));
+
+    assert_eq!(std::fs::read(&marker).unwrap(), before_marker);
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+            before_mode
+        );
+    }
+}
+
+#[test]
+fn concurrent_cache_root_initialization_uses_one_valid_marker() {
+    use std::sync::{Arc, Barrier};
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("concurrent-cache");
+    let barrier = Arc::new(Barrier::new(4));
+    let workers = (0..4)
+        .map(|_| {
+            let root = root.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                CacheVersionStoreV1::new(root, CacheLimitsV1::default()).is_ok()
+            })
+        })
+        .collect::<Vec<_>>();
+    let results = workers
+        .into_iter()
+        .map(|worker| worker.join().unwrap())
+        .collect::<Vec<_>>();
+    assert!(results.into_iter().all(|success| success));
+    assert_eq!(
+        std::fs::read(root.join(".mdp-cache-owner")).unwrap(),
+        b"lqepoch.mdp.cache-root.v1\n"
+    );
+}
+
+#[test]
 fn same_feed_policy_uses_exact_decimal_tolerance_and_rejects_material_changes() {
     let policy = SameFeedTolerancePolicyV1 {
         max_abs_delta_by_field: BTreeMap::from([("close".to_owned(), "0.01".to_owned())]),
@@ -382,7 +563,7 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
             adjustment: AdjustmentV1::Unadjusted,
             provider_mode: BarsProviderModeV1::AlpacaOnly,
             allow_daily_downgrade: false,
-            limit: 1,
+            limit: 1000,
             cursor: None,
         }
     }
@@ -465,6 +646,7 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
             last_source_sequence: None,
             sequence_gap_count: None,
             truncated: false,
+            provider_cursor_cache_input: None,
         }
     }
 
@@ -497,6 +679,29 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
         test_page_evidence(),
     )
     .unwrap();
+    let mut raw_provider_page = test_response("600.2500");
+    raw_provider_page.rows[0].session_instance_id = "provider-local".to_owned();
+    raw_provider_page.segments[0].session_instance_id = "provider-local".to_owned();
+    let mut filtered_conflict = raw_provider_page.rows[0].clone();
+    filtered_conflict.open = DecimalString::new("600.31").unwrap();
+    filtered_conflict.high = DecimalString::new("600.31").unwrap();
+    filtered_conflict.low = DecimalString::new("600.31").unwrap();
+    filtered_conflict.close = DecimalString::new("600.31").unwrap();
+    raw_provider_page.rows.push(filtered_conflict);
+    let mapped_page = test_response("600.25");
+    let mapped_snapshot = CacheSnapshotV1::from_bars_responses(
+        &request,
+        &source_scope,
+        raw_provider_page,
+        mapped_page,
+        test_page_evidence(),
+    )
+    .unwrap();
+    assert_eq!(mapped_snapshot.raw_response.rows.len(), 2);
+    assert_eq!(mapped_snapshot.response.rows.len(), 1);
+    assert_eq!(mapped_snapshot.coverage.segments[0].raw_row_count, 2);
+    assert_eq!(mapped_snapshot.coverage.segments[0].canonical_row_count, 1);
+
     let mut wrong_asset_class = valid_snapshot.response.clone();
     wrong_asset_class.rows[0].asset_class = AssetClassV1::Stock;
     let wrong_asset_evidence =
@@ -536,7 +741,11 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
     );
     assert!(
         continuation_evidence
-            .to_cached_response(continuation_response.rows.clone(), BarsCacheStatusV1::Hit,)
+            .to_cached_response(
+                continuation_response.rows.clone(),
+                BarsCacheStatusV1::Hit,
+                None,
+            )
             .is_err()
     );
 
@@ -545,8 +754,8 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
     let source_scope = test_source_scope();
     let store =
         CacheVersionStoreV1::new(temp.path().join("cache"), CacheLimitsV1::default()).unwrap();
-    let raw_first_response = test_response("600.2500");
-    let canonical_first_response = test_response("600.25");
+    let raw_first_response = mapped_snapshot.raw_response.clone();
+    let canonical_first_response = mapped_snapshot.response.clone();
     let key = CacheKeyV1::from_request(&request, &source_scope).unwrap();
     let tolerance = SameFeedTolerancePolicyV1 {
         max_abs_delta_by_field: BTreeMap::from([("close".to_owned(), "0.01".to_owned())]),
@@ -583,16 +792,112 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
     assert_eq!(first.authority, CacheAuthorityV1::Provisional);
     let first_id = first.published_version_id;
     let read = store.load_current(&key, 1_800_000_001).unwrap();
+    assert_eq!(read.raw_bars_rows.len(), 2);
+    assert_eq!(read.raw_bars_rows[0].session_instance_id, "provider-local");
     assert_eq!(read.raw_bars_rows[0].close.as_str(), "600.2500");
     assert_eq!(read.bars_rows[0].close.as_str(), "600.25");
     assert_eq!(read.current.version_id, first_id);
     assert_eq!(
         read.bars_evidence
-            .to_cached_response(read.bars_rows.clone(), BarsCacheStatusV1::Hit)
+            .to_cached_response(read.bars_rows.clone(), BarsCacheStatusV1::Hit, None)
             .unwrap()
             .cache_status,
         BarsCacheStatusV1::Hit
     );
+
+    let mut page_request = request.clone();
+    page_request.cursor = Some("provider-page-selection-digest".to_owned());
+    let mut raw_page = test_response("600.25");
+    raw_page.coverage_status = BarsCoverageStatusV1::Partial;
+    raw_page.segments[0].coverage_status = BarsCoverageStatusV1::Partial;
+    raw_page.continuation_cursor = Some("outer-mdp-page-cursor".to_owned());
+    raw_page.truncated = true;
+    let mut canonical_page = raw_page.clone();
+    let provider_locator = "synthetic-provider-page-locator";
+    let page_evidence = ProviderPageEvidenceV1 {
+        source_observation_sha256: None,
+        response_observed_at_utc: None,
+        pages_seen: Some(1),
+        pages_exhausted: Some(false),
+        first_source_sequence: None,
+        last_source_sequence: None,
+        sequence_gap_count: None,
+        truncated: true,
+        provider_cursor_cache_input: Some(
+            ProviderCursorCacheInputV1::new(
+                ProviderCursorKindV1::Alpaca,
+                serde_json::to_string(provider_locator).unwrap(),
+                1_800_000_200,
+            )
+            .unwrap(),
+        ),
+    };
+    canonical_page.cache_status = BarsCacheStatusV1::Miss;
+    let page_publish = store
+        .publish_bars_responses(
+            &page_request,
+            &source_scope,
+            raw_page,
+            canonical_page,
+            page_evidence,
+            1_800_000_100,
+            &tolerance,
+        )
+        .unwrap();
+    assert_eq!(page_publish.authority, CacheAuthorityV1::Provisional);
+    let page_key = CacheKeyV1::from_request(&page_request, &source_scope).unwrap();
+    let page_read = store.load_current(&page_key, 1_800_000_101).unwrap();
+    let cursor_receipt = page_read.provider_cursor_receipt.as_ref().unwrap();
+    assert_eq!(cursor_receipt.expires_at_unix_seconds(), 1_800_000_200);
+    cursor_receipt.validate_for_cache_key(&page_key).unwrap();
+    assert!(!format!("{cursor_receipt:?}").contains(provider_locator));
+    let cached_page = page_read
+        .bars_evidence
+        .to_cached_response(
+            page_read.bars_rows.clone(),
+            BarsCacheStatusV1::Hit,
+            Some("rewrapped-current-selection-cursor".to_owned()),
+        )
+        .unwrap();
+    assert!(cached_page.truncated);
+    assert_eq!(
+        cached_page.continuation_cursor.as_deref(),
+        Some("rewrapped-current-selection-cursor")
+    );
+    assert!(matches!(
+        store.load_current(&page_key, 1_800_000_200),
+        Err(CacheReconciliationError::Expired)
+    ));
+
+    let mut no_cursor_request = request.clone();
+    no_cursor_request.cursor = Some("provider-page-without-replay-cursor".to_owned());
+    let mut no_cursor_page = test_response("600.25");
+    no_cursor_page.coverage_status = BarsCoverageStatusV1::Partial;
+    no_cursor_page.segments[0].coverage_status = BarsCoverageStatusV1::Partial;
+    no_cursor_page.continuation_cursor = Some("opaque-provider-page-token".to_owned());
+    no_cursor_page.truncated = true;
+    let no_cursor_evidence = ProviderPageEvidenceV1 {
+        pages_seen: Some(1),
+        pages_exhausted: Some(false),
+        truncated: true,
+        ..ProviderPageEvidenceV1::default()
+    };
+    store
+        .publish_bars_responses(
+            &no_cursor_request,
+            &source_scope,
+            no_cursor_page.clone(),
+            no_cursor_page,
+            no_cursor_evidence,
+            1_800_000_100,
+            &tolerance,
+        )
+        .unwrap();
+    let no_cursor_key = CacheKeyV1::from_request(&no_cursor_request, &source_scope).unwrap();
+    assert!(matches!(
+        store.load_current(&no_cursor_key, 1_800_000_101),
+        Err(CacheReconciliationError::Expired)
+    ));
 
     let second = store
         .publish_synthetic_verified_bars_responses(

@@ -43,8 +43,13 @@ The nine-repository map is a [governance candidate in Draft PR #20](https://gith
   requested/effective resolution, adjustment, asset class, symbol/session/window/calendar,
   request-cursor digest, and Core-owned schema fingerprint. Keep response/coverage hashes in
   immutable receipts, never in
-  lookup keys; never store credentials or raw cursors. One cached snapshot must represent one actual
-  provider/feed. Persist raw and canonical Parquet with immutable
+  lookup keys; never store credentials or the MDP outer cursor. Only an A02-validated provider-local
+  page cursor may be persisted in the private immutable receipt, with provider/feed, entitlement
+  realm, cache-key hash, payload hash, and expiry binding; keep its value out of logs and Debug.
+  Initialize the cache root only when it is new or empty, using its fixed private ownership marker;
+  reject an unmarked non-empty root without changing permissions or contents. Do not migrate or
+  point this store at the existing QQQ Drive or Stock S3OSS data roots.
+  One cached snapshot must represent one actual provider/feed. Persist raw and canonical Parquet with immutable
   version receipts, verify both through the existing bounded Linux worker, and atomically update
   the local current manifest only after readback. Incomplete, truncated, gapped, unexhausted, Futu,
   or binary-float input remains provisional; historical bars may omit stream sequence evidence,

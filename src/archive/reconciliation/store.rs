@@ -18,16 +18,19 @@ use crate::parquet_store::ParquetVerification;
 
 use super::{
     BarsCacheEvidenceV1, CacheKeyV1, CacheQuerySourceScopeV1, CacheReconciliationError,
-    CanonicalRowV1, CoverageEvidenceV1, ProviderPageEvidenceV1, Result, SameFeedComparisonV1,
-    SameFeedTolerancePolicyV1, canonical_rows_from_bars, canonical_rows_sha256,
-    compare_same_feed_authoritative, hex_digest, normalize_and_deduplicate_rows,
-    normalize_bars_response, source_evidence_sha256, valid_sha256,
+    CanonicalRowV1, CoverageEvidenceV1, ProviderCursorCacheInputV1, ProviderPageEvidenceV1, Result,
+    SameFeedComparisonV1, SameFeedTolerancePolicyV1, ValidatedProviderCursorReceiptV1,
+    canonical_rows_from_bars, canonical_rows_sha256, compare_same_feed_authoritative, hex_digest,
+    normalize_and_deduplicate_rows, normalize_bars_response, source_evidence_sha256, valid_sha256,
+    validate_canonical_rows_linked_to_raw, validate_coverage_rows,
 };
 
 const ROOT_DIR_MODE: u32 = 0o700;
 const FILE_MODE: u32 = 0o600;
+const ROOT_OWNERSHIP_MARKER_FILE: &str = ".mdp-cache-owner";
+const ROOT_OWNERSHIP_MARKER: &[u8] = b"lqepoch.mdp.cache-root.v1\n";
 const MAX_TREE_ENTRIES: usize = 100_000;
-const RECEIPT_DOMAIN: &[u8] = b"lqepoch.mdp.cache-version-receipt.v3\0";
+const RECEIPT_DOMAIN: &[u8] = b"lqepoch.mdp.cache-version-receipt.v4\0";
 const CURRENT_DOMAIN: &[u8] = b"lqepoch.mdp.cache-current-manifest.v1\0";
 const REJECTION_DOMAIN: &[u8] = b"lqepoch.mdp.cache-rejected-candidate.v1\0";
 const BARS_ROWS_DOMAIN: &[u8] = b"lqepoch.mdp.cache-bars-v1-rows.v1\0";
@@ -105,6 +108,7 @@ pub(crate) struct CacheSnapshotV1 {
     pub coverage: CoverageEvidenceV1,
     pub raw_response: BarsResponseV1,
     pub response: BarsResponseV1,
+    provider_cursor_cache_input: Option<ProviderCursorCacheInputV1>,
     raw_bars_evidence: BarsCacheEvidenceV1,
     bars_evidence: BarsCacheEvidenceV1,
 }
@@ -132,21 +136,32 @@ impl CacheSnapshotV1 {
         canonical_response: BarsResponseV1,
         page_evidence: ProviderPageEvidenceV1,
     ) -> Result<Self> {
-        request
-            .validate_response(&raw_response)
+        raw_response
+            .validate()
             .map_err(|_| CacheReconciliationError::InvalidInput)?;
         request
             .validate_response(&canonical_response)
             .map_err(|_| CacheReconciliationError::InvalidInput)?;
-        let raw_normalized = normalize_bars_response(&raw_response)?;
-        let mut raw_response = raw_response;
-        let mut response = normalize_bars_response(&canonical_response)?;
-        if raw_response.rows.is_empty()
-            || response.rows.is_empty()
-            || raw_normalized.rows != response.rows
+        if raw_response.requested_resolution != request.resolution
+            || raw_response.adjustment != request.adjustment
+            || raw_response.effective_resolution != source_scope.effective_resolution
+            || raw_response.rows.len() > usize::from(request.limit)
+            || raw_response.rows.iter().any(|row| {
+                row.symbol != request.symbol
+                    || row.asset_class != request.asset_class
+                    || row.adjustment != request.adjustment
+                    || row.resolution != source_scope.effective_resolution
+            })
         {
             return Err(CacheReconciliationError::InvalidInput);
         }
+        let provider_cursor_cache_input = page_evidence.provider_cursor_cache_input.clone();
+        let raw_response = raw_response;
+        let mut response = normalize_bars_response(&canonical_response)?;
+        if raw_response.rows.is_empty() || response.rows.is_empty() {
+            return Err(CacheReconciliationError::InvalidInput);
+        }
+        validate_canonical_rows_linked_to_raw(&raw_response.rows, &response.rows)?;
         let key = CacheKeyV1::from_request(request, source_scope)?;
         let mut coverage = CoverageEvidenceV1::from_bars_responses(
             source_scope,
@@ -155,7 +170,6 @@ impl CacheSnapshotV1 {
             &page_evidence,
         )?;
         if !coverage.is_complete_for_key(&key) {
-            downgrade_complete_coverage(&mut raw_response);
             downgrade_complete_coverage(&mut response);
             for segment in &mut coverage.segments {
                 if segment.coverage_status == market_contracts::BarsCoverageStatusV1::Complete {
@@ -164,8 +178,9 @@ impl CacheSnapshotV1 {
             }
         }
         coverage.validate_shape(&key)?;
+        validate_coverage_rows(&coverage, &raw_response.rows, &response.rows)?;
         let raw_evidence = BarsCacheEvidenceV1::from_response(request, &raw_response)?;
-        raw_evidence.validate_against(&key, &coverage, &raw_response.rows)?;
+        raw_evidence.validate_raw_against(&key, &raw_response.rows)?;
         let evidence = BarsCacheEvidenceV1::from_response(request, &response)?;
         evidence.validate_against(&key, &coverage, &response.rows)?;
         Ok(Self {
@@ -173,6 +188,7 @@ impl CacheSnapshotV1 {
             coverage,
             raw_response,
             response,
+            provider_cursor_cache_input,
             raw_bars_evidence: raw_evidence,
             bars_evidence: evidence,
         })
@@ -256,6 +272,7 @@ pub(crate) struct CacheReadResultV1 {
     pub coverage_evidence_sha256: String,
     pub raw_bars_evidence: BarsCacheEvidenceV1,
     pub bars_evidence: BarsCacheEvidenceV1,
+    pub provider_cursor_receipt: Option<ValidatedProviderCursorReceiptV1>,
     pub raw_parquet_path: PathBuf,
     pub canonical_parquet_path: PathBuf,
     pub raw_sha256: String,
@@ -306,12 +323,14 @@ struct CacheVersionReceiptV1 {
     canonical: ArtifactReceiptV1,
     canonical_rows_sha256: String,
     canonical_rows_count: u64,
+    raw_bars_rows_count: u64,
     raw_bars_rows_sha256: String,
     bars_rows_sha256: String,
     raw_source_evidence_sha256: String,
     source_evidence_sha256: String,
     coverage_evidence_sha256: String,
     coverage: CoverageEvidenceV1,
+    provider_cursor_receipt: Option<ValidatedProviderCursorReceiptV1>,
     raw_bars_evidence: BarsCacheEvidenceV1,
     bars_evidence: BarsCacheEvidenceV1,
     same_feed_comparison: Option<SameFeedComparisonV1>,
@@ -369,9 +388,7 @@ impl CacheVersionStoreV1 {
     pub(crate) fn new(root: impl Into<PathBuf>, limits: CacheLimitsV1) -> Result<Self> {
         limits.validate()?;
         let root = root.into();
-        fs::create_dir_all(&root)?;
-        require_plain_dir(&root)?;
-        set_private_dir(&root)?;
+        initialize_owned_cache_root(&root)?;
         let root = fs::canonicalize(root)?;
         create_private_dir(&root.join("keys"))?;
         create_private_dir(&root.join("locks"))?;
@@ -531,8 +548,20 @@ impl CacheVersionStoreV1 {
         let raw_bars_evidence = snapshot.raw_bars_evidence.clone();
         let bars_rows = snapshot.response.rows.clone();
         let bars_evidence = snapshot.bars_evidence.clone();
-        raw_bars_evidence.validate_against(&snapshot.key, &snapshot.coverage, &raw_bars_rows)?;
+        raw_bars_evidence.validate_raw_against(&snapshot.key, &raw_bars_rows)?;
         bars_evidence.validate_against(&snapshot.key, &snapshot.coverage, &bars_rows)?;
+        validate_canonical_rows_linked_to_raw(&raw_bars_rows, &bars_rows)?;
+        let provider_cursor_receipt = match snapshot.provider_cursor_cache_input.clone() {
+            Some(input) if snapshot.coverage.truncated => {
+                Some(ValidatedProviderCursorReceiptV1::bind_to_key(
+                    input,
+                    &snapshot.key,
+                    now_unix_seconds,
+                )?)
+            }
+            Some(_) => return Err(CacheReconciliationError::InvalidInput),
+            None => None,
+        };
         let rows = snapshot.rows_for_comparison()?;
         if rows.len() > self.limits.max_rows {
             return Err(CacheReconciliationError::LimitExceeded);
@@ -550,7 +579,7 @@ impl CacheVersionStoreV1 {
         let key_fingerprint = snapshot.key.fingerprint()?;
         let coverage = snapshot.coverage;
         let complete = coverage.is_complete_for_key(&snapshot.key);
-        let (expected_raw_rows, expected_canonical_rows) = coverage_row_counts(&coverage)?;
+        let (_, expected_canonical_rows) = coverage_row_counts(&coverage)?;
 
         let key_dir = self.key_dir(&key_fingerprint)?;
         create_private_dir(&key_dir.join("versions"))?;
@@ -602,7 +631,7 @@ impl CacheVersionStoreV1 {
             || canonical_verified.footer_rows != rows.len() as u64
             || canonical_verified.decoded_rows != rows.len() as u64
             || canonical_verified.footer_rows != expected_canonical_rows
-            || raw_verified.footer_rows != expected_raw_rows
+            || raw_verified.footer_rows != raw_bars_rows.len() as u64
             || raw_verified.decoded_rows != raw_verified.footer_rows
         {
             return Err(CacheReconciliationError::Readback);
@@ -613,6 +642,7 @@ impl CacheVersionStoreV1 {
             || canonical_readback != bars_rows
             || normalize_and_deduplicate_rows(canonical_rows_from_bars(&canonical_readback)?)?
                 != rows
+            || validate_canonical_rows_linked_to_raw(&raw_readback, &canonical_readback).is_err()
         {
             return Err(CacheReconciliationError::Readback);
         }
@@ -679,7 +709,7 @@ impl CacheVersionStoreV1 {
             .checked_add(self.limits.ttl.as_secs())
             .ok_or(CacheReconciliationError::LimitExceeded)?;
         let receipt = CacheVersionReceiptV1 {
-            receipt_version: 3,
+            receipt_version: 4,
             key: snapshot.key.clone(),
             key_fingerprint_sha256: key_fingerprint.clone(),
             version_id: version_id.clone(),
@@ -693,12 +723,14 @@ impl CacheVersionStoreV1 {
             canonical: artifact_receipt(&canonical_verified, canonical_sha.clone()),
             canonical_rows_sha256: rows_sha.clone(),
             canonical_rows_count: rows.len() as u64,
+            raw_bars_rows_count: raw_bars_rows.len() as u64,
             raw_bars_rows_sha256: raw_bars_rows_sha.clone(),
             bars_rows_sha256: bars_rows_sha.clone(),
             raw_source_evidence_sha256: raw_source_evidence_sha.clone(),
             source_evidence_sha256: source_evidence_sha.clone(),
             coverage_evidence_sha256: coverage_evidence_sha.clone(),
             coverage,
+            provider_cursor_receipt,
             raw_bars_evidence,
             bars_evidence,
             same_feed_comparison: comparison,
@@ -1056,6 +1088,14 @@ impl CacheVersionStoreV1 {
         {
             return Err(CacheReconciliationError::Expired);
         }
+        if result.coverage.truncated
+            && result
+                .provider_cursor_receipt
+                .as_ref()
+                .is_none_or(|cursor| cursor.expires_at_unix_seconds <= now_unix_seconds)
+        {
+            return Err(CacheReconciliationError::Expired);
+        }
         Ok(Some(result))
     }
 
@@ -1074,7 +1114,20 @@ impl CacheVersionStoreV1 {
             .join(version_id);
         require_plain_dir(&version_dir)?;
         let (receipt, receipt_sha) = self.read_version_receipt(key_fingerprint, version_id)?;
-        if receipt.receipt_version != 3
+        let cursor_receipt_is_valid =
+            receipt
+                .provider_cursor_receipt
+                .as_ref()
+                .is_none_or(|cursor| {
+                    cursor.validate_for_cache_key(key).is_ok()
+                        && cursor.expires_at_unix_seconds > receipt.created_at_unix_seconds
+                        && receipt
+                            .created_at_unix_seconds
+                            .checked_add(super::MAX_PROVIDER_CURSOR_TTL_SECONDS)
+                            .is_some_and(|maximum| cursor.expires_at_unix_seconds <= maximum)
+                        && receipt.coverage.truncated
+                });
+        if receipt.receipt_version != 4
             || receipt.key != *key
             || receipt.key_fingerprint_sha256 != key_fingerprint
             || receipt.version_id != version_id
@@ -1091,6 +1144,7 @@ impl CacheVersionStoreV1 {
             || receipt.raw.schema_fingerprint_sha256 != key.schema_fingerprint_sha256
             || receipt.expires_at_unix_seconds <= receipt.created_at_unix_seconds
             || receipt.coverage.validate_shape(key).is_err()
+            || !cursor_receipt_is_valid
         {
             return Err(CacheReconciliationError::UnknownOutcome);
         }
@@ -1112,7 +1166,8 @@ impl CacheVersionStoreV1 {
         validate_source_facts(key, &raw_verified)?;
         validate_source_facts(key, &canonical_verified)?;
         let (raw_segment_count, canonical_segment_count) = coverage_row_counts(&receipt.coverage)?;
-        if raw_verified.footer_rows != raw_segment_count
+        if raw_verified.footer_rows != receipt.raw_bars_rows_count
+            || raw_segment_count > raw_verified.footer_rows
             || canonical_verified.footer_rows != receipt.canonical_rows_count
             || canonical_verified.footer_rows != canonical_segment_count
             || raw_verified.decoded_rows != raw_verified.footer_rows
@@ -1144,10 +1199,10 @@ impl CacheVersionStoreV1 {
                 .is_err()
             || receipt
                 .raw_bars_evidence
-                .validate_against(key, &receipt.coverage, &raw_bars_rows)
+                .validate_raw_against(key, &raw_bars_rows)
                 .is_err()
-            || normalize_and_deduplicate_rows(canonical_rows_from_bars(&raw_bars_rows)?)?
-                != normalized
+            || validate_coverage_rows(&receipt.coverage, &raw_bars_rows, &bars_rows).is_err()
+            || validate_canonical_rows_linked_to_raw(&raw_bars_rows, &bars_rows).is_err()
             || derive_response_authority(
                 receipt.authority_basis,
                 key,
@@ -1171,6 +1226,7 @@ impl CacheVersionStoreV1 {
             coverage_evidence_sha256: receipt.coverage_evidence_sha256,
             raw_bars_evidence: receipt.raw_bars_evidence,
             bars_evidence: receipt.bars_evidence,
+            provider_cursor_receipt: receipt.provider_cursor_receipt,
             raw_parquet_path: raw_path,
             canonical_parquet_path: canonical_path,
             raw_sha256: receipt.raw.sha256,
@@ -1725,6 +1781,133 @@ fn create_private_dir(path: &Path) -> Result<()> {
     fs::create_dir_all(path)?;
     require_plain_dir(path)?;
     set_private_dir(path)?;
+    Ok(())
+}
+
+/// Claim a new or empty cache root exactly once. Existing non-empty directories are never
+/// chmodded or populated unless their private ownership marker already validates.
+fn initialize_owned_cache_root(path: &Path) -> Result<()> {
+    let existed = match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if !metadata.file_type().is_dir() {
+                return Err(CacheReconciliationError::ForeignNonEmptyRoot);
+            }
+            true
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir_all(path)?;
+            false
+        }
+        Err(error) => return Err(error.into()),
+    };
+
+    let marker_path = path.join(ROOT_OWNERSHIP_MARKER_FILE);
+    if existed {
+        match fs::symlink_metadata(&marker_path) {
+            Ok(_) => return validate_owned_cache_root_after_concurrent_init(path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        let mut entries = fs::read_dir(path)?;
+        if entries.next().transpose()?.is_some() {
+            return Err(CacheReconciliationError::ForeignNonEmptyRoot);
+        }
+    }
+
+    require_current_user_cache_root(path)?;
+    set_private_dir(path)?;
+    match write_new_synced(&marker_path, ROOT_OWNERSHIP_MARKER) {
+        Ok(()) => {
+            sync_directory(path)?;
+            validate_owned_cache_root(path)
+        }
+        Err(CacheReconciliationError::Io(error))
+            if error.kind() == std::io::ErrorKind::AlreadyExists =>
+        {
+            // Another initializer won the O_EXCL race. Reuse only its exact valid marker.
+            validate_owned_cache_root_after_concurrent_init(path)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn require_current_user_cache_root(path: &Path) -> Result<()> {
+    require_plain_dir(path).map_err(|_| CacheReconciliationError::ForeignNonEmptyRoot)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if fs::symlink_metadata(path)?.uid() != rustix::process::geteuid().as_raw() {
+            return Err(CacheReconciliationError::ForeignNonEmptyRoot);
+        }
+    }
+    Ok(())
+}
+
+fn validate_owned_cache_root_after_concurrent_init(path: &Path) -> Result<()> {
+    for attempt in 0..50 {
+        match validate_owned_cache_root(path) {
+            Ok(()) => return Ok(()),
+            Err(CacheReconciliationError::ForeignNonEmptyRoot) => {
+                let marker_path = path.join(ROOT_OWNERSHIP_MARKER_FILE);
+                let marker_is_still_being_written =
+                    fs::symlink_metadata(&marker_path).is_ok_and(|metadata| {
+                        metadata.file_type().is_file()
+                            && metadata.len() < ROOT_OWNERSHIP_MARKER.len() as u64
+                    });
+                if !marker_is_still_being_written || attempt == 49 {
+                    return Err(CacheReconciliationError::ForeignNonEmptyRoot);
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(CacheReconciliationError::ForeignNonEmptyRoot)
+}
+
+fn validate_owned_cache_root(path: &Path) -> Result<()> {
+    require_plain_dir(path).map_err(|_| CacheReconciliationError::ForeignNonEmptyRoot)?;
+    let marker_path = path.join(ROOT_OWNERSHIP_MARKER_FILE);
+    let path_metadata = fs::symlink_metadata(&marker_path)
+        .map_err(|_| CacheReconciliationError::ForeignNonEmptyRoot)?;
+    if !path_metadata.file_type().is_file()
+        || path_metadata.len() != ROOT_OWNERSHIP_MARKER.len() as u64
+    {
+        return Err(CacheReconciliationError::ForeignNonEmptyRoot);
+    }
+    let marker = open_read_nofollow(&marker_path)
+        .map_err(|_| CacheReconciliationError::ForeignNonEmptyRoot)?;
+    let opened_metadata = marker
+        .metadata()
+        .map_err(|_| CacheReconciliationError::ForeignNonEmptyRoot)?;
+    if !opened_metadata.file_type().is_file()
+        || opened_metadata.len() != ROOT_OWNERSHIP_MARKER.len() as u64
+    {
+        return Err(CacheReconciliationError::ForeignNonEmptyRoot);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let root_metadata = fs::symlink_metadata(path)?;
+        if root_metadata.uid() != rustix::process::geteuid().as_raw()
+            || root_metadata.permissions().mode() & 0o777 != ROOT_DIR_MODE
+            || opened_metadata.dev() != path_metadata.dev()
+            || opened_metadata.ino() != path_metadata.ino()
+            || opened_metadata.uid() != rustix::process::geteuid().as_raw()
+            || opened_metadata.permissions().mode() & 0o777 != FILE_MODE
+            || opened_metadata.nlink() != 1
+        {
+            return Err(CacheReconciliationError::ForeignNonEmptyRoot);
+        }
+    }
+    let mut bytes = Vec::with_capacity(ROOT_OWNERSHIP_MARKER.len());
+    marker
+        .take(ROOT_OWNERSHIP_MARKER.len() as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| CacheReconciliationError::ForeignNonEmptyRoot)?;
+    if bytes != ROOT_OWNERSHIP_MARKER {
+        return Err(CacheReconciliationError::ForeignNonEmptyRoot);
+    }
     Ok(())
 }
 

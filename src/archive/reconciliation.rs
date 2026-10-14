@@ -5,7 +5,10 @@
 //! and immutable local version publication. It does not connect to providers or publish remotely.
 #![allow(dead_code)] // The HTTP adapter is intentionally owned by the integration branch.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+};
 
 use exact_decimal::ExactDecimal;
 use market_contracts::{
@@ -38,6 +41,8 @@ const MAX_FIELD_NAME_BYTES: usize = 128;
 const MAX_FIELD_VALUE_BYTES: usize = 4096;
 const MAX_RECONCILIATION_ROWS: usize = 1_000_000;
 const MAX_SOURCE_SEGMENTS: usize = 4096;
+const MAX_PROVIDER_CURSOR_JSON_BYTES: usize = 2048;
+const MAX_PROVIDER_CURSOR_TTL_SECONDS: u64 = 30 * 60;
 
 #[derive(Debug, Error)]
 pub(crate) enum CacheReconciliationError {
@@ -67,6 +72,8 @@ pub(crate) enum CacheReconciliationError {
     NotFound,
     #[error("cache version has expired")]
     Expired,
+    #[error("cache root is non-empty and is not owned by this cache store")]
+    ForeignNonEmptyRoot,
 }
 
 pub(crate) type Result<T> = std::result::Result<T, CacheReconciliationError>;
@@ -372,10 +379,199 @@ pub(crate) struct CoverageEvidenceV1 {
     pub segments: Vec<SourceSegmentV1>,
 }
 
-/// Observed provider-page facts supplied by the query adapter. Observation hashes cover
-/// SDK/provider observation data, not HTTP wire bodies or credentials.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// Provider-local page-cursor kind. The payload itself is retained only in a private cache receipt
+/// and is never included in a Debug representation or an HTTP response.
+#[derive(Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ProviderCursorKindV1 {
+    Alpaca,
+    Futu,
+}
+
+impl fmt::Debug for ProviderCursorKindV1 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Alpaca => "Alpaca",
+            Self::Futu => "Futu",
+        })
+    }
+}
+
+/// Validated, provider-local SDK cursor input. This is deliberately not a Core or HTTP cursor.
+/// A02 constructs it only from its typed provider cursor after validating provider and query scope.
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct ProviderCursorCacheInputV1 {
+    kind: ProviderCursorKindV1,
+    payload_json: String,
+    expires_at_unix_seconds: u64,
+}
+
+impl ProviderCursorCacheInputV1 {
+    pub(crate) fn new(
+        kind: ProviderCursorKindV1,
+        payload_json: String,
+        expires_at_unix_seconds: u64,
+    ) -> Result<Self> {
+        if payload_json.is_empty() || payload_json.len() > MAX_PROVIDER_CURSOR_JSON_BYTES {
+            return Err(CacheReconciliationError::LimitExceeded);
+        }
+        let value: serde_json::Value = serde_json::from_str(&payload_json)?;
+        if value.is_null() {
+            return Err(CacheReconciliationError::InvalidInput);
+        }
+        if kind == ProviderCursorKindV1::Futu
+            && !value.as_str().is_some_and(valid_futu_provider_cursor)
+        {
+            return Err(CacheReconciliationError::InvalidInput);
+        }
+        let canonical_payload = serde_json::to_string(&value)?;
+        if canonical_payload.len() > MAX_PROVIDER_CURSOR_JSON_BYTES {
+            return Err(CacheReconciliationError::LimitExceeded);
+        }
+        Ok(Self {
+            kind,
+            payload_json: canonical_payload,
+            expires_at_unix_seconds,
+        })
+    }
+}
+
+impl fmt::Debug for ProviderCursorCacheInputV1 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProviderCursorCacheInputV1")
+            .field("kind", &self.kind)
+            .field("payload_json", &"[REDACTED]")
+            .field("expires_at_unix_seconds", &self.expires_at_unix_seconds)
+            .finish()
+    }
+}
+
+/// Provider cursor recovered only after the immutable receipt, payload hash, and query binding
+/// have been verified. The provider adapter is the only consumer of the private payload getter.
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct ValidatedProviderCursorReceiptV1 {
+    kind: ProviderCursorKindV1,
+    payload_json: String,
+    payload_sha256: String,
+    key_fingerprint_sha256: String,
+    provider: String,
+    feed: String,
+    entitlement_scope_sha256: String,
+    expires_at_unix_seconds: u64,
+}
+
+impl ValidatedProviderCursorReceiptV1 {
+    pub(crate) fn kind(&self) -> ProviderCursorKindV1 {
+        self.kind
+    }
+
+    pub(crate) fn payload_json(&self) -> &str {
+        &self.payload_json
+    }
+
+    pub(crate) fn expires_at_unix_seconds(&self) -> u64 {
+        self.expires_at_unix_seconds
+    }
+
+    pub(crate) fn validate_for_cache_key(&self, key: &CacheKeyV1) -> Result<()> {
+        let expected_provider = match self.kind {
+            ProviderCursorKindV1::Alpaca => "alpaca",
+            ProviderCursorKindV1::Futu => "futu",
+        };
+        let value: serde_json::Value = serde_json::from_str(&self.payload_json)?;
+        if self.provider != key.provider
+            || self.provider != expected_provider
+            || self.feed != key.feed
+            || self.entitlement_scope_sha256 != key.entitlement_scope_sha256
+            || self.key_fingerprint_sha256 != key.fingerprint()?
+            || self.payload_json.is_empty()
+            || self.payload_json.len() > MAX_PROVIDER_CURSOR_JSON_BYTES
+            || serde_json::to_string(&value)? != self.payload_json
+            || self.payload_sha256 != provider_cursor_payload_sha256(&self.payload_json)
+            || !valid_sha256(&self.payload_sha256)
+            || !valid_sha256(&self.key_fingerprint_sha256)
+            || !valid_sha256(&self.entitlement_scope_sha256)
+            || (self.kind == ProviderCursorKindV1::Futu
+                && !value.as_str().is_some_and(valid_futu_provider_cursor))
+            || self.expires_at_unix_seconds == 0
+        {
+            return Err(CacheReconciliationError::UnknownOutcome);
+        }
+        Ok(())
+    }
+
+    fn bind_to_key(
+        input: ProviderCursorCacheInputV1,
+        key: &CacheKeyV1,
+        now_unix_seconds: u64,
+    ) -> Result<Self> {
+        let maximum_expiry = now_unix_seconds
+            .checked_add(MAX_PROVIDER_CURSOR_TTL_SECONDS)
+            .ok_or(CacheReconciliationError::LimitExceeded)?;
+        if input.expires_at_unix_seconds <= now_unix_seconds {
+            return Err(CacheReconciliationError::Expired);
+        }
+        if input.expires_at_unix_seconds > maximum_expiry {
+            return Err(CacheReconciliationError::InvalidInput);
+        }
+        let provider = match input.kind {
+            ProviderCursorKindV1::Alpaca => "alpaca",
+            ProviderCursorKindV1::Futu => "futu",
+        };
+        if key.provider != provider {
+            return Err(CacheReconciliationError::Conflict);
+        }
+        let receipt = Self {
+            kind: input.kind,
+            payload_sha256: provider_cursor_payload_sha256(&input.payload_json),
+            payload_json: input.payload_json,
+            key_fingerprint_sha256: key.fingerprint()?,
+            provider: key.provider.clone(),
+            feed: key.feed.clone(),
+            entitlement_scope_sha256: key.entitlement_scope_sha256.clone(),
+            expires_at_unix_seconds: input.expires_at_unix_seconds,
+        };
+        receipt.validate_for_cache_key(key)?;
+        Ok(receipt)
+    }
+}
+
+impl fmt::Debug for ValidatedProviderCursorReceiptV1 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ValidatedProviderCursorReceiptV1")
+            .field("kind", &self.kind)
+            .field("payload_json", &"[REDACTED]")
+            .field("payload_sha256", &"[REDACTED]")
+            .field("key_fingerprint_sha256", &self.key_fingerprint_sha256)
+            .field("provider", &self.provider)
+            .field("feed", &self.feed)
+            .field("expires_at_unix_seconds", &self.expires_at_unix_seconds)
+            .finish()
+    }
+}
+
+fn valid_futu_provider_cursor(value: &str) -> bool {
+    value.len() == 32
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
+fn provider_cursor_payload_sha256(payload_json: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"lqepoch.mdp.provider-page-cursor.v1\0");
+    digest.update(payload_json.as_bytes());
+    hex_digest(digest.finalize().as_slice())
+}
+
+/// Observed provider-page facts supplied by the query adapter. Observation hashes cover
+/// SDK/provider observation data, not HTTP wire bodies or credentials. The provider cursor is
+/// intentionally omitted from serialization and redacted from Debug; it is persisted separately
+/// in a query-bound private version receipt.
+#[derive(Clone, Eq, PartialEq)]
 pub(crate) struct ProviderPageEvidenceV1 {
     pub source_observation_sha256: Option<String>,
     pub response_observed_at_utc: Option<market_contracts::ProtoTimestampV2>,
@@ -385,6 +581,30 @@ pub(crate) struct ProviderPageEvidenceV1 {
     pub last_source_sequence: Option<u64>,
     pub sequence_gap_count: Option<u64>,
     pub truncated: bool,
+    pub provider_cursor_cache_input: Option<ProviderCursorCacheInputV1>,
+}
+
+impl fmt::Debug for ProviderPageEvidenceV1 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ProviderPageEvidenceV1")
+            .field("source_observation_sha256", &self.source_observation_sha256)
+            .field("response_observed_at_utc", &self.response_observed_at_utc)
+            .field("pages_seen", &self.pages_seen)
+            .field("pages_exhausted", &self.pages_exhausted)
+            .field("first_source_sequence", &self.first_source_sequence)
+            .field("last_source_sequence", &self.last_source_sequence)
+            .field("sequence_gap_count", &self.sequence_gap_count)
+            .field("truncated", &self.truncated)
+            .field(
+                "provider_cursor_cache_input",
+                &self
+                    .provider_cursor_cache_input
+                    .as_ref()
+                    .map(|_| "[REDACTED]"),
+            )
+            .finish()
+    }
 }
 
 impl Default for ProviderPageEvidenceV1 {
@@ -398,6 +618,7 @@ impl Default for ProviderPageEvidenceV1 {
             last_source_sequence: None,
             sequence_gap_count: None,
             truncated: false,
+            provider_cursor_cache_input: None,
         }
     }
 }
@@ -409,11 +630,7 @@ impl CoverageEvidenceV1 {
         canonical_response: &BarsResponseV1,
         page_evidence: &ProviderPageEvidenceV1,
     ) -> Result<Self> {
-        if raw_response.segments != canonical_response.segments
-            || raw_response.gaps != canonical_response.gaps
-            || raw_response.coverage_status != canonical_response.coverage_status
-            || raw_response.truncated != canonical_response.truncated
-            || page_evidence.truncated != raw_response.truncated
+        if page_evidence.truncated != canonical_response.truncated
             || raw_response.provider != source_scope.provider
             || raw_response.feed != source_scope.feed
             || entitlement_state(raw_response.entitlement_status)? != source_scope.entitlement
@@ -456,7 +673,6 @@ impl CoverageEvidenceV1 {
         let mut segments = Vec::with_capacity(canonical_response.segments.len());
         let mut covered_start: Option<UtcTimestamp> = None;
         let mut covered_end: Option<UtcTimestamp> = None;
-        let mut raw_matched_rows = 0usize;
         let mut canonical_matched_rows = 0usize;
         for core_segment in &canonical_response.segments {
             let start = UtcTimestamp::parse_for_arrow_nanoseconds(core_segment.start_utc.as_str())
@@ -466,14 +682,24 @@ impl CoverageEvidenceV1 {
                     .map_err(|_| CacheReconciliationError::InvalidInput)?;
             covered_start = Some(covered_start.map_or(start, |current| current.min(start)));
             covered_end = Some(covered_end.map_or(end, |current| current.max(end)));
-            let raw_rows = rows_for_core_segment(&raw_response.rows, core_segment)?;
+            let raw_rows = rows_for_raw_core_segment(&raw_response.rows, core_segment)?;
             let canonical_rows = rows_for_core_segment(&canonical_response.rows, core_segment)?;
-            if raw_rows.is_empty() {
+            if raw_rows.is_empty() || canonical_rows.is_empty() {
                 return Err(CacheReconciliationError::InvalidInput);
             }
-            raw_matched_rows = raw_matched_rows
-                .checked_add(raw_rows.len())
-                .ok_or(CacheReconciliationError::LimitExceeded)?;
+            let raw_identities = raw_rows
+                .iter()
+                .map(bar_market_observation_identity)
+                .collect::<Result<BTreeSet<_>>>()?;
+            if canonical_rows
+                .iter()
+                .map(bar_market_observation_identity)
+                .collect::<Result<Vec<_>>>()?
+                .iter()
+                .any(|identity| !raw_identities.contains(identity))
+            {
+                return Err(CacheReconciliationError::Conflict);
+            }
             canonical_matched_rows = canonical_matched_rows
                 .checked_add(canonical_rows.len())
                 .ok_or(CacheReconciliationError::LimitExceeded)?;
@@ -521,16 +747,15 @@ impl CoverageEvidenceV1 {
                 last_source_sequence: page_evidence.last_source_sequence,
                 raw_row_count: raw_rows.len() as u64,
                 canonical_row_count: canonical_rows.len() as u64,
-                continuation_cursor_sha256: raw_response
+                continuation_cursor_sha256: canonical_response
                     .continuation_cursor
                     .as_deref()
                     .map(sha256_text),
             });
         }
-        if raw_matched_rows != raw_response.rows.len()
-            || canonical_matched_rows != canonical_response.rows.len()
+        if canonical_matched_rows != canonical_response.rows.len()
             || segments.is_empty()
-            || raw_response.gaps.len() > u32::MAX as usize
+            || canonical_response.gaps.len() > u32::MAX as usize
         {
             return Err(CacheReconciliationError::Conflict);
         }
@@ -543,8 +768,8 @@ impl CoverageEvidenceV1 {
             pages_seen: page_evidence.pages_seen,
             pages_exhausted: page_evidence.pages_exhausted,
             sequence_gap_count: page_evidence.sequence_gap_count,
-            coverage_gap_count: Some(raw_response.gaps.len() as u32),
-            truncated: raw_response.truncated,
+            coverage_gap_count: Some(canonical_response.gaps.len() as u32),
+            truncated: canonical_response.truncated,
             segments,
         })
     }
@@ -822,12 +1047,75 @@ impl BarsCacheEvidenceV1 {
         Ok(())
     }
 
+    /// Validate the SDK-observation response independently of canonical calendar coverage. Raw
+    /// observations can use provider-local session identities and can contain rows that a trusted
+    /// mapper intentionally filters from the canonical response.
+    pub(crate) fn validate_raw_against(&self, key: &CacheKeyV1, rows: &[BarRowV1]) -> Result<()> {
+        if self.schema_version != key.schema_version
+            || self.provider != key.provider
+            || self.feed != key.feed
+            || self.source_provenance.iter().any(|source| {
+                source.provider != key.provider
+                    || source.feed != key.feed
+                    || entitlement_state(source.entitlement_status).ok() != Some(key.entitlement)
+                    || source.numeric_encoding.as_str() != key.numeric_encoding
+            })
+            || self.adjustment != parse_adjustment(&key.adjustment)?
+            || self.requested_resolution.as_str() != key.requested_resolution
+            || self.effective_resolution.as_str() != key.effective_resolution
+            || enum_label(&self.requested_provider_mode)? != key.provider_mode
+            || self.request_cursor_sha256 != key.request_cursor_sha256
+            || self.truncated != self.response_cursor_sha256.is_some()
+            || self
+                .request_cursor_sha256
+                .as_deref()
+                .is_some_and(|value| !valid_sha256(value))
+            || self
+                .response_cursor_sha256
+                .as_deref()
+                .is_some_and(|value| !valid_sha256(value))
+            || (self.truncated && self.coverage_status == BarsCoverageStatusV1::Complete)
+        {
+            return Err(CacheReconciliationError::Conflict);
+        }
+        let response = BarsResponseV1 {
+            schema_version: self.schema_version,
+            provider: self.provider.clone(),
+            feed: self.feed.clone(),
+            entitlement_status: self.entitlement_status,
+            requested_resolution: self.requested_resolution,
+            effective_resolution: self.effective_resolution,
+            adjustment: self.adjustment,
+            rows: rows.to_vec(),
+            coverage_status: self.coverage_status,
+            segments: self.segments.clone(),
+            gaps: self.gaps.clone(),
+            source_provenance: self.source_provenance.clone(),
+            as_of: self.as_of.clone(),
+            fetched_at: self.fetched_at.clone(),
+            verified_at: self.verified_at.clone(),
+            cache_status: BarsCacheStatusV1::Unknown,
+            market_calendar_version: self.market_calendar_version.clone(),
+            continuation_cursor: self
+                .truncated
+                .then(|| "cursor-not-retained-by-cache".to_owned()),
+            truncated: self.truncated,
+        };
+        response
+            .validate()
+            .map_err(|_| CacheReconciliationError::Conflict)?;
+        validate_rows_for_key(key, self.adjustment, self.effective_resolution, rows, false)
+    }
+
     pub(crate) fn to_cached_response(
         &self,
         rows: Vec<BarRowV1>,
         cache_status: BarsCacheStatusV1,
+        continuation_cursor: Option<String>,
     ) -> Result<BarsResponseV1> {
-        if self.truncated || self.response_cursor_sha256.is_some() {
+        if self.truncated != continuation_cursor.is_some()
+            || self.truncated != self.response_cursor_sha256.is_some()
+        {
             return Err(CacheReconciliationError::Incomplete);
         }
         let response = BarsResponseV1 {
@@ -848,14 +1136,42 @@ impl BarsCacheEvidenceV1 {
             verified_at: self.verified_at.clone(),
             cache_status,
             market_calendar_version: self.market_calendar_version.clone(),
-            continuation_cursor: None,
-            truncated: false,
+            continuation_cursor,
+            truncated: self.truncated,
         };
         response
             .validate()
             .map_err(|_| CacheReconciliationError::Conflict)?;
         Ok(response)
     }
+}
+
+fn validate_rows_for_key(
+    key: &CacheKeyV1,
+    adjustment: AdjustmentV1,
+    resolution: market_contracts::BarResolutionV1,
+    rows: &[BarRowV1],
+    enforce_window: bool,
+) -> Result<()> {
+    let request_start = UtcTimestamp::parse_for_arrow_nanoseconds(&key.window_start_utc)
+        .map_err(|_| CacheReconciliationError::Conflict)?;
+    let request_end = UtcTimestamp::parse_for_arrow_nanoseconds(&key.window_end_exclusive_utc)
+        .map_err(|_| CacheReconciliationError::Conflict)?;
+    for row in rows {
+        let row_start = UtcTimestamp::parse_for_arrow_nanoseconds(row.bar_start_utc.as_str())
+            .map_err(|_| CacheReconciliationError::Conflict)?;
+        let row_end = UtcTimestamp::parse_for_arrow_nanoseconds(row.bar_end_exclusive_utc.as_str())
+            .map_err(|_| CacheReconciliationError::Conflict)?;
+        if row.symbol != key.symbol
+            || enum_label(&row.asset_class)? != key.asset_class
+            || row.adjustment != adjustment
+            || row.resolution != resolution
+            || (enforce_window && (row_start < request_start || row_end > request_end))
+        {
+            return Err(CacheReconciliationError::Conflict);
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn session_identity(session_ids: &BTreeSet<String>) -> Result<String> {
@@ -1081,6 +1397,151 @@ fn rows_for_core_segment(
         }
     }
     Ok(matched)
+}
+
+fn rows_for_raw_core_segment(
+    rows: &[BarRowV1],
+    segment: &market_contracts::BarCoverageSegmentV1,
+) -> Result<Vec<BarRowV1>> {
+    let segment_start = UtcTimestamp::parse_for_arrow_nanoseconds(segment.start_utc.as_str())
+        .map_err(|_| CacheReconciliationError::InvalidInput)?;
+    let segment_end = UtcTimestamp::parse_for_arrow_nanoseconds(segment.end_exclusive_utc.as_str())
+        .map_err(|_| CacheReconciliationError::InvalidInput)?;
+    let mut matched = Vec::new();
+    for row in rows {
+        if segment
+            .provenance_id
+            .as_deref()
+            .is_some_and(|provenance| provenance != row.provenance_id.as_str())
+        {
+            continue;
+        }
+        let start = UtcTimestamp::parse_for_arrow_nanoseconds(row.bar_start_utc.as_str())
+            .map_err(|_| CacheReconciliationError::InvalidInput)?;
+        let end = UtcTimestamp::parse_for_arrow_nanoseconds(row.bar_end_exclusive_utc.as_str())
+            .map_err(|_| CacheReconciliationError::InvalidInput)?;
+        if start < segment_end && end > segment_start {
+            if start < segment_start || end > segment_end {
+                continue;
+            }
+            matched.push(row.clone());
+        }
+    }
+    Ok(matched)
+}
+
+pub(crate) fn validate_coverage_rows(
+    coverage: &CoverageEvidenceV1,
+    raw_rows: &[BarRowV1],
+    canonical_rows: &[BarRowV1],
+) -> Result<()> {
+    let mut canonical_matched = 0usize;
+    for segment in &coverage.segments {
+        let start = UtcTimestamp::parse_for_arrow_nanoseconds(&segment.covered_start_utc)
+            .map_err(|_| CacheReconciliationError::InvalidInput)?;
+        let end = UtcTimestamp::parse_for_arrow_nanoseconds(&segment.covered_end_exclusive_utc)
+            .map_err(|_| CacheReconciliationError::InvalidInput)?;
+        let raw = rows_for_lineage_segment(raw_rows, segment, start, end, false)?;
+        let canonical = rows_for_lineage_segment(canonical_rows, segment, start, end, true)?;
+        let raw_identities = raw
+            .iter()
+            .map(bar_market_observation_identity)
+            .collect::<Result<BTreeSet<_>>>()?;
+        if raw.len() as u64 != segment.raw_row_count
+            || canonical.len() as u64 != segment.canonical_row_count
+            || canonical
+                .iter()
+                .map(bar_market_observation_identity)
+                .collect::<Result<Vec<_>>>()?
+                .iter()
+                .any(|identity| !raw_identities.contains(identity))
+        {
+            return Err(CacheReconciliationError::Conflict);
+        }
+        canonical_matched = canonical_matched
+            .checked_add(canonical.len())
+            .ok_or(CacheReconciliationError::LimitExceeded)?;
+    }
+    if canonical_matched != canonical_rows.len() {
+        return Err(CacheReconciliationError::Conflict);
+    }
+    validate_canonical_rows_linked_to_raw(raw_rows, canonical_rows)
+}
+
+fn rows_for_lineage_segment(
+    rows: &[BarRowV1],
+    segment: &SourceSegmentV1,
+    segment_start: UtcTimestamp,
+    segment_end: UtcTimestamp,
+    require_session: bool,
+) -> Result<Vec<BarRowV1>> {
+    let mut matched = Vec::new();
+    for row in rows {
+        if (require_session && row.session_instance_id != segment.session_instance_id)
+            || segment
+                .provenance_id
+                .as_deref()
+                .is_some_and(|provenance| provenance != row.provenance_id.as_str())
+        {
+            continue;
+        }
+        let start = UtcTimestamp::parse_for_arrow_nanoseconds(row.bar_start_utc.as_str())
+            .map_err(|_| CacheReconciliationError::InvalidInput)?;
+        let end = UtcTimestamp::parse_for_arrow_nanoseconds(row.bar_end_exclusive_utc.as_str())
+            .map_err(|_| CacheReconciliationError::InvalidInput)?;
+        if start < segment_end && end > segment_start {
+            if start < segment_start || end > segment_end {
+                if require_session {
+                    return Err(CacheReconciliationError::Conflict);
+                }
+                continue;
+            }
+            matched.push(row.clone());
+        }
+    }
+    Ok(matched)
+}
+
+/// Ensure every canonical row is a value-preserving projection of at least one SDK observation.
+/// Session IDs are omitted because the trusted calendar mapper replaces provider-local IDs;
+/// OHLCV uses ExactDecimal normalization so equivalent lexical scales remain exactly equal.
+pub(crate) fn validate_canonical_rows_linked_to_raw(
+    raw_rows: &[BarRowV1],
+    canonical_rows: &[BarRowV1],
+) -> Result<()> {
+    if raw_rows.is_empty() || canonical_rows.is_empty() {
+        return Err(CacheReconciliationError::InvalidInput);
+    }
+    let raw_identities = raw_rows
+        .iter()
+        .map(bar_market_observation_identity)
+        .collect::<Result<BTreeSet<_>>>()?;
+    for canonical in canonical_rows {
+        if !raw_identities.contains(&bar_market_observation_identity(canonical)?) {
+            return Err(CacheReconciliationError::Conflict);
+        }
+    }
+    Ok(())
+}
+
+fn bar_market_observation_identity(row: &BarRowV1) -> Result<Vec<u8>> {
+    let decimals = [
+        normalized_decimal(row.open.as_str())?,
+        normalized_decimal(row.high.as_str())?,
+        normalized_decimal(row.low.as_str())?,
+        normalized_decimal(row.close.as_str())?,
+        normalized_decimal(row.volume.as_str())?,
+    ];
+    Ok(serde_json::to_vec(&(
+        row.symbol.as_str(),
+        enum_label(&row.asset_class)?,
+        row.resolution.as_str(),
+        enum_label(&row.adjustment)?,
+        row.bar_start_utc.as_str(),
+        row.bar_end_exclusive_utc.as_str(),
+        row.provenance_id.as_str(),
+        decimals.map(|value| value.as_str().to_owned()),
+    ))?)
 }
 
 fn sha256_bytes(value: &[u8]) -> String {
