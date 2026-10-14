@@ -2381,7 +2381,7 @@
       },
       {
         "path": "src/archive/reconciliation/store/logical_shards.rs",
-        "sha256": "8c04fe6764503f2e901d233a75890229ce4fa5e8effe55a4f901f73ad00a424a"
+        "sha256": "7e8e695ea26ab1ccfbc10e744b39b9d1e4a20dee98753f94a5f94dd0a7cee02d"
       },
       {
         "path": "src/archive/reconciliation/store/transaction.rs",
@@ -2660,7 +2660,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "aed60586b95fd5fb2ef41cd50a13ea958ec458a913a6968789509d63f51cfabb"
+    "sha256": "d043a17509da7cbd52b59424bb14ee2992dedc617a8f29882f9400266f78c087"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
