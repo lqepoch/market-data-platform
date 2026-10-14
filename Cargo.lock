@@ -1320,6 +1320,7 @@ dependencies = [
  "market-contracts",
  "parquet",
  "reqwest",
+ "ring",
  "rustix",
  "serde",
  "serde_json",

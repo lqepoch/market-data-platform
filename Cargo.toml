@@ -31,6 +31,7 @@ tracing-subscriber = { version = "=0.3.20", features = ["env-filter"] }
 
 alpaca-rest-read = { git = "https://github.com/lqepoch/broker-connectors", rev = "99e1d36f864d1e89e8cfba95651d29920e2f4c5a", package = "alpaca-rest-read" }
 reqwest = { version = "=0.13.5", default-features = false, features = ["json", "stream"] }
+ring = "=0.17.14"
 
 [features]
 benchmark-snappy = ["parquet/snap"]
