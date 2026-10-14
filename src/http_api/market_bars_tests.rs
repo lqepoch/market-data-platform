@@ -14,7 +14,7 @@ use tower::ServiceExt;
 
 use super::{
     MAX_QUERY_BYTES, MarketBarsHttpError, hash_cache_rights_profile, parse_bars_request,
-    parse_query, parse_utc_window_endpoint, principal_may_request_research,
+    parse_query, parse_sessions_query, parse_utc_window_endpoint, principal_may_request_research,
     read_gateway_delegation, valid_cache_scope_id,
 };
 use crate::{
@@ -76,6 +76,36 @@ fn rejects_unknown_duplicate_oversized_and_missing_query_fields() {
         parse_bars_request(&bars_uri(&oversized)),
         Err(MarketBarsHttpError::InvalidRequest)
     ));
+}
+
+#[test]
+fn sessions_instrument_selector_requires_symbol_and_asset_class_together() {
+    let base = "/v1/market/sessions?start=2026-01-05T01:00:00Z&end=2026-01-05T02:00:00Z";
+    let omitted = parse_sessions_query(&base.parse().unwrap()).expect("cash-only request");
+    assert!(omitted.symbol.is_none());
+    assert!(omitted.asset_class.is_none());
+
+    let symbol_only = format!("{base}&symbol=SPY").parse().unwrap();
+    assert!(matches!(
+        parse_sessions_query(&symbol_only),
+        Err(MarketBarsHttpError::InvalidRequest)
+    ));
+
+    let class_only = format!("{base}&asset_class=etf").parse().unwrap();
+    assert!(matches!(
+        parse_sessions_query(&class_only),
+        Err(MarketBarsHttpError::InvalidRequest)
+    ));
+
+    let paired = format!("{base}&symbol=SPY&asset_class=etf")
+        .parse()
+        .unwrap();
+    let paired = parse_sessions_query(&paired).expect("instrument-scoped request");
+    assert_eq!(paired.symbol.as_deref(), Some("SPY"));
+    assert_eq!(
+        paired.asset_class,
+        Some(market_contracts::AssetClassV1::Etf)
+    );
 }
 
 #[test]

@@ -67,7 +67,7 @@ pub(super) async fn run_market_bars_query(
     gateway_delegation: Option<String>,
 ) -> std::result::Result<BarsResponseV1, QueryFailure> {
     let prepare_runtime = Arc::clone(&runtime);
-    let prepare_calendar = Arc::clone(&calendar.snapshot);
+    let prepare_calendar = calendar;
     let prepare_request = request.clone();
     let principal_scope_sha256 = principal.principal_scope_sha256().to_owned();
     let cache_profile = runtime.cache_scope_id.clone();
@@ -89,6 +89,15 @@ pub(super) async fn run_market_bars_query(
             .provider
             .planning_as_of(&prepare_request, &now, &rights_profile_sha256)
             .map_err(provider_query_error_to_market_data)?;
+        // Calendar trust and revocation use the current wall clock on every request. The outer
+        // cursor keeps its original `as_of`, but the current signed overlay selection is part of
+        // the plan version, so an expired/revoked/changed overlay cannot resume an old plan.
+        let requested_window = request_window(&prepare_request)?;
+        let calendar_selection = prepare_calendar.snapshot_for_instrument(
+            prepare_request.asset_class,
+            &prepare_request.symbol,
+            requested_window,
+        );
         // Request-scoped admissions are considered only when an operator profile is configured
         // and bound to this verified principal. Without one, use the runtime's closed generic
         // capabilities, which advertise configured Alpaca attempts but no Futu admission.
@@ -99,7 +108,7 @@ pub(super) async fn run_market_bars_query(
             prepare_runtime.provider.source_capabilities_for_request(
                 &prepare_request,
                 &as_of,
-                &prepare_calendar,
+                calendar_selection.snapshot.as_ref(),
                 &rights_profile_sha256,
                 now_unix_seconds,
             )
@@ -111,18 +120,19 @@ pub(super) async fn run_market_bars_query(
             prepare_runtime.provider.source_capabilities_for_request(
                 &prepare_request,
                 &as_of,
-                &prepare_calendar,
+                calendar_selection.snapshot.as_ref(),
                 &rights_profile_sha256,
                 now_unix_seconds,
             )
         } else {
             prepare_runtime.provider.source_capabilities()
         };
+        let capabilities = filter_overnight_capabilities(capabilities, &calendar_selection);
         let plan = crate::market_query::planning::plan_market_bars(
             &prepare_request,
             &as_of,
             &capabilities,
-            &prepare_calendar,
+            calendar_selection.snapshot.as_ref(),
         )
         .map_err(planning_error_to_market_data)?;
         if cancellation.is_cancelled() {
@@ -796,6 +806,39 @@ fn parse_utc_timestamp(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .ok()
         .map(|value| value.with_timezone(&Utc))
+}
+
+fn request_window(request: &BarsRequestV1) -> crate::Result<crate::session_router::UtcWindow> {
+    let start =
+        parse_utc_timestamp(request.start.as_str()).ok_or(crate::MarketDataError::InvalidInput)?;
+    let end_exclusive =
+        parse_utc_timestamp(request.end.as_str()).ok_or(crate::MarketDataError::InvalidInput)?;
+    if start >= end_exclusive {
+        return Err(crate::MarketDataError::InvalidInput);
+    }
+    Ok(crate::session_router::UtcWindow {
+        start,
+        end_exclusive,
+    })
+}
+
+fn filter_overnight_capabilities(
+    capabilities: Vec<crate::session_router::SourceCapability>,
+    calendar: &crate::market_calendar::CalendarSnapshotSelection,
+) -> Vec<crate::session_router::SourceCapability> {
+    let overlay_applied =
+        calendar.status == crate::market_calendar::OvernightOverlayStatus::Applied;
+    capabilities
+        .into_iter()
+        .filter(|capability| {
+            capability.phase != Some(crate::session_router::SessionPhase::Over)
+                || (overlay_applied
+                    && calendar
+                        .allowed_overnight_routes
+                        .iter()
+                        .any(|route| route.matches_source_capability(capability)))
+        })
+        .collect()
 }
 
 fn format_utc_timestamp(value: DateTime<Utc>) -> Option<ProtoTimestampV2> {

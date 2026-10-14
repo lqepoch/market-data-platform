@@ -442,10 +442,10 @@ async fn harness_with_cache_limits(
     let runtime = Arc::new(runtime.with_page_admission_evidence_source(evidence_source.clone()));
     let state = Arc::new(ServiceState {
         auth_configured: true,
-        market_calendar: Some(LoadedMarketCalendar {
-            snapshot: Arc::new(one_day_calendar()),
-            input_sha256: "d".repeat(64),
-        }),
+        market_calendar: Some(LoadedMarketCalendar::synthetic_cash_snapshot_for_tests(
+            one_day_calendar(),
+            "d".repeat(64),
+        )),
         market_bars: Some(Arc::clone(&runtime)),
         query_client,
         reader,
@@ -999,7 +999,7 @@ async fn response_json(response: axum::response::Response) -> serde_json::Value 
     serde_json::from_slice(&bytes).unwrap()
 }
 
-fn one_day_calendar() -> TrustedCalendarSnapshot {
+pub(super) fn one_day_calendar() -> TrustedCalendarSnapshot {
     let trade_date = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
     let day_start = trade_date.and_hms_opt(5, 0, 0).unwrap().and_utc();
     let day_end = day_start + Duration::days(1);

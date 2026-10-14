@@ -3,9 +3,11 @@
 The opt-in `/v1/market/bars` route uses trading-core `BarsRequestV1` and
 `BarsResponseV1` pinned at `f793be47ab90ebff9f530c8b08f41db5e774e4e5`.
 It is separate from the unchanged dataset archive query. `/v1/market/sessions`
-returns the startup-pinned calendar and original session identities. Both routes
-use the existing independent 60-second `market:read` MDP verifier; a Gateway
-bearer passed for Futu never authenticates the MDP request. Research mode requires
+returns the stable cash-calendar identity and original session identities by
+default. Supplying both `symbol` and `asset_class=stock|etf` opts into a
+currently trusted, signed overnight-overlay selection for that instrument and
+window. Both routes use the existing independent 60-second `market:read` MDP
+verifier; a Gateway bearer passed for Futu never authenticates the MDP request. Research mode requires
 the verified research channel. No order operation is added.
 
 ## Configuration and rollback
@@ -22,6 +24,11 @@ the verified research channel. No order operation is added.
 - Set `MDP_MARKET_CALENDAR_FILE` and `MDP_MARKET_CALENDAR_SHA256` together. Startup
   verifies the bounded 16 MiB snapshot, its SHA and structural session identity.
   The calendar's own verification status remains independent of its content hash.
+  Startup currently loads cash sessions only. There is no environment, HTTP, or
+  file-based switch that can install overnight authority; a reviewed in-process
+  owner must supply a signed overlay and independent verifier. Without that
+  integration, the session endpoint reports `no_overlay` for instrument-scoped
+  requests and bars planning leaves OVER uncovered.
 - Optional server-only `ALPACA_KEY` and `ALPACA_SECRET` must be supplied together.
   Configured historical SIP/BOATS calls are attempts, not evidence of Plus, an
   accepted credential, actual response feed or comprehensive historical coverage.
@@ -58,8 +65,29 @@ when its capability has verified admission; otherwise return a precise gap.
 OLD SIP and BOATS are distinct historical routes. Weekends, holidays, early closes
 and daylight saving come from the pinned calendar, not elapsed-hour heuristics.
 The supplied XNYS cash calendar alone does not establish a supported overnight
-session. Synthetic four-session fixtures test the planner but do not verify
-real overnight availability.
+session. Each bars request rechecks overlay signature trust, lease, revocation,
+instrument eligibility and window coverage using the current wall clock. The
+planner receives only OVER capabilities whose exact provider/feed route appears
+in that current selection. Cash capabilities are unchanged; the calendar does
+not create provider capabilities or establish feed, entitlement, coverage, or
+provider health. In particular, Alpaca SIP never matches a signed BOATS route.
+The response exposes the public cash/overlay component identities and selection
+status; it does not expose signature/key material. The selected composite
+calendar version binds planner and cursor identity, so a changed, expired, or
+revoked overlay rejects a continuation rather than resuming an old plan.
+Synthetic fixtures exercise this wiring only and do not verify real overnight
+availability.
+
+`GET /v1/market/sessions` keeps its required UTC `start` and `end` parameters.
+`symbol` and `asset_class` are optional as a pair: omit both for the stable
+cash-only view, or provide both to select the same instrument-scoped overlay
+used by bars. A partial pair or an unsupported asset class is rejected. The
+response includes `calendar_overlay_status`, public `calendar_components`, and
+`allowed_overnight_routes`; those routes describe calendar compatibility only,
+not provider authorization or data entitlement. `calendar_overlay_status` is
+`null` for the default cash-only query. A rejected, expired, revoked, or
+ineligible overlay is reported by status while the response stays on the cash
+calendar.
 
 The boundary is 2016-01-01 midnight America/New_York, or 05:00 UTC that day.
 Earlier stock/ETF history is daily Yahoo research only. Earlier intraday ranges

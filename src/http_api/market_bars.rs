@@ -1,12 +1,13 @@
 //! Read-only market bars and trusted-session HTTP adapters.
 //!
 //! This module is deliberately mounted behind the existing `market:read` middleware. It accepts
-//! only Core Bars V1 fields, uses the startup-pinned calendar snapshot, and delegates provider
-//! work to the shared bounded query supervisor. Gateway delegation is passed only to provider
-//! code; it never authenticates an MDP request.
+//! only Core Bars V1 fields, selects the pinned cash calendar or a currently trusted,
+//! instrument-scoped signed overnight overlay, and delegates provider work to the shared bounded
+//! query supervisor. Calendar route compatibility never grants provider entitlement. Gateway
+//! delegation is passed only to provider code; it never authenticates an MDP request.
 
 use std::{
-    collections::VecDeque,
+    collections::{BTreeSet, VecDeque},
     env,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -20,7 +21,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::{DateTime, SecondsFormat, Utc};
-use market_contracts::{BarsCoverageStatusV1, BarsRequestV1, BarsResponseV1, ProtoTimestampV2};
+use market_contracts::{
+    AdjustmentV1, AssetClassV1, BarResolutionV1, BarsCoverageStatusV1, BarsProviderModeV1,
+    BarsRequestV1, BarsResponseV1, ProtoTimestampV2, SessionScopeV1,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -39,6 +43,9 @@ const MAX_CACHE_INVALIDATION_EVENTS: usize = 128;
 #[cfg(all(test, target_os = "linux"))]
 #[path = "market_bars_authority_tests.rs"]
 mod authority_tests;
+#[cfg(all(test, target_os = "linux"))]
+#[path = "market_bars_overnight_tests.rs"]
+mod overnight_tests;
 mod query;
 mod response;
 
@@ -272,6 +279,22 @@ impl MarketBarsRuntime {
         }
     }
 
+    #[cfg(all(test, target_os = "linux"))]
+    pub(crate) fn synthetic_without_cache_for_test(
+        provider: crate::market_query::providers::MarketBarsProviderRuntime,
+        source: Arc<dyn SyntheticMarketBarsPageSource>,
+    ) -> Self {
+        Self {
+            provider,
+            cache: None,
+            cache_scope_id: None,
+            authority: None,
+            page_admission_evidence_source: None,
+            cache_invalidation_events: Arc::new(Mutex::new(VecDeque::new())),
+            synthetic_page_source: Some(source),
+        }
+    }
+
     /// Add authority only from a trusted in-process issuer/loader. Ordinary startup always leaves
     /// this unset; no boolean setting, OIDC claim, provider label, or cache profile grants it.
     #[cfg_attr(
@@ -418,6 +441,10 @@ struct MarketBarsQuery {
 struct MarketSessionsQuery {
     start: String,
     end: String,
+    #[serde(default)]
+    symbol: Option<String>,
+    #[serde(default)]
+    asset_class: Option<AssetClassV1>,
 }
 
 #[derive(Serialize)]
@@ -429,6 +456,11 @@ struct MarketSessionsResponse<'a> {
     coverage_end_exclusive: chrono::NaiveDate,
     request_start: &'a str,
     request_end: &'a str,
+    symbol: Option<&'a str>,
+    asset_class: Option<AssetClassV1>,
+    calendar_overlay_status: Option<crate::market_calendar::OvernightOverlayStatus>,
+    calendar_components: &'a crate::market_calendar::CalendarComponentsV1,
+    allowed_overnight_routes: &'a [crate::market_calendar::OvernightRouteV1],
     days: Vec<&'a crate::session_router::CalendarDay>,
     instances: Vec<&'a crate::session_router::SessionInstance>,
 }
@@ -536,31 +568,61 @@ pub(super) async fn get_market_sessions(
     if !session_window_is_bounded(&start, &end) {
         return MarketBarsHttpError::InvalidRequest.into_response();
     }
-    let Some(first_day) = calendar.snapshot.days.first() else {
+
+    let instrument = match (&query.symbol, query.asset_class) {
+        (None, None) => None,
+        (Some(symbol), Some(asset_class)) => {
+            let core_request = match sessions_validation_request(&query, symbol, asset_class) {
+                Ok(request) => request,
+                Err(error) => return error.into_response(),
+            };
+            if core_request.validate().is_err() {
+                return MarketBarsHttpError::InvalidRequest.into_response();
+            }
+            Some((symbol.as_str(), asset_class))
+        }
+        _ => return MarketBarsHttpError::InvalidRequest.into_response(),
+    };
+    let requested_window = crate::session_router::UtcWindow {
+        start,
+        end_exclusive: end,
+    };
+    let overlay_selection = instrument.as_ref().map(|(symbol, asset_class)| {
+        calendar.snapshot_for_instrument(*asset_class, symbol, requested_window)
+    });
+    let cash_snapshot = calendar.cash_snapshot_for_selection();
+    let selected_snapshot = overlay_selection
+        .as_ref()
+        .map_or(cash_snapshot.as_ref(), |selection| {
+            selection.snapshot.as_ref()
+        });
+    let cash_components = crate::market_calendar::CalendarComponentsV1 {
+        cash: crate::market_calendar::overnight_overlay::CashCalendarComponentV1 {
+            source_id: calendar.raw_snapshot().source_id.clone(),
+            version: calendar.raw_snapshot().version.clone(),
+            input_sha256: calendar.input_sha256().to_owned(),
+        },
+        overnight_input_sha256: None,
+        overnight: None,
+    };
+    let calendar_components = overlay_selection
+        .as_ref()
+        .map_or(&cash_components, |selection| &selection.components);
+    let allowed_overnight_routes = overlay_selection.as_ref().map_or(&[][..], |selection| {
+        selection.allowed_overnight_routes.as_slice()
+    });
+
+    let Some(first_day) = selected_snapshot.days.first() else {
         return MarketBarsHttpError::Unavailable.into_response();
     };
-    let Some(last_day) = calendar.snapshot.days.last() else {
+    let Some(last_day) = selected_snapshot.days.last() else {
         return MarketBarsHttpError::Unavailable.into_response();
     };
     if start < first_day.day_window.start || end > last_day.day_window.end_exclusive {
         return MarketBarsHttpError::Unavailable.into_response();
     }
 
-    let days = calendar
-        .snapshot
-        .days
-        .iter()
-        .filter(|day| {
-            intersects(
-                &start,
-                &end,
-                &day.day_window.start,
-                &day.day_window.end_exclusive,
-            )
-        })
-        .collect::<Vec<_>>();
-    let instances = calendar
-        .snapshot
+    let instances = selected_snapshot
         .instances
         .iter()
         .filter(|instance| {
@@ -572,14 +634,35 @@ pub(super) async fn get_market_sessions(
             )
         })
         .collect::<Vec<_>>();
+    let instance_trade_dates = instances
+        .iter()
+        .map(|instance| instance.trade_date)
+        .collect::<BTreeSet<_>>();
+    let days = selected_snapshot
+        .days
+        .iter()
+        .filter(|day| {
+            intersects(
+                &start,
+                &end,
+                &day.day_window.start,
+                &day.day_window.end_exclusive,
+            ) || instance_trade_dates.contains(&day.trade_date)
+        })
+        .collect::<Vec<_>>();
     let response = MarketSessionsResponse {
-        calendar_source_id: &calendar.snapshot.source_id,
-        market_calendar_version: &calendar.snapshot.version,
-        calendar_input_sha256: &calendar.input_sha256,
-        coverage_start: calendar.snapshot.coverage_start,
-        coverage_end_exclusive: calendar.snapshot.coverage_end_exclusive,
+        calendar_source_id: &selected_snapshot.source_id,
+        market_calendar_version: &selected_snapshot.version,
+        calendar_input_sha256: &calendar_components.cash.input_sha256,
+        coverage_start: selected_snapshot.coverage_start,
+        coverage_end_exclusive: selected_snapshot.coverage_end_exclusive,
         request_start: &query.start,
         request_end: &query.end,
+        symbol: instrument.as_ref().map(|(symbol, _)| *symbol),
+        asset_class: instrument.as_ref().map(|(_, asset_class)| *asset_class),
+        calendar_overlay_status: overlay_selection.as_ref().map(|selection| selection.status),
+        calendar_components,
+        allowed_overnight_routes,
         days,
         instances,
     };
@@ -593,7 +676,35 @@ fn parse_bars_request(uri: &Uri) -> Result<BarsRequestV1, MarketBarsHttpError> {
 }
 
 fn parse_sessions_query(uri: &Uri) -> Result<MarketSessionsQuery, MarketBarsHttpError> {
-    parse_query(uri)
+    let query = parse_query(uri)?;
+    if query.symbol.is_some() != query.asset_class.is_some() {
+        return Err(MarketBarsHttpError::InvalidRequest);
+    }
+    Ok(query)
+}
+
+fn sessions_validation_request(
+    query: &MarketSessionsQuery,
+    symbol: &str,
+    asset_class: AssetClassV1,
+) -> Result<BarsRequestV1, MarketBarsHttpError> {
+    let start =
+        ProtoTimestampV2::parse(&query.start).map_err(|_| MarketBarsHttpError::InvalidRequest)?;
+    let end =
+        ProtoTimestampV2::parse(&query.end).map_err(|_| MarketBarsHttpError::InvalidRequest)?;
+    Ok(BarsRequestV1 {
+        symbol: symbol.to_owned(),
+        asset_class,
+        start,
+        end,
+        resolution: BarResolutionV1::OneDay,
+        session_scope: SessionScopeV1::All,
+        adjustment: AdjustmentV1::Unadjusted,
+        provider_mode: BarsProviderModeV1::Auto,
+        allow_daily_downgrade: false,
+        limit: 1,
+        cursor: None,
+    })
 }
 
 fn principal_may_request_research(

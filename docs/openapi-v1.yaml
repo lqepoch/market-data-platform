@@ -385,7 +385,7 @@ paths:
   /v1/market/sessions:
     get:
       operationId: getMarketSessionInstancesV1
-      summary: Read pinned calendar instances without inventing trading sessions
+      summary: Read cash calendar instances or a trusted instrument-scoped overnight overlay
       security: [{mdpDelegation: []}]
       parameters:
         - name: start
@@ -398,11 +398,29 @@ paths:
           required: true
           schema: {type: string, format: date-time}
           description: UTC timestamp ending in Z; half-open range bounded to 366 days.
+        - name: symbol
+          in: query
+          required: false
+          schema: {type: string, maxLength: 32}
+          description: Optional instrument selector; must be supplied with asset_class.
+        - name: asset_class
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [stock, etf]
+          description: Optional instrument selector; must be supplied with symbol.
       responses:
         "200":
-          description: Original calendar days and instances with input SHA and immutable version.
+          description: >-
+            Original calendar days and instances with stable version, public cash/overlay component
+            identities, overlay-selection status, and calendar-compatible overnight routes. Omitting
+            both instrument parameters selects cash only. Calendar routes do not grant provider
+            entitlement or prove data availability.
         "400":
-          description: Invalid or excessive time window.
+          description: >-
+            Invalid or excessive window, unsupported instrument selector, or incomplete
+            symbol/asset_class pair.
         "401":
           description: Missing or invalid market delegation.
         "503":
