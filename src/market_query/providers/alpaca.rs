@@ -127,7 +127,10 @@ pub(super) async fn fetch_page(
                 Some(cache_input),
             )
         }
-        None if !has_provider_cursor => (selection.cursor_for_next_group()?, None),
+        // Provider RAW pages carry only provider-local continuation. The HTTP assembler adds a
+        // separate outer MDP cursor after mapping when another planned run remains; persisting
+        // that outer cursor here would make an exhausted provider page look resumable in cache.
+        None if !has_provider_cursor => (None, None),
         None => return Err(ProviderQueryError::MalformedResponse),
     };
 

@@ -208,7 +208,9 @@ impl FutuGateway {
                     Some(cache_input),
                 )
             }
-            None => (selection.cursor_for_next_group()?, None),
+            // Provider RAW pages carry only provider-local continuation. The HTTP assembler adds
+            // the outer MDP cursor after mapping when another planned run remains.
+            None => (None, None),
         };
         let response = build_page(
             plan,
