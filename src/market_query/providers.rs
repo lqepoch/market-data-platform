@@ -174,6 +174,26 @@ impl MarketBarsProviderRuntime {
         )
     }
 
+    /// Select a synthetic provider run in unit tests without manufacturing an admission receipt.
+    /// This test-only path uses the runtime's real signer and cursor rules but must never be used
+    /// as authorization to perform provider I/O.
+    #[cfg(test)]
+    pub(crate) fn select_page_at_synthetic_for_test(
+        &self,
+        request: &BarsRequestV1,
+        plan: &MarketBarsPlan,
+        rights_profile_sha256: &str,
+        now_unix_seconds: u64,
+    ) -> Result<ProviderPageSelection, ProviderQueryError> {
+        cursor::select_page_at_synthetic_for_test(
+            request,
+            plan,
+            rights_profile_sha256,
+            &self.cursor_signer,
+            now_unix_seconds,
+        )
+    }
+
     /// Compatibility name for callers that distinguish request admission from clock selection.
     pub fn select_page_for_request(
         &self,

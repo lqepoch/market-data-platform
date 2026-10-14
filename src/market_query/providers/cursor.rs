@@ -430,6 +430,26 @@ pub(super) fn select_page_with_admissions(
     )
 }
 
+/// Mechanical pagination helper for synthetic unit tests only. It retains the runtime signer,
+/// principal binding, request/plan checks, and normal cursor TTL while skipping provider admission.
+#[cfg(test)]
+pub(super) fn select_page_at_synthetic_for_test(
+    request: &BarsRequestV1,
+    plan: &MarketBarsPlan,
+    rights_profile_sha256: &str,
+    signer: &CursorSigner,
+    now_unix_seconds: u64,
+) -> Result<ProviderPageSelection, ProviderQueryError> {
+    select_page_inner(
+        request,
+        plan,
+        None,
+        Some(rights_profile_sha256.to_owned()),
+        signer,
+        now_unix_seconds,
+    )
+}
+
 fn select_page_inner(
     request: &BarsRequestV1,
     plan: &MarketBarsPlan,
