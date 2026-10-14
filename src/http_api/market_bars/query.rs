@@ -913,17 +913,18 @@ fn publish_cache_observation(
         runtime.authority.as_ref(),
         runtime.page_admission_evidence_source.as_ref(),
     ) {
-        let admission_evidence = super::MarketBarsPageAdmissionContext::new(
-            request,
-            scope,
-            &raw_page,
-            &cache_page,
-            &evidence,
-            &phase_slices,
-            policy,
-            now_unix_seconds,
-        )
-        .and_then(|context| evidence_source.evidence_for_page(context));
+        let admission_evidence =
+            super::MarketBarsPageAdmissionContext::new(super::MarketBarsPageAdmissionInput {
+                request,
+                source_scope: scope,
+                raw_observations: &raw_page,
+                canonical_response: &cache_page,
+                page_evidence: &evidence,
+                phase_slices: &phase_slices,
+                policy,
+                now_unix_seconds,
+            })
+            .and_then(|context| evidence_source.evidence_for_page(context));
         if let Some(admission_evidence) = admission_evidence {
             match crate::archive::reconciliation::authority::verify_provider_admission_v1(
                 request,

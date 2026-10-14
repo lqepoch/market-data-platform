@@ -88,13 +88,21 @@ pub(super) struct MarketBarsAuthorityRuntime {
         crate::archive::reconciliation::authority::ReconciliationPolicyV1,
 }
 
-/// Optional integration hook for an independently trusted issuer that can attest facts from the
-/// actual provider page. It receives immutable raw and canonical observations plus their exact
-/// query scope. Implementations must return `None` when any source, feed, entitlement, runtime, or
-/// page fact is unavailable; they must never infer those facts from request labels or configuration.
-///
-/// Production startup leaves this unset. The trait does not create keys, sign receipts, or widen
-/// provider permissions; returned evidence still passes the A04 verifier and dataset-binding path.
+/// Immutable facts supplied to a future trusted page attestor. Callers cannot provide a binding;
+/// construction computes it from the exact source and dataset inputs.
+pub(crate) struct MarketBarsPageAdmissionInput<'a> {
+    pub(crate) request: &'a BarsRequestV1,
+    pub(crate) source_scope: &'a crate::archive::reconciliation::CacheQuerySourceScopeV1,
+    pub(crate) raw_observations: &'a BarsResponseV1,
+    pub(crate) canonical_response: &'a BarsResponseV1,
+    pub(crate) page_evidence: &'a crate::archive::reconciliation::ProviderPageEvidenceV1,
+    pub(crate) phase_slices:
+        &'a [crate::archive::reconciliation::authority::ProviderPhaseSliceV1],
+    pub(crate) policy: &'a crate::archive::reconciliation::authority::ReconciliationPolicyV1,
+    pub(crate) now_unix_seconds: u64,
+}
+
+/// Exact validated context passed to an independently trusted page attestor.
 pub(crate) struct MarketBarsPageAdmissionContext<'a> {
     pub(crate) request: &'a BarsRequestV1,
     pub(crate) source_scope: &'a crate::archive::reconciliation::CacheQuerySourceScopeV1,
@@ -110,54 +118,68 @@ pub(crate) struct MarketBarsPageAdmissionContext<'a> {
 }
 
 impl<'a> MarketBarsPageAdmissionContext<'a> {
-    pub(crate) fn new(
-        request: &'a BarsRequestV1,
-        source_scope: &'a crate::archive::reconciliation::CacheQuerySourceScopeV1,
-        raw_observations: &'a BarsResponseV1,
-        canonical_response: &'a BarsResponseV1,
-        page_evidence: &'a crate::archive::reconciliation::ProviderPageEvidenceV1,
-        phase_slices: &'a [crate::archive::reconciliation::authority::ProviderPhaseSliceV1],
-        policy: &'a crate::archive::reconciliation::authority::ReconciliationPolicyV1,
-        now_unix_seconds: u64,
-    ) -> Option<Self> {
+    pub(crate) fn new(input: MarketBarsPageAdmissionInput<'a>) -> Option<Self> {
         let dataset_binding =
             crate::archive::reconciliation::provider_admission_dataset_binding_for_bars_responses(
-                request,
-                source_scope,
-                raw_observations,
-                canonical_response,
-                page_evidence,
-                policy,
+                input.request,
+                input.source_scope,
+                input.raw_observations,
+                input.canonical_response,
+                input.page_evidence,
+                input.policy,
             )
             .ok()?;
         let context = Self {
-            request,
-            source_scope,
-            raw_observations,
-            canonical_response,
-            page_evidence,
+            request: input.request,
+            source_scope: input.source_scope,
+            raw_observations: input.raw_observations,
+            canonical_response: input.canonical_response,
+            page_evidence: input.page_evidence,
             dataset_binding,
-            phase_slices,
-            policy,
-            now_unix_seconds,
+            phase_slices: input.phase_slices,
+            policy: input.policy,
+            now_unix_seconds: input.now_unix_seconds,
         };
         context.is_valid().then_some(context)
     }
 
     fn is_valid(&self) -> bool {
-        self.now_unix_seconds > 0
-            && !self.phase_slices.is_empty()
-            && self.phase_slices.iter().all(|phase| {
+        if self.now_unix_seconds == 0
+            || self.phase_slices.is_empty()
+            || !self.phase_slices.iter().all(|phase| {
                 self.source_scope
                     .session_instance_ids
                     .contains(&phase.session_instance_id)
             })
+        {
+            return false;
+        }
+        let Ok(recalculated_binding) =
+            crate::archive::reconciliation::provider_admission_dataset_binding_for_bars_responses(
+                self.request,
+                self.source_scope,
+                self.raw_observations,
+                self.canonical_response,
+                self.page_evidence,
+                self.policy,
+            )
+        else {
+            return false;
+        };
+        recalculated_binding == self.dataset_binding
             && self.dataset_binding.coverage_complete
             && !self.dataset_binding.has_gaps
             && !self.dataset_binding.truncated
     }
 }
 
+/// Optional integration hook for an independently trusted issuer that can attest facts from the
+/// actual provider page. It receives immutable raw and canonical observations plus their exact
+/// query scope. Implementations must return `None` when any source, feed, entitlement, runtime, or
+/// page fact is unavailable; they must never infer those facts from request labels or configuration.
+///
+/// Production startup leaves this unset. The trait does not create keys, sign receipts, or widen
+/// provider permissions; returned evidence still passes the A04 verifier and dataset-binding path.
 pub(crate) trait MarketBarsPageAdmissionEvidenceSource: Send + Sync {
     fn evidence_for_page(
         &self,
@@ -252,6 +274,13 @@ impl MarketBarsRuntime {
 
     /// Add authority only from a trusted in-process issuer/loader. Ordinary startup always leaves
     /// this unset; no boolean setting, OIDC claim, provider label, or cache profile grants it.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Reserved for a reviewed trusted in-process admission issuer; production startup intentionally leaves authority unset"
+        )
+    )]
     pub(crate) fn with_verified_admission_context(
         mut self,
         verifier: Arc<
@@ -272,6 +301,13 @@ impl MarketBarsRuntime {
 
     /// Inject a page evidence source owned by a separately reviewed in-process trust boundary.
     /// Without this hook, fresh provider pages can only be published as provisional observations.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Reserved for a reviewed trusted in-process page attestor; production startup intentionally leaves this hook unset"
+        )
+    )]
     pub(crate) fn with_page_admission_evidence_source(
         mut self,
         source: Arc<dyn MarketBarsPageAdmissionEvidenceSource>,
