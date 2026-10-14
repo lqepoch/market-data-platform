@@ -20,16 +20,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-mod authority;
+pub(crate) mod authority;
 mod authority_types;
 mod store;
-pub(crate) use authority::{
-    AdmissionVerifyErrorV1, ProviderAdmissionClaimsV1, ProviderAdmissionDatasetBindingV1,
-    ProviderAdmissionEvidenceV1, ProviderAdmissionReceiptV1, ProviderPhaseSliceV1,
-    ReconciliationPolicyV1, TrustedProviderAdmissionVerifierV1,
-    UnavailableProviderAdmissionVerifierV1, VerifiedProviderAdmissionV1,
-    verify_provider_admission_v1,
-};
+use authority::ProviderAdmissionDatasetBindingV1;
 #[allow(unused_imports)] // The frozen HTTP adapter consumes these crate-private store APIs.
 pub(crate) use store::{
     CacheAuthorityV1, CacheBarsResponsesInputV1, CacheCurrentOperationV1, CacheCurrentV1,

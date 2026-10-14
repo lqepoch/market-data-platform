@@ -2,6 +2,10 @@ use std::collections::BTreeMap;
 
 use market_contracts::EntitlementState;
 
+use super::authority::{
+    ProviderAdmissionEvidenceV1, ProviderPhaseSliceV1,
+    UnavailableProviderAdmissionVerifierV1,
+};
 use super::*;
 
 fn cache_input<'a>(
