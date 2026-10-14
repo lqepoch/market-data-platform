@@ -18,9 +18,10 @@ use crate::{
 };
 
 pub(crate) mod overnight_overlay;
+#[cfg(test)]
+pub(crate) use overnight_overlay::OvernightRouteFeedV1;
 pub(crate) use overnight_overlay::{
-    CalendarComponentsV1, CalendarSnapshotSelection, CashCalendarComponentV1,
-    OvernightCalendarComponentV1, OvernightOverlayStatus, OvernightRouteFeedV1, OvernightRouteV1,
+    CalendarComponentsV1, CalendarSnapshotSelection, OvernightOverlayStatus, OvernightRouteV1,
 };
 use overnight_overlay::{VerifiedOvernightCalendarOverlay, verify_signed_overnight_overlay};
 

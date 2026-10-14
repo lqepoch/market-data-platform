@@ -1,7 +1,5 @@
 //! Unit tests for trusted provider-specific overnight calendar overlays.
 
-use std::sync::Arc;
-
 use chrono::{Datelike, NaiveDate};
 use market_contracts::AssetClassV1;
 
@@ -270,7 +268,7 @@ fn install(
 ) -> LoadedMarketCalendar {
     let input_sha256 = super::sha256(&fixture.bytes);
     LoadedMarketCalendar::synthetic_cash_snapshot_for_tests(cash, CASH_INPUT_SHA256)
-        .with_signed_overnight_overlay(&fixture.bytes, &input_sha256, Arc::clone(&fixture.verifier))
+        .with_signed_overnight_overlay(&fixture.bytes, &input_sha256, fixture.verifier.clone())
 }
 
 fn select(
@@ -536,7 +534,7 @@ fn overlay_fails_closed_for_expiry_revocation_ineligible_symbol_or_asset() {
             .with_signed_overnight_overlay(
                 &expired.bytes,
                 &super::sha256(&expired.bytes),
-                Arc::clone(&expired.verifier),
+                expired.verifier.clone(),
             )
             .snapshot_for_instrument_at(AssetClassV1::Etf, "DIA", over_window, 1_741_550_000);
     assert_eq!(not_eligible.status, OvernightOverlayStatus::NotEligible);
@@ -647,7 +645,7 @@ fn signature_tamper_raw_pin_mismatch_and_out_of_coverage_never_add_windows() {
             .with_signed_overnight_overlay(
                 &fixture.bytes,
                 &"a".repeat(64),
-                Arc::clone(&fixture.verifier),
+                fixture.verifier.clone(),
             );
     assert_eq!(
         select(&wrong_pin, over_window, 1_741_600_000).status,
@@ -664,7 +662,7 @@ fn signature_tamper_raw_pin_mismatch_and_out_of_coverage_never_add_windows() {
             .with_signed_overnight_overlay(
                 &tampered,
                 &super::sha256(&tampered),
-                Arc::clone(&fixture.verifier),
+                fixture.verifier.clone(),
             );
     let selection = select(&tampered_calendar, over_window, 1_741_600_000);
     assert_eq!(selection.status, OvernightOverlayStatus::TrustRejected);
@@ -698,7 +696,7 @@ fn synthetic_hmac_authentication_rejects_tampered_claims_and_untrusted_identity(
             .with_signed_overnight_overlay(
                 &changed_claims,
                 &super::sha256(&changed_claims),
-                Arc::clone(&fixture.verifier),
+                fixture.verifier.clone(),
             );
     let selection = select(&calendar, over_window, 1_741_600_000);
     assert_eq!(selection.status, OvernightOverlayStatus::TrustRejected);
@@ -716,7 +714,7 @@ fn synthetic_hmac_authentication_rejects_tampered_claims_and_untrusted_identity(
         .with_signed_overnight_overlay(
             &wrong_identity,
             &super::sha256(&wrong_identity),
-            Arc::clone(&fixture.verifier),
+            fixture.verifier.clone(),
         );
         let selection = select(&calendar, over_window, 1_741_600_000);
         assert_eq!(selection.status, OvernightOverlayStatus::TrustRejected);
@@ -758,7 +756,7 @@ fn overlay_resource_limits_reject_oversized_bytes_windows_and_symbols() {
             .with_signed_overnight_overlay(
                 &too_many_windows.bytes,
                 &super::sha256(&too_many_windows.bytes),
-                Arc::clone(&too_many_windows.verifier),
+                too_many_windows.verifier.clone(),
             );
     let selection = select(&window_calendar, over_window, 1_741_600_000);
     assert_eq!(selection.status, OvernightOverlayStatus::InvalidArtifact);
@@ -786,7 +784,7 @@ fn overlay_resource_limits_reject_oversized_bytes_windows_and_symbols() {
             .with_signed_overnight_overlay(
                 &too_many_symbols.bytes,
                 &super::sha256(&too_many_symbols.bytes),
-                Arc::clone(&too_many_symbols.verifier),
+                too_many_symbols.verifier.clone(),
             );
     let selection = select(&symbol_calendar, over_window, 1_741_600_000);
     assert_eq!(selection.status, OvernightOverlayStatus::InvalidArtifact);
@@ -806,7 +804,7 @@ fn overlay_resource_limits_reject_oversized_bytes_windows_and_symbols() {
             .with_signed_overnight_overlay(
                 &oversized_bytes,
                 &super::sha256(&oversized_bytes),
-                Arc::clone(&valid_fixture.verifier),
+                valid_fixture.verifier.clone(),
             );
     let selection = select(&oversized_calendar, over_window, 1_741_600_000);
     assert_eq!(selection.status, OvernightOverlayStatus::InvalidArtifact);
