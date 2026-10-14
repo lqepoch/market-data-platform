@@ -4,6 +4,22 @@ use market_contracts::EntitlementState;
 
 use super::*;
 
+fn cache_input<'a>(
+    request: &'a BarsRequestV1,
+    source_scope: &'a CacheQuerySourceScopeV1,
+    raw_observations: BarsResponseV1,
+    canonical_response: BarsResponseV1,
+    page_evidence: ProviderPageEvidenceV1,
+) -> CacheBarsResponsesInputV1<'a> {
+    CacheBarsResponsesInputV1::new(
+        request,
+        source_scope,
+        raw_observations,
+        canonical_response,
+        page_evidence,
+    )
+}
+
 fn row(identity: &str, price: &str, volume: &str) -> CanonicalRowV1 {
     CanonicalRowV1::new(
         identity,
@@ -770,11 +786,13 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
     cancellation.cancel();
     assert!(matches!(
         store.publish_bars_responses_cancellable(
-            &request,
-            &source_scope,
-            test_response("600.25"),
-            test_response("600.25"),
-            test_page_evidence(),
+            cache_input(
+                &request,
+                &source_scope,
+                test_response("600.25"),
+                test_response("600.25"),
+                test_page_evidence(),
+            ),
             1_800_000_000,
             &tolerance,
             &cancellation,
@@ -783,11 +801,13 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
     ));
     let first = store
         .publish_bars_responses(
-            &request,
-            &source_scope,
-            raw_first_response,
-            canonical_first_response,
-            test_page_evidence(),
+            cache_input(
+                &request,
+                &source_scope,
+                raw_first_response,
+                canonical_first_response,
+                test_page_evidence(),
+            ),
             1_800_000_000,
             &tolerance,
         )
@@ -838,11 +858,13 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
     canonical_page.cache_status = BarsCacheStatusV1::Miss;
     let page_publish = store
         .publish_bars_responses(
-            &page_request,
-            &source_scope,
-            raw_page,
-            canonical_page,
-            page_evidence,
+            cache_input(
+                &page_request,
+                &source_scope,
+                raw_page,
+                canonical_page,
+                page_evidence,
+            ),
             1_800_000_100,
             &tolerance,
         )
@@ -887,11 +909,13 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
     };
     store
         .publish_bars_responses(
-            &no_cursor_request,
-            &source_scope,
-            no_cursor_page.clone(),
-            no_cursor_page,
-            no_cursor_evidence,
+            cache_input(
+                &no_cursor_request,
+                &source_scope,
+                no_cursor_page.clone(),
+                no_cursor_page,
+                no_cursor_evidence,
+            ),
             1_800_000_100,
             &tolerance,
         )
@@ -904,11 +928,13 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
 
     let second = store
         .publish_synthetic_verified_bars_responses(
-            &request,
-            &source_scope,
-            test_response("600.26"),
-            test_response("600.26"),
-            test_page_evidence(),
+            cache_input(
+                &request,
+                &source_scope,
+                test_response("600.26"),
+                test_response("600.26"),
+                test_page_evidence(),
+            ),
             1_800_000_010,
             &tolerance,
         )
@@ -918,11 +944,13 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
     let second_id = second.published_version_id.clone();
     let provisional_refresh = store
         .publish_bars_responses(
-            &request,
-            &source_scope,
-            test_response("600.27"),
-            test_response("600.27"),
-            test_page_evidence(),
+            cache_input(
+                &request,
+                &source_scope,
+                test_response("600.27"),
+                test_response("600.27"),
+                test_page_evidence(),
+            ),
             1_800_000_012,
             &tolerance,
         )
@@ -932,11 +960,13 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
     let conflict_response = test_response("600.30");
     assert!(matches!(
         store.publish_bars_responses(
-            &request,
-            &source_scope,
-            conflict_response.clone(),
-            conflict_response,
-            test_page_evidence(),
+            cache_input(
+                &request,
+                &source_scope,
+                conflict_response.clone(),
+                conflict_response,
+                test_page_evidence(),
+            ),
             1_800_000_015,
             &tolerance,
         ),

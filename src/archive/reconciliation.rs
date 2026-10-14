@@ -23,9 +23,9 @@ use thiserror::Error;
 mod store;
 #[allow(unused_imports)] // The frozen HTTP adapter consumes these crate-private store APIs.
 pub(crate) use store::{
-    CacheAuthorityV1, CacheCurrentOperationV1, CacheCurrentV1, CacheInvalidationV1, CacheLimitsV1,
-    CachePublishResultV1, CacheReadResultV1, CacheSnapshotV1, CacheVersionStoreV1,
-    CacheVersionSummaryV1,
+    CacheAuthorityV1, CacheBarsResponsesInputV1, CacheCurrentOperationV1, CacheCurrentV1,
+    CacheInvalidationV1, CacheLimitsV1, CachePublishResultV1, CacheReadResultV1, CacheSnapshotV1,
+    CacheVersionStoreV1, CacheVersionSummaryV1,
 };
 
 #[cfg(test)]
@@ -571,7 +571,7 @@ fn provider_cursor_payload_sha256(payload_json: &str) -> String {
 /// SDK/provider observation data, not HTTP wire bodies or credentials. The provider cursor is
 /// intentionally omitted from serialization and redacted from Debug; it is persisted separately
 /// in a query-bound private version receipt.
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Default, Eq, PartialEq)]
 pub(crate) struct ProviderPageEvidenceV1 {
     pub source_observation_sha256: Option<String>,
     pub response_observed_at_utc: Option<market_contracts::ProtoTimestampV2>,
@@ -604,22 +604,6 @@ impl fmt::Debug for ProviderPageEvidenceV1 {
                     .map(|_| "[REDACTED]"),
             )
             .finish()
-    }
-}
-
-impl Default for ProviderPageEvidenceV1 {
-    fn default() -> Self {
-        Self {
-            source_observation_sha256: None,
-            response_observed_at_utc: None,
-            pages_seen: None,
-            pages_exhausted: None,
-            first_source_sequence: None,
-            last_source_sequence: None,
-            sequence_gap_count: None,
-            truncated: false,
-            provider_cursor_cache_input: None,
-        }
     }
 }
 

@@ -113,6 +113,55 @@ pub(crate) struct CacheSnapshotV1 {
     bars_evidence: BarsCacheEvidenceV1,
 }
 
+/// Inputs shared by cache publication paths. Grouping the immutable query identity and the two
+/// separately validated row sets keeps callers from accidentally swapping raw/canonical data.
+pub(crate) struct CacheBarsResponsesInputV1<'a> {
+    request: &'a BarsRequestV1,
+    source_scope: &'a CacheQuerySourceScopeV1,
+    raw_observations: BarsResponseV1,
+    canonical_response: BarsResponseV1,
+    page_evidence: ProviderPageEvidenceV1,
+}
+
+impl<'a> CacheBarsResponsesInputV1<'a> {
+    pub(crate) fn new(
+        request: &'a BarsRequestV1,
+        source_scope: &'a CacheQuerySourceScopeV1,
+        raw_observations: BarsResponseV1,
+        canonical_response: BarsResponseV1,
+        page_evidence: ProviderPageEvidenceV1,
+    ) -> Self {
+        Self {
+            request,
+            source_scope,
+            raw_observations,
+            canonical_response,
+            page_evidence,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CachePublishContextV1<'a> {
+    now_unix_seconds: u64,
+    tolerance: &'a SameFeedTolerancePolicyV1,
+    authority_basis: CacheAuthorityBasisV1,
+}
+
+struct CacheVersionIdentityV1<'a> {
+    key_fingerprint: &'a str,
+    generation: u64,
+    now_unix_seconds: u64,
+    raw_sha: &'a str,
+    canonical_sha: &'a str,
+    rows_sha: &'a str,
+    raw_bars_rows_sha: &'a str,
+    bars_rows_sha: &'a str,
+    raw_source_evidence_sha: &'a str,
+    source_evidence_sha: &'a str,
+    coverage_evidence_sha: &'a str,
+}
+
 impl CacheSnapshotV1 {
     pub(crate) fn from_bars_response(
         request: &BarsRequestV1,
@@ -156,7 +205,6 @@ impl CacheSnapshotV1 {
             return Err(CacheReconciliationError::InvalidInput);
         }
         let provider_cursor_cache_input = page_evidence.provider_cursor_cache_input.clone();
-        let raw_response = raw_response;
         let mut response = normalize_bars_response(&canonical_response)?;
         if raw_response.rows.is_empty() || response.rows.is_empty() {
             return Err(CacheReconciliationError::InvalidInput);
@@ -400,23 +448,17 @@ impl CacheVersionStoreV1 {
     /// immutable version publication. This input is not an HTTP raw-frame capture.
     pub(crate) fn publish_bars_responses(
         &self,
-        request: &BarsRequestV1,
-        source_scope: &CacheQuerySourceScopeV1,
-        raw_observations: BarsResponseV1,
-        canonical_response: BarsResponseV1,
-        page_evidence: ProviderPageEvidenceV1,
+        input: CacheBarsResponsesInputV1<'_>,
         now_unix_seconds: u64,
         tolerance: &SameFeedTolerancePolicyV1,
     ) -> Result<CachePublishResultV1> {
         self.publish_bars_responses_with_basis(
-            request,
-            source_scope,
-            raw_observations,
-            canonical_response,
-            page_evidence,
-            now_unix_seconds,
-            tolerance,
-            CacheAuthorityBasisV1::ProviderAdmissionUnavailable,
+            input,
+            CachePublishContextV1 {
+                now_unix_seconds,
+                tolerance,
+                authority_basis: CacheAuthorityBasisV1::ProviderAdmissionUnavailable,
+            },
         )
     }
 
@@ -426,11 +468,7 @@ impl CacheVersionStoreV1 {
     /// reload the current manifest rather than retrying blindly.
     pub(crate) fn publish_bars_responses_cancellable(
         &self,
-        request: &BarsRequestV1,
-        source_scope: &CacheQuerySourceScopeV1,
-        raw_observations: BarsResponseV1,
-        canonical_response: BarsResponseV1,
-        page_evidence: ProviderPageEvidenceV1,
+        input: CacheBarsResponsesInputV1<'_>,
         now_unix_seconds: u64,
         tolerance: &SameFeedTolerancePolicyV1,
         cancellation: &CancellationToken,
@@ -438,15 +476,7 @@ impl CacheVersionStoreV1 {
         if cancellation.is_cancelled() {
             return Err(CacheReconciliationError::Cancelled);
         }
-        let result = self.publish_bars_responses(
-            request,
-            source_scope,
-            raw_observations,
-            canonical_response,
-            page_evidence,
-            now_unix_seconds,
-            tolerance,
-        )?;
+        let result = self.publish_bars_responses(input, now_unix_seconds, tolerance)?;
         if cancellation.is_cancelled() {
             return Err(CacheReconciliationError::UnknownOutcome);
         }
@@ -456,37 +486,37 @@ impl CacheVersionStoreV1 {
     #[cfg(test)]
     pub(crate) fn publish_synthetic_verified_bars_responses(
         &self,
-        request: &BarsRequestV1,
-        source_scope: &CacheQuerySourceScopeV1,
-        raw_observations: BarsResponseV1,
-        canonical_response: BarsResponseV1,
-        page_evidence: ProviderPageEvidenceV1,
+        input: CacheBarsResponsesInputV1<'_>,
         now_unix_seconds: u64,
         tolerance: &SameFeedTolerancePolicyV1,
     ) -> Result<CachePublishResultV1> {
         self.publish_bars_responses_with_basis(
-            request,
-            source_scope,
-            raw_observations,
-            canonical_response,
-            page_evidence,
-            now_unix_seconds,
-            tolerance,
-            CacheAuthorityBasisV1::SyntheticVerified,
+            input,
+            CachePublishContextV1 {
+                now_unix_seconds,
+                tolerance,
+                authority_basis: CacheAuthorityBasisV1::SyntheticVerified,
+            },
         )
     }
 
     fn publish_bars_responses_with_basis(
         &self,
-        request: &BarsRequestV1,
-        source_scope: &CacheQuerySourceScopeV1,
-        raw_observations: BarsResponseV1,
-        canonical_response: BarsResponseV1,
-        page_evidence: ProviderPageEvidenceV1,
-        now_unix_seconds: u64,
-        tolerance: &SameFeedTolerancePolicyV1,
-        authority_basis: CacheAuthorityBasisV1,
+        input: CacheBarsResponsesInputV1<'_>,
+        context: CachePublishContextV1<'_>,
     ) -> Result<CachePublishResultV1> {
+        let CacheBarsResponsesInputV1 {
+            request,
+            source_scope,
+            raw_observations,
+            canonical_response,
+            page_evidence,
+        } = input;
+        let CachePublishContextV1 {
+            now_unix_seconds,
+            tolerance,
+            authority_basis,
+        } = context;
         ensure_worker_supported()?;
         let snapshot = CacheSnapshotV1::from_bars_responses(
             request,
@@ -692,19 +722,19 @@ impl CacheVersionStoreV1 {
                 .ok_or(CacheReconciliationError::LimitExceeded)?,
             None => 1,
         };
-        let version_id = version_id(
-            &key_fingerprint,
-            next_generation,
+        let version_id = version_id(CacheVersionIdentityV1 {
+            key_fingerprint: &key_fingerprint,
+            generation: next_generation,
             now_unix_seconds,
-            &raw_sha,
-            &canonical_sha,
-            &rows_sha,
-            &raw_bars_rows_sha,
-            &bars_rows_sha,
-            &raw_source_evidence_sha,
-            &source_evidence_sha,
-            &coverage_evidence_sha,
-        );
+            raw_sha: &raw_sha,
+            canonical_sha: &canonical_sha,
+            rows_sha: &rows_sha,
+            raw_bars_rows_sha: &raw_bars_rows_sha,
+            bars_rows_sha: &bars_rows_sha,
+            raw_source_evidence_sha: &raw_source_evidence_sha,
+            source_evidence_sha: &source_evidence_sha,
+            coverage_evidence_sha: &coverage_evidence_sha,
+        });
         let expires_at = now_unix_seconds
             .checked_add(self.limits.ttl.as_secs())
             .ok_or(CacheReconciliationError::LimitExceeded)?;
@@ -1552,19 +1582,20 @@ fn ensure_worker_supported() -> Result<()> {
     }
 }
 
-fn version_id(
-    key_fingerprint: &str,
-    generation: u64,
-    now_unix_seconds: u64,
-    raw_sha: &str,
-    canonical_sha: &str,
-    rows_sha: &str,
-    raw_bars_rows_sha: &str,
-    bars_rows_sha: &str,
-    raw_source_evidence_sha: &str,
-    source_evidence_sha: &str,
-    coverage_evidence_sha: &str,
-) -> String {
+fn version_id(identity: CacheVersionIdentityV1<'_>) -> String {
+    let CacheVersionIdentityV1 {
+        key_fingerprint,
+        generation,
+        now_unix_seconds,
+        raw_sha,
+        canonical_sha,
+        rows_sha,
+        raw_bars_rows_sha,
+        bars_rows_sha,
+        raw_source_evidence_sha,
+        source_evidence_sha,
+        coverage_evidence_sha,
+    } = identity;
     let nonce = VERSION_NONCE.fetch_add(1, Ordering::Relaxed);
     let mut digest = Sha256::new();
     digest.update(b"lqepoch.mdp.cache-version-id.v1\0");
