@@ -37,6 +37,29 @@ The nine-repository map is a [governance candidate in Draft PR #20](https://gith
   counts are canonical decimal strings while CLI JSON retains numbers. HTTP must not imply
   DatasetManifestV2 completion evidence. LocalTest HTTP is diagnostic-only and explicitly
   synthetic/unknown. Keep browser reads behind a trusted BFF; never expose cache or rclone config.
+- `archive::reconciliation` is a separate crate-private local cache-version store. Derive keys
+  before fetch from the request and stable actual route scope: provider/feed (preserve `unknown`),
+  stable non-secret route identity, hashed entitlement realm, entitlement, numeric encoding,
+  requested/effective resolution, adjustment, asset class, symbol/session/window/calendar,
+  request-cursor digest, and Core-owned schema fingerprint. Keep response/coverage hashes in
+  immutable receipts, never in
+  lookup keys; never store credentials or the MDP outer cursor. Only an A02-validated provider-local
+  page cursor may be persisted in the private immutable receipt, with provider/feed, entitlement
+  realm, cache-key hash, payload hash, and expiry binding; keep its value out of logs and Debug.
+  Initialize the cache root only when it is new or empty, using its fixed private ownership marker;
+  reject an unmarked non-empty root without changing permissions or contents. Do not migrate or
+  point this store at the existing QQQ Drive or Stock S3OSS data roots.
+  One cached snapshot must represent one actual provider/feed. Persist raw and canonical Parquet with immutable
+  version receipts, verify both through the existing bounded Linux worker, and atomically update
+  the local current manifest only after readback. Incomplete, truncated, gapped, unexhausted, Futu,
+  or binary-float input remains provisional; historical bars may omit stream sequence evidence,
+  while any absent page/exhaustion fact prevents a complete cache claim. Production authority stays
+  closed until a trusted provider-admission proof is wired; same-feed Alpaca conflict rejects
+  replacement and preserves the old verified current version. Rollback and recovery require an
+  explicitly selected verified version. Do not wire this store to remote archive writers or existing QQQ Drive / Stock
+  S3OSS writers. Non-Linux must return `Unsupported` without inline Parquet decode. See
+  `docs/policies/mdp-cache-reconciliation-v1.md`; the HTTP owner must propagate returned
+  invalidation after integrating the adapter.
 - The optional `offline-capture-synthetic` feature may replay only the broker-owned fixed
   `AlpacaOpraTradeV1` MessagePack fixture through its existing runner. Preserve `alpaca/opra` and
   unknown entitlement. Mark Pair manifests `LocalArchive` because they describe exact local finite
@@ -110,9 +133,9 @@ The nine-repository map is a [governance candidate in Draft PR #20](https://gith
   kill and reap its owned process group on timeout or parent exit (including descendants holding
   inherited pipes), and consume the shared background-worker permit. Fail closed on platforms where
   process-group termination is unsupported.
-- Run `cargo +1.98.1 fmt --all -- --check`, `CARGO_BUILD_JOBS=2 cargo +1.98.1 clippy --offline
-  --all-targets -- -D warnings`, and `CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline` for Rust
-  changes. Also run `CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline --features
+- Run `cargo +1.99.0 fmt --all -- --check`, `CARGO_BUILD_JOBS=2 cargo +1.99.0 clippy --offline
+  --all-targets -- -D warnings`, and `CARGO_BUILD_JOBS=2 cargo +1.99.0 test --offline` for Rust
+  changes. Also run `CARGO_BUILD_JOBS=2 cargo +1.99.0 test --offline --features
   offline-capture-synthetic --lib` for the feature-gated Pair HTTP route tests. Keep shared-schema
   golden tests and the synthetic CLI replay passing.
 - `scripts/container_smoke.sh` is an offline LocalTest-only container smoke. It requires an already
@@ -126,7 +149,7 @@ The nine-repository map is a [governance candidate in Draft PR #20](https://gith
   behavior, or validation boundary changes.
 - Supply-chain changes must keep `deny.toml`, `supply-chain/git-source-pins.json`, the committed
   CycloneDX SBOM, license inventory, and `SOURCE-MANIFEST.json` synchronized. Run
-  `cargo +1.98.1 deny --all-features check all`, `python3 -m unittest discover -s tests -p
+  `cargo +1.99.0 deny --all-features check all`, `python3 -m unittest discover -s tests -p
   'test_supply_chain.py'`, and `python3 scripts/supply_chain.py --check`; unknown licenses,
   advisories, sources, or git revisions fail closed.
 
@@ -155,3 +178,5 @@ clean only the task's clean, merged branch after checking private-state filename
 Use the existing checkout when the task prohibits extra worktrees or clones.
 Merging a scoped fix is separate from release acceptance, deployment, provider
 entitlement and Paper/Live authorization; it grants none of those capabilities.
+
+Public compilation/build acceptance uses exact PR HEAD GitHub Actions; do not run local cargo build/test/clippy or Docker for this integration. Formatting, metadata, and source-manifest checks do not establish a compiled build. Private consumers retain their controlled native validation and credential isolation.

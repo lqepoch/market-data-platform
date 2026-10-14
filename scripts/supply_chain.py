@@ -25,7 +25,7 @@ SBOM_PATH = SUPPLY_CHAIN / "market-data-platform.cdx.json"
 NOTICE_PATH = SUPPLY_CHAIN / "NOTICE.txt"
 MANIFEST_PATH = SUPPLY_CHAIN / "SOURCE-MANIFEST.json"
 PINS_PATH = SUPPLY_CHAIN / "git-source-pins.json"
-RUST_TOOLCHAIN = "1.98.1"
+RUST_TOOLCHAIN = "1.99.0"
 DENY_VERSION = "0.20.2"
 CYCLONEDX_VERSION = "0.5.9"
 SBOM_SPEC = "1.5"
@@ -49,7 +49,11 @@ INPUT_PATHS = (
     "docs/fixtures/raw-event-pair-receipt-v2.json",
     "docs/SUPPLY_CHAIN.md",
     "docs/openapi-v1.yaml",
+    "docs/MARKET_QUERY_RUNTIME.md",
+    "docs/session-router.md",
+    "docs/policies/mdp-cache-reconciliation-v1.md",
     "supply-chain/git-source-pins.json",
+    "supply-chain/licenses/webpki-root-certs-1.0.9.LICENSE",
     "scripts/supply_chain.py",
     "scripts/container_smoke.sh",
     "tests/test_supply_chain.py",
@@ -188,6 +192,9 @@ def load_pins() -> list[dict[str, Any]]:
 
 
 def validate_deny_policy(pins: list[dict[str, Any]]) -> None:
+    license_path = ROOT / "supply-chain/licenses/webpki-root-certs-1.0.9.LICENSE"
+    if not license_path.is_file() or sha256_file(license_path) != "e271993808fec50ab29350b39539cdec611a9103f827e0aa26d61da70e2d33f8":
+        raise SupplyChainError("reviewed certificate-data license text is absent or changed")
     try:
         policy = tomllib.loads((ROOT / "deny.toml").read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as error:
@@ -220,7 +227,7 @@ def validate_deny_policy(pins: list[dict[str, Any]]) -> None:
         raise SupplyChainError("deny.toml duplicate skips must remain exact, versioned, and reasoned")
     if (
         set(licenses.get("allow", [])) != ALLOWED_LICENSES
-        or licenses.get("exceptions") != []
+        or licenses.get("exceptions") != [{"crate": "webpki-root-certs@1.0.9", "allow": ["CDLA-Permissive-2.0"]}]
         or licenses.get("include-dev") is not True
         or licenses.get("include-build") is not True
     ):

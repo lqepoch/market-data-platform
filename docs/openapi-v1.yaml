@@ -3,8 +3,10 @@ info:
   title: LQEpoch Market Data Platform Read API
   version: 1.0.0
   description: >-
-    Read-only authenticated access to verified MDP datasets. Bars are the existing
-    lqepoch.us_equity_trade_bar_1m.v1 contract. They do not carry DatasetManifestV2
+    Read-only authenticated access to verified MDP datasets. Dataset bars use the existing
+    lqepoch.us_equity_trade_bar_1m.v1 contract. The separate /v1/market/bars route uses
+    the pinned trading-core Bars V1 query contract with exact decimal strings, source segments,
+    gaps and stable bounded pagination. They do not carry DatasetManifestV2
     completion evidence. A future BarV2 response must use a separately versioned contract. The
     optional Linux LocalTest Pair route verifies one exact existing chunk and does not establish a
     capture rollup or provider completeness. It is mounted only when explicit LocalTest state and
@@ -245,6 +247,242 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /v1/market/bars:
+    get:
+      operationId: getMarketBarsV1
+      summary: Read bounded source-preserving market bars
+      description: >-
+        Requires the opt-in runtime and a pinned calendar. The interval is [start,end) in UTC.
+        Research mode requires the verified research channel. Unknown feed, entitlement and
+        adjustment evidence cannot be promoted. Downgrade requires explicit caller permission.
+        All fields are required except cursor; unknown and duplicate parameters are rejected.
+      security: [{mdpDelegation: []}]
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/symbol"
+        - name: asset_class
+          in: query
+          required: true
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/asset_class"
+        - name: start
+          in: query
+          required: true
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/start"
+        - name: end
+          in: query
+          required: true
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/end"
+        - name: resolution
+          in: query
+          required: true
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/resolution"
+        - name: session_scope
+          in: query
+          required: true
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/session_scope"
+        - name: adjustment
+          in: query
+          required: true
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/adjustment"
+        - name: provider_mode
+          in: query
+          required: true
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/provider_mode"
+        - name: allow_daily_downgrade
+          in: query
+          required: true
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/allow_daily_downgrade"
+        - name: limit
+          in: query
+          required: true
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/limit"
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsRequestV1/properties/cursor"
+      responses:
+        "200":
+          description: Complete or empty bounded response; this does not establish trusted provider authority.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsResponseV1"
+        "206":
+          description: Partial or unknown coverage, including continuation and classified gaps.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "https://raw.githubusercontent.com/lqepoch/trading-core/f793be47ab90ebff9f530c8b08f41db5e774e4e5/schemas/openapi.json#/components/schemas/BarsResponseV1"
+        "400":
+          description: Invalid, duplicated or unknown query parameter.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "401":
+          description: Invalid market delegation or upstream authentication failure.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "403":
+          description: Unauthorized channel or provider access denied.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "410":
+          description: Continuation cursor expired; restart the fixed request.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "413":
+          description: Bounded response limit exceeded.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "422":
+          description: Unsupported resolution, adjustment or provider capability.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "429":
+          description: Provider request quota exceeded.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "502":
+          description: Provider response rejected.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "503":
+          description: Disabled runtime, missing calendar or unavailable provider/cache.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+        "504":
+          description: Supervised query or provider deadline expired.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+  /v1/market/sessions:
+    get:
+      operationId: getMarketSessionInstancesV1
+      summary: Read cash calendar instances or a trusted instrument-scoped overnight overlay
+      security: [{mdpDelegation: []}]
+      parameters:
+        - name: start
+          in: query
+          required: true
+          schema: {type: string, format: date-time}
+          description: UTC timestamp ending in Z; half-open range bounded to 366 days.
+        - name: end
+          in: query
+          required: true
+          schema: {type: string, format: date-time}
+          description: UTC timestamp ending in Z; half-open range bounded to 366 days.
+        - name: symbol
+          in: query
+          required: false
+          schema: {type: string, maxLength: 32}
+          description: Optional instrument selector; must be supplied with asset_class.
+        - name: asset_class
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [stock, etf]
+          description: Optional instrument selector; must be supplied with symbol.
+      responses:
+        "200":
+          description: >-
+            Original calendar days and instances with stable version, public cash/overlay component
+            identities, overlay-selection status, and calendar-compatible overnight routes. Omitting
+            both instrument parameters selects cash only. Calendar routes do not grant provider
+            entitlement or prove data availability.
+        "400":
+          description: >-
+            Invalid or excessive window, unsupported instrument selector, or incomplete
+            symbol/asset_class pair.
+        "401":
+          description: Missing or invalid market delegation.
+        "503":
+          description: Pinned calendar absent or requested range not covered.
+  /v1/providers/capabilities:
+    get:
+      summary: Discover provider ownership without asserting entitlement or coverage
+      security: [{mdpDelegation: []}]
+      responses:
+        '200':
+          description: Registration with explicit unknown entitlement and pending runtime status
+        '401':
+          description: Missing or invalid market delegation
+  /v1/market/cache/status:
+    get:
+      summary: Discover cache availability and the authenticated principal's volatile invalidation events
+      description: >-
+        The event list is bounded to 128 process-local summaries for the verified principal and
+        operator cache profile. Events disappear on restart and report cache-pointer
+        invalidation/readback only; they do not assert market-data coverage, completeness,
+        freshness, or entitlement. The response omits profile hashes, cache fingerprints, rows,
+        and credentials.
+      security: [{mdpDelegation: []}]
+      responses:
+        '200':
+          description: Unified cache status and principal-scoped invalidation events, separate from the archive cache
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketCacheStatus"
+        '401':
+          description: Missing or invalid market delegation
+  /v1/market/quotes:
+    get:
+      summary: Reserved read-only quotes contract
+      security: [{mdpDelegation: []}]
+      responses:
+        '501':
+          description: UNSUPPORTED_PROVIDER_CAPABILITY; no market rows are fabricated
+        '401':
+          description: Missing or invalid market delegation
+  /v1/market/trades:
+    get:
+      summary: Reserved read-only trades contract
+      security: [{mdpDelegation: []}]
+      responses:
+        '501':
+          description: UNSUPPORTED_PROVIDER_CAPABILITY; no market rows are fabricated
+        '401':
+          description: Missing or invalid market delegation
+  /v1/news:
+    get:
+      summary: Reserved independent news read contract
+      security: [{mdpDelegation: []}]
+      responses:
+        '501':
+          description: UNSUPPORTED_PROVIDER_CAPABILITY; EqoBoard RSS adapters are not yet proxied. NewsItemV1 is a reserved contract, not a populated response.
+        '401':
+          description: Missing or invalid market delegation
 components:
   headers:
     NoStore:
@@ -265,6 +503,78 @@ components:
         other and from Gateway keys. Each BFF signer receives only its matching MDP key; the MDP
         verifier receives both.
   schemas:
+    MarketCacheStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - cache_status
+        - canonical_market_cache_configured
+        - runtime
+        - coverage_asserted
+        - note
+        - invalidation_events_status
+        - invalidation_events
+        - volatile
+        - restart_lost
+      properties:
+        schema_version: {type: string, const: market-cache-status-v1}
+        cache_status: {type: string, enum: [not_inspected, unavailable]}
+        canonical_market_cache_configured: {type: boolean}
+        runtime:
+          type: [object, "null"]
+          additionalProperties: true
+        note: {type: string}
+        invalidation_events_status: {type: string, enum: [available, unavailable]}
+        invalidation_events:
+          type: array
+          maxItems: 128
+          items:
+            $ref: "#/components/schemas/MarketCacheInvalidationEvent"
+        volatile: {type: boolean, const: true}
+        restart_lost: {type: boolean, const: true}
+        coverage_asserted: {type: boolean, const: false}
+    MarketCacheInvalidationEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - session_instance_id
+        - logical_generation
+        - logical_updated_at_unix_seconds
+        - reread_status
+        - current_provider
+        - current_feed
+        - current_authority
+      properties:
+        session_instance_id: {type: [string, "null"]}
+        logical_generation: {$ref: "#/components/schemas/NullableWireU64"}
+        logical_updated_at_unix_seconds: {$ref: "#/components/schemas/NullableWireU64"}
+        reread_status: {type: string, enum: [reread_verified, reread_unavailable]}
+        current_provider: {type: [string, "null"]}
+        current_feed: {type: [string, "null"]}
+        current_authority: {type: [string, "null"], enum: [authoritative, provisional, null]}
+    NewsItemV1:
+      description: >-
+        Reserved independent read-only news contract. The current /v1/news endpoint returns 501.
+        Publication and retrieval clocks describe news and never substitute for market event time.
+        Source ownership, content license and summary permissions require separate admission.
+      type: object
+      additionalProperties: false
+      required: [title, source, url, published_at, fetched_at, symbols, language, revision_id, dedup_id]
+      properties:
+        title: {type: string, maxLength: 2048}
+        source: {type: string, maxLength: 256}
+        url: {type: string, format: uri, maxLength: 4096}
+        published_at: {type: string, format: date-time}
+        fetched_at: {type: string, format: date-time}
+        symbols:
+          type: array
+          maxItems: 100
+          items: {type: string, maxLength: 32}
+        language: {type: string, maxLength: 32}
+        summary: {type: string, maxLength: 8192}
+        revision_id: {type: string, maxLength: 256}
+        dedup_id: {type: string, maxLength: 256}
     ErrorResponse:
       type: object
       required: [error]
@@ -547,3 +857,7 @@ components:
     WireU64:
       type: string
       pattern: "^(0|[1-9][0-9]*)$"
+    NullableWireU64:
+      oneOf:
+        - {$ref: "#/components/schemas/WireU64"}
+        - type: "null"

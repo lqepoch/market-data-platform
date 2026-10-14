@@ -36,7 +36,7 @@ struct DecodeWorkerPermit;
 impl DecodeWorkerPermit {
     fn acquire() -> Result<Self> {
         ACTIVE_DECODE_WORKERS
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |active| {
                 (active < MAX_ACTIVE_DECODE_WORKERS).then_some(active + 1)
             })
             .map_err(|_| MarketDataError::WriterLimit)?;

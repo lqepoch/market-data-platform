@@ -3,15 +3,19 @@
   "sources": [
     {
       "origin": "https://github.com/lqepoch/broker-connectors",
-      "rev": "873337e3fafe64344dfb9ac7719fad54f157a9c0",
+      "rev": "99e1d36f864d1e89e8cfba95651d29920e2f4c5a",
       "packages": [
+        "alpaca-core",
+        "alpaca-data",
+        "alpaca-rest-http",
+        "alpaca-rest-read",
         "alpaca-stream",
         "broker-ports"
       ]
     },
     {
       "origin": "https://github.com/lqepoch/trading-core",
-      "rev": "b2679e757576f8da7850cd4b5ea2958bc9a2354c",
+      "rev": "f793be47ab90ebff9f530c8b08f41db5e774e4e5",
       "packages": [
         "domain",
         "exact-decimal",

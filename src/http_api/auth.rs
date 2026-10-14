@@ -8,6 +8,7 @@ use axum::{
 };
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 use super::{ApiError, api_error};
 
@@ -18,6 +19,24 @@ const TERMINAL_KID: &str = "mdp-terminal";
 const RESEARCH_KID: &str = "mdp-research";
 const MAX_TOKEN_BYTES: usize = 8 * 1024;
 const MAX_TOKEN_LIFETIME_SECS: u64 = 60;
+
+/// Signature-verified principal. Raw identity fields never leave the authentication boundary.
+#[derive(Clone)]
+pub(super) struct VerifiedMarketPrincipal {
+    research_channel: bool,
+    principal_scope_sha256: String,
+}
+
+impl VerifiedMarketPrincipal {
+    pub(super) fn is_research(&self) -> bool {
+        self.research_channel
+    }
+
+    /// A cache partition, not a grant of source entitlement or account ownership.
+    pub(super) fn principal_scope_sha256(&self) -> &str {
+        &self.principal_scope_sha256
+    }
+}
 
 #[derive(Clone)]
 pub struct AuthConfig {
@@ -61,7 +80,10 @@ impl AuthConfig {
         }
     }
 
-    fn authenticate(&self, headers: &HeaderMap) -> std::result::Result<(), AuthFailure> {
+    fn authenticate(
+        &self,
+        headers: &HeaderMap,
+    ) -> std::result::Result<VerifiedMarketPrincipal, AuthFailure> {
         let authorization = headers
             .get(AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
@@ -127,7 +149,17 @@ impl AuthConfig {
         {
             return Err(AuthFailure::Unauthorized);
         }
-        Ok(())
+        let identity = serde_json::to_vec(&[
+            "mdp-verified-principal-cache-v1",
+            expected_issuer,
+            claims.idp_iss.as_str(),
+            claims.sub.as_str(),
+        ])
+        .map_err(|_| AuthFailure::Unauthorized)?;
+        Ok(VerifiedMarketPrincipal {
+            research_channel: expected_issuer == RESEARCH_ISSUER,
+            principal_scope_sha256: hex::encode(Sha256::digest(identity)),
+        })
     }
 }
 
@@ -142,15 +174,16 @@ fn read_secret(name: &str) -> crate::Result<Option<Vec<u8>>> {
 
 pub(super) async fn require_market_read(
     State(auth): State<Option<AuthConfig>>,
-    request: axum::extract::Request,
+    mut request: axum::extract::Request,
     next: Next,
 ) -> Response {
     let Some(auth) = auth else {
         return api_error(ApiError::Unavailable).into_response();
     };
-    if auth.authenticate(request.headers()).is_err() {
+    let Ok(principal) = auth.authenticate(request.headers()) else {
         return api_error(ApiError::Unauthorized).into_response();
-    }
+    };
+    request.extensions_mut().insert(principal);
     next.run(request).await
 }
 
@@ -227,6 +260,28 @@ pub(super) mod test_support {
         .unwrap()
     }
 
+    fn principal_from_token(token: &str) -> VerifiedMarketPrincipal {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            axum::http::HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+        );
+        auth_config().authenticate(&headers).unwrap()
+    }
+
+    pub(in crate::http_api) fn terminal_principal() -> VerifiedMarketPrincipal {
+        principal_from_token(&terminal_token("market:read"))
+    }
+
+    pub(in crate::http_api) fn research_principal() -> VerifiedMarketPrincipal {
+        principal_from_token(&token(
+            RESEARCH_ISSUER,
+            RESEARCH_KID,
+            RESEARCH_SECRET,
+            "market:read",
+        ))
+    }
+
     pub(in crate::http_api) fn terminal_token(scope: &str) -> String {
         token(TERMINAL_ISSUER, TERMINAL_KID, TERMINAL_SECRET, scope)
     }
@@ -256,7 +311,41 @@ mod tests {
             AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
         );
-        test_support::auth_config().authenticate(&headers)
+        test_support::auth_config()
+            .authenticate(&headers)
+            .map(|_| ())
+    }
+
+    #[test]
+    fn cache_principal_partition_comes_only_from_verified_identity_and_channel() {
+        let terminal = test_support::terminal_principal();
+        let research = test_support::research_principal();
+        assert!(!terminal.is_research());
+        assert!(research.is_research());
+        assert_eq!(terminal.principal_scope_sha256().len(), 64);
+        assert_ne!(
+            terminal.principal_scope_sha256(),
+            research.principal_scope_sha256()
+        );
+        let token = test_support::terminal_token("market:read");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+        );
+        headers.insert(
+            "x-subject",
+            HeaderValue::from_static("different-untrusted-user"),
+        );
+        headers.insert(
+            "x-idp-issuer",
+            HeaderValue::from_static("https://untrusted.example.test"),
+        );
+        let verified = test_support::auth_config().authenticate(&headers).unwrap();
+        assert_eq!(
+            verified.principal_scope_sha256(),
+            terminal.principal_scope_sha256()
+        );
     }
 
     #[test]

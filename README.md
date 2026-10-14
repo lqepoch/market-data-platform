@@ -20,6 +20,16 @@ and local documentation.
 
 ## Status and evidence
 
+- The authenticated `/v1/providers/capabilities` discovery route records provider ownership and
+  explicit unknown entitlement; registration does not establish access, completeness or acceptance.
+  `/v1/market/quotes`, `/v1/market/trades`, and `/v1/news` return
+  `UNSUPPORTED_PROVIDER_CAPABILITY` until their read paths are integrated. `/v1/market/cache/status`
+  describes only the new market cache, independently of the existing verified archive cache.
+  `/v1/market/cache/status` also returns at most 128 no-store invalidation summaries filtered to
+  the authenticated principal and operator cache profile. Its process-local event buffer is lost
+  on restart and does not prove market-data coverage or entitlement. These routes use the same
+  short-lived `market:read` delegation and outer `no-store` policy.
+
 - Synthetic replay passes JSONL validation, bounded collection, trade-bar aggregation, Arrow/Parquet
   writes, shared schema fingerprint checks, footer/readback verification, local immutable archive,
   query, and JSONL export.
@@ -59,33 +69,49 @@ and local documentation.
   collection `available_at`; it does not backdate availability to the source event time.
 - Realtime watermark completion is a separate mode and is not represented by the historical/synthetic
   EOF path.
+- The separate crate-private `archive::reconciliation` store persists Core Bars V1 raw observations
+  and mapped canonical rows as immutable Parquet versions. Raw provider-local sessions and rows
+  filtered by the trusted calendar mapper remain in the raw object; only request-validated
+  canonical coverage is served from a cache hit. Truncated pages can resume only through an
+  A02-validated provider-local page locator in the private query-bound receipt or a next-group
+  selection. The MDP outer cursor, Gateway delegation, and credentials are never persisted, and
+  replay does not extend the provider cursor's expiry. A new or empty cache root gets a fixed
+  private ownership marker; an unmarked non-empty root is rejected without permission/content
+  changes. Its provider-neutral logical index uses a checksummed atomic root plus immutable
+  month-assigned shards (64 sessions/256 KiB each, 1500 references/4 MiB maximum root, and a
+  32 MiB/96,000-session referenced-data cap). Session months come only from validated calendar
+  phase slices; missing phase mapping retains provisional artifacts without advancing the index.
+  Expired rows remain audit-only and can still block a materially conflicting cross-provider
+  candidate, while expired cache entries are not served. The store remains provisional without
+  trusted source-admission evidence and is not wired to existing Drive/S3OSS archive writers. See
+  [the cache reconciliation policy](docs/policies/mdp-cache-reconciliation-v1.md).
 
-## Local commands
+## Public runner commands
 
-Use Rust 1.98.1 from `rust-toolchain.toml`.
+Use Rust 1.99.0 from `rust-toolchain.toml` in public GitHub Actions. The Cargo examples below compile and are runner commands for this integration, not local build instructions; operators can use an already built CLI for separately authorized read-only work. No local Docker is required.
 The shared contracts and read-only Alpaca port/stream crates are pinned in `Cargo.toml` and
 `Cargo.lock` to one compatible dependency graph: `trading-core` revision
-`b2679e757576f8da7850cd4b5ea2958bc9a2354c` and merged `broker-connectors` revision
-`873337e3fafe64344dfb9ac7719fad54f157a9c0`. The broker revision pins its `domain` and
+`f793be47ab90ebff9f530c8b08f41db5e774e4e5` and frozen `broker-connectors` candidate
+`99e1d36f864d1e89e8cfba95651d29920e2f4c5a`. The broker revision pins its `domain` and
 `market-contracts` dependencies to that same `trading-core` commit.
 
 ```sh
-cargo +1.98.1 run --offline -- synthetic --output /tmp/mdp-demo
-cargo +1.98.1 run --offline --features offline-capture-synthetic -- capture-synthetic \
+cargo +1.99.0 run --offline -- synthetic --output /tmp/mdp-demo
+cargo +1.99.0 run --offline --features offline-capture-synthetic -- capture-synthetic \
   --output /tmp/mdp-alpaca-offline-fixture
 # Replace the placeholder with the exact chunk-<sha256>.receipt.json basename in archive-state/capture-pair-v2.
-cargo +1.98.1 run --offline -- verify-capture-pair-v2 \
+cargo +1.99.0 run --offline -- verify-capture-pair-v2 \
   --local-test-root /tmp/mdp-alpaca-offline-fixture/local-test-archive \
   --state-dir /tmp/mdp-alpaca-offline-fixture/archive-state \
   --staging-dir /tmp/mdp-alpaca-offline-fixture/staging \
   --receipt 'chunk-<sha256>.receipt.json'
-cargo +1.98.1 run --offline -- verify \
+cargo +1.99.0 run --offline -- verify \
   --parquet /tmp/mdp-demo/staging/synthetic-2026-10-08-four-bars-parquet-v3-events-v1.parquet \
   --schema market-events-v1
-cargo +1.98.1 run --offline -- query-bars \
+cargo +1.99.0 run --offline -- query-bars \
   --parquet /tmp/mdp-demo/staging/synthetic-2026-10-08-four-bars-parquet-v3-bars-1m-v1.parquet \
   --symbol QQQ --export-jsonl /tmp/mdp-bars.jsonl
-cargo +1.98.1 run --offline -- cleanup-staging \
+cargo +1.99.0 run --offline -- cleanup-staging \
   --state-dir /tmp/mdp-demo/state --staging-dir /tmp/mdp-demo/staging
 ```
 
@@ -135,20 +161,20 @@ returns `LockHeld`, and the lock remains after all per-run files are removed.
 For the cross-repository adapter fixture, use a separate immutable dataset identity:
 
 ```sh
-cargo +1.98.1 run --offline -- synthetic --full-session \
+cargo +1.99.0 run --offline -- synthetic --full-session \
   --output /tmp/mdp-full-four-minute-session-parquet-v3
-cargo +1.98.1 run --offline -- verify \
+cargo +1.99.0 run --offline -- verify \
   --parquet /tmp/mdp-full-four-minute-session-parquet-v3/staging/synthetic-2026-10-08-full-four-minute-session-parquet-v3-bars-1m-v1.parquet \
   --schema us-equity-trade-bar1m-v1
-cargo +1.98.1 run --offline -- synthetic --regular-session \
+cargo +1.99.0 run --offline -- synthetic --regular-session \
   --output /tmp/mdp-full-390-minute-session-parquet-v2
-cargo +1.98.1 run --offline -- verify \
+cargo +1.99.0 run --offline -- verify \
   --parquet /tmp/mdp-full-390-minute-session-parquet-v2/staging/synthetic-2026-10-08-full-390-minute-session-parquet-v2-bars-1m-v1.parquet \
   --schema us-equity-trade-bar1m-v1
-cargo +1.98.1 run --offline -- synthetic --regular-session \
+cargo +1.99.0 run --offline -- synthetic --regular-session \
   --session-date 2026-10-07 \
   --output /tmp/mdp-full-390-minute-session-parquet-v2-20261007
-cargo +1.98.1 run --offline -- verify \
+cargo +1.99.0 run --offline -- verify \
   --parquet /tmp/mdp-full-390-minute-session-parquet-v2-20261007/staging/synthetic-2026-10-07-full-390-minute-session-parquet-v2-bars-1m-v1.parquet \
   --schema us-equity-trade-bar1m-v1
 ```
@@ -180,7 +206,7 @@ local-test store. The JSONL schema is the flattened Rust/Serde projection from `
 uint64 values such as `generation` and `sequence` are canonical decimal strings.
 
 ```sh
-cargo +1.98.1 run --offline -- replay-jsonl \
+cargo +1.99.0 run --offline -- replay-jsonl \
   --input ./input.jsonl \
   --session-config ./session.json \
   --output ./run-output \
@@ -311,7 +337,7 @@ than the window end and no earlier than any event receive timestamp.
   SIP/OPRA production load, rclone transfer, Drive quota, or broker queue capacity.
 
 ```sh
-CARGO_BUILD_JOBS=2 cargo +1.98.1 test --release --offline --locked \
+CARGO_BUILD_JOBS=2 cargo +1.99.0 test --release --offline --locked \
   --features benchmark-snappy \
   parquet_store::tests::benchmark_100k_synthetic_trade_events -- --ignored --nocapture
 ```
@@ -443,9 +469,9 @@ before enabling external writes. References: [Drive API limits](https://develope
 ## Validation
 
 ```sh
-cargo +1.98.1 fmt --all -- --check
-CARGO_BUILD_JOBS=2 cargo +1.98.1 clippy --offline --all-targets -- -D warnings
-CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline
+cargo +1.99.0 fmt --all -- --check
+CARGO_BUILD_JOBS=2 cargo +1.99.0 clippy --offline --all-targets -- -D warnings
+CARGO_BUILD_JOBS=2 cargo +1.99.0 test --offline
 ```
 
 Dependency policy, the generated CycloneDX SBOM, license inventory, exact git source pins, and
@@ -485,3 +511,13 @@ budget locks with readers, and leaves staging, active, unknown, and unverified f
 This repository's original source is MIT licensed in `LICENSE`. Dependencies retain their respective
 licenses; review the generated lockfile and dependency notices before redistribution. The private
 `qqq-sip-drive-archive` implementation is not copied into this repository and is not relicensed.
+
+## Unified market query runtime
+
+The opt-in source-preserving market bars and calendar routes, provider admission
+boundaries, dedicated cache configuration and rollback are documented in
+[`docs/MARKET_QUERY_RUNTIME.md`](docs/MARKET_QUERY_RUNTIME.md). The existing dataset
+archive API and its publication gates remain separate. Public build verification
+runs on GitHub Actions; no local Docker fallback is required. Market-bars continuation
+cursors are authenticated and principal-bound; their dedicated signing-key lifecycle is
+documented with the runtime configuration.

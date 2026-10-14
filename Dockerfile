@@ -6,6 +6,9 @@ ARG MDP_RUNTIME_BASE=registry.invalid/lqepoch/mdp-runtime@sha256:000000000000000
 FROM ${MDP_RUNTIME_BASE}
 
 COPY --chown=10001:10001 mdp /usr/local/bin/mdp
+# Retain notices and the exact embedded root-certificate data license in distributions.
+COPY --chown=10001:10001 LICENSE supply-chain/NOTICE.txt /usr/share/doc/mdp/
+COPY --chown=10001:10001 supply-chain/licenses/ /usr/share/doc/mdp/licenses/
 
 USER 10001:10001
 EXPOSE 8088

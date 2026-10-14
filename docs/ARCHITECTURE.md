@@ -2,6 +2,15 @@
 
 ## Ownership
 
+Market capability discovery is a read-only authenticated registry, separate from runtime provider
+verification. Static registration preserves source ownership and unknown entitlement. Pending quote,
+trade and news integrations fail with HTTP 501 and `UNSUPPORTED_PROVIDER_CAPABILITY`, never an empty
+successful market result. Discovery does not inspect private cache roots or authorize archive
+publication. The new market cache status does not represent the existing archive cache's receipts.
+The authenticated `/v1/market/cache/status` response also exposes at most 128 principal-filtered,
+process-local invalidation/readback summaries; it is no-store, the event buffer disappears on
+restart, and the summaries do not prove data coverage or entitlement.
+
 - `broker-connectors`: sole provider SDK, Alpaca REST/WebSocket transport, MessagePack decoder,
   timestamp extensions, subscription ACK state, reconnect generation, and feed-specific limits.
 - `market-data-platform`: bounded shared-envelope ingestion, sequence/gap accounting, event
@@ -255,6 +264,34 @@ decoded row facts all verify. It holds the per-dataset lock and global cache-bud
 datasets, and preserves unknown, malformed, incomplete, or unverified directories. This command
 does not load rclone configuration or contact Drive. Browser access remains behind an authenticated
 BFF.
+
+The crate-private `archive::reconciliation` module keeps a separate local, immutable-version cache
+for raw/canonical market-bar snapshots. Its pre-fetch key includes the actual provider/feed, stable
+non-secret route and entitlement scope, asset class, request dimensions, and Core-owned schema
+fingerprint; response and coverage hashes remain in the immutable receipt. A checksummed atomic
+current manifest selects only a verified version. The store retains provisional sources, rejects
+material same-feed conflicts without replacing the previous verified current, and exposes explicit
+verified-version rollback/recovery. The raw Parquet preserves the Core-shaped SDK observations,
+including provider-local sessions and rows filtered by the trusted calendar mapper; canonical
+coverage comes only from the request-validated mapped response, with exact-decimal row lineage
+checks repeated after worker readback. A truncated page is replayable only through a validated
+provider-local page locator in the private version receipt or an A02 next-group selection; a
+missing or expired locator is a cache miss and the provider page is fetched again. A new or empty
+root gets a fixed private owner marker; an unmarked non-empty directory is rejected without
+permission or content changes. The cursor receipt binds provider kind, actual provider/feed,
+entitlement realm, cache key, payload hash, and original expiry; it never stores the MDP outer
+cursor, a Gateway delegation, or credentials. A02
+rewraps the locator into a fresh outer cursor and does not extend its lifetime. Production source
+authority remains closed. A checksummed transaction head commits the source current pointer and
+provider-neutral logical root together; per-key and logical `current.json` files are verified
+mirrors. Readers fail closed on a missing or corrupt head once transaction mode is recorded. The
+reconciliation index stores changed sessions in bounded immutable shards; session-to-month assignment
+uses validated calendar phase slices rather than parsing opaque IDs. Missing phase mapping keeps
+provisional artifacts without advancing the logical index. Expired observations are not served,
+but remain available for material-conflict audit. This store has no provider or remote-archive
+writer. See
+[`mdp-cache-reconciliation-v1.md`](policies/mdp-cache-reconciliation-v1.md) for its evidence,
+limits, and failure behavior.
 
 The HTTP service is a read-only facade over the verified query path. The regular bars route is
 `GET /v1/datasets/{dataset_id}/bars`, with required `namespace` and `symbol` query parameters. The

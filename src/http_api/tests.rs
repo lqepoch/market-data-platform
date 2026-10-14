@@ -54,6 +54,8 @@ fn service(
     );
     let state = Arc::new(ServiceState {
         auth_configured: auth.is_some(),
+        market_calendar: None,
+        market_bars: None,
         query_client,
         reader,
         #[cfg(target_os = "linux")]
@@ -85,6 +87,46 @@ fn assert_no_store(response: &axum::response::Response) {
             .any(|directive| directive.eq_ignore_ascii_case("no-store")),
         "missing Cache-Control no-store: {directives:?}"
     );
+}
+
+#[tokio::test]
+async fn market_discovery_and_unsupported_reads_require_market_scope() {
+    let temp = tempfile::tempdir().unwrap();
+    let remote = synthetic_remote_root(&temp.path().join("remote")).await;
+    let (app, mut supervisor) = service(
+        remote,
+        temp.path().join("cache"),
+        Some(test_support::auth_config()),
+    );
+    let token = test_support::terminal_token("market:read");
+    for (path, expected) in [
+        ("/v1/providers/capabilities", StatusCode::OK),
+        ("/v1/market/cache/status", StatusCode::OK),
+        ("/v1/market/quotes", StatusCode::NOT_IMPLEMENTED),
+        ("/v1/market/trades", StatusCode::NOT_IMPLEMENTED),
+        ("/v1/news", StatusCode::NOT_IMPLEMENTED),
+    ] {
+        let denied = app.clone().oneshot(request(path, None)).await.unwrap();
+        assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+        assert_no_store(&denied);
+        let response = app
+            .clone()
+            .oneshot(request(path, Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+        assert_no_store(&response);
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 64 * 1024).await.unwrap())
+                .unwrap();
+        if expected == StatusCode::NOT_IMPLEMENTED {
+            assert_eq!(body["error"], "UNSUPPORTED_PROVIDER_CAPABILITY");
+            assert_eq!(body["entitlement_status"], "unknown");
+        } else {
+            assert_eq!(body["coverage_asserted"], false);
+        }
+    }
+    supervisor.shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -337,6 +379,8 @@ async fn cache_policy_covers_query_supervisor_overload() {
     let (query_client, _held_full_queue) = QueryClient::with_full_queue_for_test();
     let state = Arc::new(ServiceState {
         auth_configured: true,
+        market_calendar: None,
+        market_bars: None,
         query_client,
         reader,
         #[cfg(target_os = "linux")]

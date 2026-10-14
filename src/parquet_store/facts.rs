@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::{rows::source_from_bar, *};
 use market_contracts::{
-    NumericEncodingV1, RawFrameStorageRecordV1, RawFrameStorageRecordV2,
-    RawJsonFrameStorageRecordV2,
+    BarRowV1, MarketDataSourceV1, NumericEncodingV1, RawFrameStorageRecordV1,
+    RawFrameStorageRecordV2, RawJsonFrameStorageRecordV2,
 };
 
 #[derive(Default)]
@@ -124,6 +124,19 @@ impl DatasetFacts {
                 .ok_or(MarketDataError::InputLimit)?;
         }
         Ok(())
+    }
+
+    pub(super) fn observe_market_bar_v1(
+        &mut self,
+        row: &BarRowV1,
+        source: &MarketDataSourceV1,
+    ) -> Result<()> {
+        self.observe_source(source.clone())?;
+        self.symbols.insert(row.symbol.clone());
+        self.observe_source_interval(
+            timestamp_to_ns(row.bar_start_utc.as_str())?,
+            timestamp_to_ns(row.bar_end_exclusive_utc.as_str())?,
+        )
     }
 
     pub(super) fn observe_raw_frame(&mut self, row: &RawFrameStorageRecordV1) -> Result<()> {

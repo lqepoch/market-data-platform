@@ -53,6 +53,7 @@ mod capture_pair;
 pub use capture_pair::{CaptureArtifactReceiptV1, LocalDiagnosticCapturePairReceiptV1};
 
 pub(crate) mod capture_pair_v2;
+pub(crate) mod reconciliation;
 
 mod raw_spool;
 pub use raw_spool::{LocalRawFrameSpoolFactory, RawFrameSpoolLimits, RawFrameSpoolRecoverySummary};
@@ -185,6 +186,38 @@ enum ReceiptPhase {
     Committed,
 }
 
+struct ArchiveDatasetLock(File);
+
+impl ArchiveDatasetLock {
+    fn acquire(path: &Path) -> Result<Self> {
+        let file = Self::open_file(path)?;
+        file.try_lock_exclusive()
+            .map_err(|_| MarketDataError::LockHeld)?;
+        Ok(Self(file))
+    }
+
+    fn try_acquire(path: &Path) -> std::io::Result<Self> {
+        let file = Self::open_file(path)?;
+        file.try_lock_exclusive()?;
+        Ok(Self(file))
+    }
+
+    fn open_file(path: &Path) -> std::io::Result<File> {
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+    }
+}
+
+impl Drop for ArchiveDatasetLock {
+    fn drop(&mut self) {
+        let _ = FileExt::unlock(&self.0);
+    }
+}
+
 impl ArchivePublisher {
     pub fn local_test(
         transport: LocalTestTransport,
@@ -257,15 +290,7 @@ impl ArchivePublisher {
             }
         };
         let lock_path = self.state_path(&request.dataset_id, "lock")?;
-        let lock_file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(lock_path)?;
-        lock_file
-            .try_lock_exclusive()
-            .map_err(|_| MarketDataError::LockHeld)?;
+        let _dataset_lock = ArchiveDatasetLock::acquire(&lock_path)?;
 
         let local = hash_file(&request.parquet_path, self.limits.max_object_bytes)?;
         self.validate_staging_budget(&request.parquet_path, local.size_bytes)?;
@@ -735,19 +760,14 @@ impl ArchivePublisher {
             {
                 return Err(MarketDataError::InvalidInput);
             }
-            let lock_file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .truncate(false)
-                .open(&lock_path)?;
-            if let Err(error) = lock_file.try_lock_exclusive() {
-                if error.kind() == std::io::ErrorKind::WouldBlock {
+            let _dataset_lock = match ArchiveDatasetLock::try_acquire(&lock_path) {
+                Ok(lock) => lock,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     report.skipped_locked = report.skipped_locked.saturating_add(1);
                     continue;
                 }
-                return Err(MarketDataError::Io(error));
-            }
+                Err(error) => return Err(MarketDataError::Io(error)),
+            };
 
             let receipt_path = state_root.join(format!("{dataset_id}.receipt.json"));
             let manifest_path = state_root.join(format!("{dataset_id}.manifest.json"));

@@ -846,6 +846,28 @@ fn existing_staging_scan_checks_cancellation_between_entries_and_caps_total_entr
 
 #[cfg(target_os = "linux")]
 #[test]
+fn dataset_lock_drop_unlocks_while_an_inherited_descriptor_remains_open() {
+    let temp = tempdir().unwrap();
+    let lock_path = temp.path().join("synthetic-dataset.lock");
+    let owner = ArchiveDatasetLock::try_acquire(&lock_path).unwrap();
+    // `try_clone` duplicates the open file description, as a forked worker would inherit it.
+    let inherited_descriptor = owner.0.try_clone().unwrap();
+
+    let blocked = ArchiveDatasetLock::try_acquire(&lock_path);
+    assert!(matches!(
+        blocked,
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock
+    ));
+
+    drop(owner);
+    let next_owner = ArchiveDatasetLock::try_acquire(&lock_path)
+        .expect("dropping the guard must explicitly unlock despite an inherited descriptor");
+    drop(next_owner);
+    drop(inherited_descriptor);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn staging_cleanup_dry_run_and_apply_preserve_active_locked_and_unknown_state() {
     let temp = tempdir().unwrap();
     let state = temp.path().join("state");

@@ -33,6 +33,32 @@ class GitSourceTests(unittest.TestCase):
             )
 
 
+class LicensePolicyTests(unittest.TestCase):
+    def test_certificate_data_exception_rejects_new_package_versions(self) -> None:
+        pins = supply_chain.load_pins()
+        supply_chain.validate_deny_policy(pins)
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            license_path = root / "supply-chain/licenses/webpki-root-certs-1.0.9.LICENSE"
+            license_path.parent.mkdir(parents=True)
+            license_path.write_bytes((ROOT / license_path.relative_to(root)).read_bytes())
+            (root / "deny.toml").write_text((ROOT / "deny.toml").read_text().replace(
+                'crate = "webpki-root-certs@1.0.9"', 'crate = "webpki-root-certs@1.0.10"'))
+            with patch.object(supply_chain, "ROOT", root), self.assertRaises(supply_chain.SupplyChainError):
+                supply_chain.validate_deny_policy(pins)
+
+    def test_certificate_data_license_must_be_preserved(self) -> None:
+        pins = supply_chain.load_pins()
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "deny.toml").write_bytes((ROOT / "deny.toml").read_bytes())
+            license_path = root / "supply-chain/licenses/webpki-root-certs-1.0.9.LICENSE"
+            license_path.parent.mkdir(parents=True)
+            license_path.write_text("incomplete license")
+            with patch.object(supply_chain, "ROOT", root), self.assertRaises(supply_chain.SupplyChainError):
+                supply_chain.validate_deny_policy(pins)
+
+
 class SourceTreeTests(unittest.TestCase):
     def test_untracked_source_files_are_excluded(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

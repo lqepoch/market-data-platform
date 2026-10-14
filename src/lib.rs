@@ -9,6 +9,8 @@ pub mod capture_synthetic;
 pub mod config;
 pub mod error;
 pub mod http_api;
+pub mod market_calendar;
+pub mod market_query;
 pub mod parquet_store;
 #[doc(hidden)]
 pub mod parquet_worker;
@@ -17,6 +19,7 @@ pub mod protocol;
 pub mod queue;
 pub mod remote_query;
 pub mod schema;
+pub mod session_router;
 pub mod storage;
 
 pub use error::{MarketDataError, Result};

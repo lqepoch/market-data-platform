@@ -12,6 +12,7 @@ use crate::{
     archive::{ArchiveLimits, capture_pair_v2::reader::VerifiedCapturePairChunkV2},
     cancellation::CancellationToken,
     parquet_store::ParquetVerification,
+    schema::MARKET_BARS_SCHEMA_V1_ID,
     storage::{MAX_DECODE_WORKER_OUTPUT_BYTES, run_decode_worker, run_decode_worker_cancellable},
 };
 
@@ -219,6 +220,7 @@ fn verify_with_cancellation(
         && schema_id != crate::schema::RAW_FRAME_SCHEMA_V2_ID
         && schema_id != crate::schema::RAW_JSON_FRAME_SCHEMA_V2_ID
         && schema_id != crate::schema::MINUTE_BAR_SCHEMA_ID
+        && schema_id != MARKET_BARS_SCHEMA_V1_ID
     {
         return Err(MarketDataError::ParquetSchema);
     }
@@ -252,6 +254,99 @@ fn verify_with_cancellation(
     #[cfg(not(test))]
     let output = &output;
     serde_json::from_slice(output).map_err(MarketDataError::from)
+}
+
+/// Read typed Core Bars V1 rows through the bounded Linux Parquet worker.
+pub fn read_market_bars_v1(
+    parquet: &Path,
+    max_object_bytes: u64,
+    max_rows: usize,
+    max_result_bytes: u64,
+) -> Result<Vec<market_contracts::BarRowV1>> {
+    #[cfg(target_os = "linux")]
+    {
+        let output_limit = usize::try_from(max_result_bytes)
+            .map_err(|_| MarketDataError::InputLimit)?
+            .checked_add(1)
+            .ok_or(MarketDataError::InputLimit)?;
+        if max_object_bytes == 0
+            || max_rows == 0
+            || max_rows > 1000
+            || output_limit > MAX_DECODE_WORKER_OUTPUT_BYTES
+        {
+            return Err(MarketDataError::InputLimit);
+        }
+        let mut command = worker_command()?;
+        #[cfg(test)]
+        command
+            .env("MDP_TEST_WORKER_ACTION", "read-market-bars-v1")
+            .env("MDP_TEST_WORKER_PARQUET", parquet)
+            .env(
+                "MDP_TEST_WORKER_MAX_OBJECT_BYTES",
+                max_object_bytes.to_string(),
+            )
+            .env("MDP_TEST_WORKER_MAX_ROWS", max_rows.to_string())
+            .env(
+                "MDP_TEST_WORKER_MAX_RESULT_BYTES",
+                max_result_bytes.to_string(),
+            );
+        #[cfg(not(test))]
+        command
+            .arg("read-market-bars-v1")
+            .arg("--parquet")
+            .arg(parquet)
+            .arg("--max-object-bytes")
+            .arg(max_object_bytes.to_string())
+            .arg("--max-rows")
+            .arg(max_rows.to_string())
+            .arg("--max-result-bytes")
+            .arg(max_result_bytes.to_string());
+        let output = run_decode_worker(command, output_limit, WORKER_WALL_TIMEOUT)?;
+        #[cfg(test)]
+        let output = output
+            .split(|byte| *byte == b'\n')
+            .find(|line| line.first() == Some(&b'['))
+            .ok_or(MarketDataError::Parquet)?;
+        #[cfg(not(test))]
+        let output = output.as_slice();
+        serde_json::from_slice(output).map_err(MarketDataError::from)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (parquet, max_object_bytes, max_rows, max_result_bytes);
+        Err(MarketDataError::Storage(
+            crate::error::StorageFailure::Unsupported,
+        ))
+    }
+}
+
+/// Execute the worker-side action for the hidden `parquet-worker read-market-bars-v1` command.
+///
+/// The CLI supervisor calls this only in the isolated Linux child process. The public cache
+/// reader must call [`read_market_bars_v1`] so this decode stays behind the bounded process.
+#[doc(hidden)]
+pub fn cli_worker_read_market_bars_v1(
+    parquet: &Path,
+    max_object_bytes: u64,
+    max_rows: usize,
+    max_result_bytes: u64,
+) -> Result<Vec<market_contracts::BarRowV1>> {
+    #[cfg(target_os = "linux")]
+    {
+        crate::parquet_store::read_market_bars_v1_with_limits(
+            parquet,
+            max_object_bytes,
+            max_rows,
+            max_result_bytes,
+        )
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (parquet, max_object_bytes, max_rows, max_result_bytes);
+        Err(MarketDataError::Storage(
+            crate::error::StorageFailure::Unsupported,
+        ))
+    }
 }
 
 /// Query bars from the MDP CLI in a worker; IPC bytes and row results remain bounded.
@@ -447,6 +542,29 @@ mod tests {
                 for row in rows {
                     println!("{}", serde_json::to_string(&row).unwrap());
                 }
+            }
+            "read-market-bars-v1" => {
+                let path = std::env::var_os("MDP_TEST_WORKER_PARQUET").unwrap();
+                let max_object_bytes = std::env::var("MDP_TEST_WORKER_MAX_OBJECT_BYTES")
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                let max_rows = std::env::var("MDP_TEST_WORKER_MAX_ROWS")
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                let max_result_bytes = std::env::var("MDP_TEST_WORKER_MAX_RESULT_BYTES")
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                let rows = crate::parquet_store::read_market_bars_v1_with_limits(
+                    Path::new(&path),
+                    max_object_bytes,
+                    max_rows,
+                    max_result_bytes,
+                )
+                .unwrap();
+                println!("{}", serde_json::to_string(&rows).unwrap());
             }
             "verify-capture-pair-v2" => {
                 let receipt = std::env::var_os("MDP_TEST_WORKER_RECEIPT").unwrap();

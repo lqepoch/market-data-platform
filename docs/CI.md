@@ -1,7 +1,12 @@
 # Continuous integration
 
-Pull requests targeting `main` and pushes to `main` run the same local Rust and supply-chain
-verification commands. The workflow uses Rust 1.98.1, `cargo-deny` 0.20.2, and
+The unified market-query integration uses Rust 1.99.0 because the existing Broker Alpaca REST
+SDK declares that minimum. The earlier archive baseline used 1.98.1. CLI, non-compiling local checks, supply-chain
+generation and both public workflow toolchains must use the same version; lowering a dependency's
+declared minimum does not establish compatibility. No manual workflow dispatch is required.
+
+Pull requests targeting `main` and pushes to `main` run the Rust and supply-chain verification commands below in GitHub Actions.
+Public build/test compilation must run on the PR head in Actions, not locally. The workflow uses Rust 1.99.0, `cargo-deny` 0.20.2, and
 `cargo-cyclonedx` 0.5.9. It does not read stored repository, organization, or provider secrets,
 connect to market-data providers, perform OAuth, read an operator's rclone configuration, query or
 publish remote archives, or upload data and test artifacts. The verification job's automatic
@@ -12,28 +17,27 @@ full commit SHA `3d3c42e5aac5ba805825da76410c181273ba90b1` (release `v7.0.1`). I
 checkout credentials. The job token has `contents: read`; all other workflow permissions are
 disabled.
 
-## Reproduce the PR checks locally
+## Public PR verification commands (GitHub Actions)
 
-Install the repository toolchain and the pinned standalone supply-chain tools, then fetch the locked
-public dependencies once:
+The public runner installs pinned tools and fetches locked public dependencies:
 
 ```sh
-rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
-cargo +1.98.1 install cargo-deny --version 0.20.2 --locked
-cargo +1.98.1 install cargo-cyclonedx --version 0.5.9 --locked
-cargo +1.98.1 fetch --locked
+rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
+cargo +1.99.0 install cargo-deny --version 0.20.2 --locked
+cargo +1.99.0 install cargo-cyclonedx --version 0.5.9 --locked
+cargo +1.99.0 fetch --locked
 ```
 
-Run the checks from the repository root:
+The public runner executes from the repository root:
 
 ```sh
-cargo +1.98.1 fmt --all -- --check
-CARGO_BUILD_JOBS=2 cargo +1.98.1 clippy --offline --all-targets -- -D warnings
-CARGO_BUILD_JOBS=2 cargo +1.98.1 clippy --offline --all-targets --features offline-capture-synthetic -- -D warnings
-CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline
-CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline --features offline-capture-synthetic --lib
-CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline --features offline-capture-synthetic --test offline_capture_cli
-cargo +1.98.1 deny --all-features check all
+cargo +1.99.0 fmt --all -- --check
+CARGO_BUILD_JOBS=2 cargo +1.99.0 clippy --offline --all-targets -- -D warnings
+CARGO_BUILD_JOBS=2 cargo +1.99.0 clippy --offline --all-targets --features offline-capture-synthetic -- -D warnings
+CARGO_BUILD_JOBS=2 cargo +1.99.0 test --offline
+CARGO_BUILD_JOBS=2 cargo +1.99.0 test --offline --features offline-capture-synthetic --lib
+CARGO_BUILD_JOBS=2 cargo +1.99.0 test --offline --features offline-capture-synthetic --test offline_capture_cli
+cargo +1.99.0 deny --all-features check all
 python3 -m unittest discover -s tests -p 'test_supply_chain.py'
 python3 scripts/supply_chain.py --check
 ```
@@ -54,9 +58,11 @@ same query supervisor, including authorization before storage access, compact/no
 tamper rejection, deadline/drop/shutdown cancellation, worker reap, staging cleanup, and capacity
 recovery. They do not establish a capture rollup or provider completeness.
 
-## Optional offline HTTP container smoke
+## Existing offline HTTP container smoke (not a local task gate)
 
-`scripts/container_smoke.sh` requires `MDP_RUNTIME_IMAGE_ID` to name an already cached immutable
+This task does not start local Docker or run this host-build helper. The existing script is retained
+for its separately authorized environment; public CI and controlled private native validation remain
+separate. `scripts/container_smoke.sh` requires `MDP_RUNTIME_IMAGE_ID` to name an already cached immutable
 Linux image; it does not pull images or compile Rust inside Docker. The script builds the host binary
 with `--offline --locked`, then copies it into the runtime-only image and exercises LocalTest HTTP
 startup, authentication, a synthetic V1 query, and graceful signal shutdown. Set
@@ -71,7 +77,7 @@ validate a production image/deployment.
 `main`. Each leg uses the official `github/codeql-action` v4 commit
 `2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2`, the `security-extended` query suite, and
 `build-mode: none`. CodeQL supports this mode for Rust; it creates a database from repository Rust sources
-without a full Cargo build. The Rust matrix leg installs the repository-pinned Rust 1.98.1 toolchain;
+without a full Cargo build. The Rust matrix leg installs the repository-pinned Rust 1.99.0 toolchain;
 the extractor can use `rust-analyzer` for `build.rs` and macro code, so it may resolve public
 dependencies. The repository's Git dependencies are public and no private source or provider
 credential is configured. Python is analyzed as an interpreted language. The
