@@ -190,6 +190,8 @@ hash, and BASE/recovery state. The ID is excluded from its own input. It is an a
 random nonce, authorization token, or uniqueness secret. Readers continue to validate legacy V1
 heads using the original V1 ID and payload-hash domains; writes only create V2 heads, and a later
 mutation replaces a validated V1 head with V2 through the same commitpoint protocol.
+The V1 reader compatibility test uses frozen pre-V2 payload and mirror bytes with fixed transaction,
+payload, and mirror hashes; it does not generate expected values through the current writer.
 
 Before persisting logical shards or installing a transaction head, the store reserves the new shard
 bytes plus bounded head/current/root/mirror temporary files and both transaction markers against

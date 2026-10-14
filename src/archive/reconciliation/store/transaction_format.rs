@@ -458,59 +458,115 @@ mod tests {
         }
     }
 
+    // Frozen from the pre-V2 writer's field order and V1 hash domains. Keep these literal bytes
+    // independent of the current writer helpers so a coordinated serializer/hash drift fails.
+    const LEGACY_V1_PAYLOAD_JSON: &str = concat!(
+        r#"{"format_version":1,"transaction_id":"07812aae1cdee58f88a2d2e6c8c162f85e2b68c80085bc3d3c2af9845b2e9d6f","logical_identity_fingerprint_sha256":"b1f8f4a5e197f7824269178321c28df0c3cbb54bd580f3d91d78211f42c20c9f","source_key":{"provider":"alpaca","feed":"sip","entitlement":"unknown","numeric_encoding":"decimal_string","adjustment":"raw","requested_resolution":"one_minute","effective_resolution":"one_minute","provider_mode":"alpaca_only","source_scope_id":"test-scope","entitlement_scope_sha256":"1111111111111111111111111111111111111111111111111111111111111111","rights_profile_sha256":"2222222222222222222222222222222222222222222222222222222222222222","asset_class":"stock","symbol":"AAPL","session_scope":"regular","session_instance_id":"session-1","window_start_utc":"2026-10-14T13:30:00Z","window_end_exclusive_utc":"2026-10-14T14:30:00Z","market_calendar_version":"calendar-v1","request_cursor_sha256":null,"schema_version":1,"schema_id":"lqepoch.market_bars.v1","schema_fingerprint_sha256":"6534a31150d14121ba30c6abae707104479b6ea6750150769b1d5d6235faf180"},"source_key_fingerprint_sha256":"b92b0d1152a94f7915a8509a55fce7a4646dd08665ace3aa8eb4824eae84d16d","previous_source_current":null,"source_current":null,"previous_logical_root":null,"logical_root":null,"committed_at_unix_seconds":1800000000,"transaction_nonce":"legacy-readable-value","previous_transaction_sha256":null,"recovery_replaced_damaged_source_manifest":false}"#,
+    );
+    const LEGACY_V1_PAYLOAD_SHA256: &str =
+        "50e6f3e6ea009e037ff2a21d0df4c1ef8ac12f7882f367d3745e5963f140e716";
+    const LEGACY_V1_TRANSACTION_ID: &str =
+        "07812aae1cdee58f88a2d2e6c8c162f85e2b68c80085bc3d3c2af9845b2e9d6f";
+    const LEGACY_V1_MIRROR_JSON: &str = concat!(
+        r#"{"format_version":1,"transaction_id":"07812aae1cdee58f88a2d2e6c8c162f85e2b68c80085bc3d3c2af9845b2e9d6f","transaction_sha256":"50e6f3e6ea009e037ff2a21d0df4c1ef8ac12f7882f367d3745e5963f140e716","logical_identity_fingerprint_sha256":"b1f8f4a5e197f7824269178321c28df0c3cbb54bd580f3d91d78211f42c20c9f","source_key_fingerprint_sha256":"b92b0d1152a94f7915a8509a55fce7a4646dd08665ace3aa8eb4824eae84d16d","source_current_sha256":null,"logical_root_sha256":null,"sealed":true,"payload_sha256":"cba8a715de23a8e95747c3a9018d61151a5d4fc5c057d26b61a889cc0838a0f1"}"#,
+    );
+    const LEGACY_V1_MIRROR_SHA256: &str =
+        "cba8a715de23a8e95747c3a9018d61151a5d4fc5c057d26b61a889cc0838a0f1";
+
     #[test]
-    fn legacy_v1_transaction_id_and_payload_hash_remain_readable() {
+    fn frozen_pre_v2_transaction_and_mirror_bytes_remain_readable() {
+        let envelope_json = format!(
+            r#"{{"payload":{},"payload_sha256":"{}"}}"#,
+            LEGACY_V1_PAYLOAD_JSON, LEGACY_V1_PAYLOAD_SHA256
+        );
+        let envelope: CachePointerTransactionEnvelope =
+            serde_json::from_str(&envelope_json).unwrap();
+        let payload = &envelope.payload;
         let key = test_key();
         let identity = CacheLogicalIdentityV1::from_key(&key).unwrap();
         let identity_fingerprint = identity.fingerprint().unwrap();
-        let key_fingerprint = key.fingerprint().unwrap();
-        let mut payload = CachePointerTransactionPayload {
-            format_version: 1,
-            transaction_id: String::new(),
-            logical_identity_fingerprint_sha256: identity_fingerprint.clone(),
-            source_key_fingerprint_sha256: key_fingerprint,
-            source_key: key,
-            previous_source_current: None,
-            source_current: None,
-            previous_logical_root: None,
-            logical_root: None,
-            committed_at_unix_seconds: 1_800_000_000,
-            legacy_operation_suffix: Some("legacy-readable-value".to_owned()),
-            previous_transaction_sha256: None,
-            recovery_replaced_damaged_source_manifest: false,
-            initial_base: false,
-        };
-        payload.transaction_id = transaction_id_from_payload(&payload).unwrap();
-
-        validate_transaction(&payload, &identity, &identity_fingerprint).unwrap();
-        let stored = serde_json::to_vec(&payload).unwrap();
-        let decoded: CachePointerTransactionPayload = serde_json::from_slice(&stored).unwrap();
-        assert_eq!(decoded.format_version, payload.format_version);
-        assert_eq!(decoded.transaction_id, payload.transaction_id);
         assert_eq!(
-            decoded.legacy_operation_suffix,
-            payload.legacy_operation_suffix
+            key.fingerprint().unwrap(),
+            payload.source_key_fingerprint_sha256
         );
         assert_eq!(
-            transaction_hash(&decoded).unwrap(),
-            transaction_hash(&payload).unwrap()
+            identity_fingerprint,
+            "b1f8f4a5e197f7824269178321c28df0c3cbb54bd580f3d91d78211f42c20c9f"
+        );
+        assert_eq!(
+            serde_json::to_vec(payload).unwrap().as_slice(),
+            LEGACY_V1_PAYLOAD_JSON.as_bytes()
+        );
+        assert_eq!(payload.transaction_id, LEGACY_V1_TRANSACTION_ID);
+        assert_eq!(
+            transaction_id_from_payload(payload).unwrap(),
+            LEGACY_V1_TRANSACTION_ID
+        );
+        assert_eq!(envelope.payload_sha256, LEGACY_V1_PAYLOAD_SHA256);
+        assert_eq!(transaction_hash(payload).unwrap(), LEGACY_V1_PAYLOAD_SHA256);
+        assert_eq!(
+            payload.legacy_operation_suffix.as_deref(),
+            Some("legacy-readable-value")
+        );
+        validate_transaction(payload, &identity, &identity_fingerprint).unwrap();
+
+        let mirror_directory = tempfile::tempdir().unwrap();
+        fs::write(
+            mirror_directory.path().join(MIRROR_FILE),
+            LEGACY_V1_MIRROR_JSON.as_bytes(),
+        )
+        .unwrap();
+        let mirror = read_mirror(mirror_directory.path()).unwrap();
+        assert_eq!(mirror.format_version, 1);
+        assert_eq!(mirror.transaction_id, LEGACY_V1_TRANSACTION_ID);
+        assert_eq!(mirror.transaction_sha256, LEGACY_V1_PAYLOAD_SHA256);
+        assert_eq!(mirror.payload_sha256, LEGACY_V1_MIRROR_SHA256);
+        assert_eq!(
+            serde_json::to_vec(&mirror).unwrap().as_slice(),
+            LEGACY_V1_MIRROR_JSON.as_bytes()
         );
     }
 
     #[test]
-    fn v2_transaction_id_binds_both_sides_of_transition_without_random_suffix() {
+    fn v2_transaction_id_matches_frozen_base_previous_hash_and_recovery_vectors() {
         let key = test_key();
-        let mut payload = payload_v2(key.clone());
-        let current = test_current(&key);
-        payload.source_current = Some(current.clone());
-        payload.transaction_id = transaction_id_from_payload(&payload).unwrap();
-        let id_with_no_previous = payload.transaction_id.clone();
-
-        payload.previous_source_current = Some(current);
-        assert_ne!(
-            transaction_id_from_payload(&payload).unwrap(),
-            id_with_no_previous
+        let base = payload_v2(key.clone());
+        assert_eq!(
+            transaction_id_from_payload(&base).unwrap(),
+            "f093e256936ba7ce8e8df3f22b872b7aa21eb9f51821598f52058fb0f5477451"
         );
+        let mut non_base = base.clone();
+        non_base.initial_base = false;
+        assert_eq!(
+            transaction_id_from_payload(&non_base).unwrap(),
+            "d22fd1b361d43c85e7af1d01356a1b903d23bc2b4246b0e00cc0e3dba16267ec"
+        );
+
+        let mut payload = non_base;
+        let current = test_current(&key);
+        payload.source_current = Some(current);
+        payload.committed_at_unix_seconds = 1_800_000_001;
+        payload.previous_transaction_sha256 = Some("c".repeat(64));
+        let expected_new_id = "bd8d3df0351f04fe76611a0d3fccaa76a15b69ab703790221c003a1b3576d559";
+        assert_eq!(
+            transaction_id_from_payload(&payload).unwrap(),
+            expected_new_id
+        );
+
+        let mut changed_previous_hash = payload.clone();
+        changed_previous_hash.previous_transaction_sha256 = Some("d".repeat(64));
+        assert_eq!(
+            transaction_id_from_payload(&changed_previous_hash).unwrap(),
+            "e735879dda08249de88dc51dc46c32401a8f97aaa20d0a09f76ef052685e7a0e"
+        );
+
+        let mut changed_recovery = payload.clone();
+        changed_recovery.recovery_replaced_damaged_source_manifest = true;
+        assert_eq!(
+            transaction_id_from_payload(&changed_recovery).unwrap(),
+            "cb64f886165b1917dd2f8e22021a60d9ad7edad1c65942f98a5f18ccacbcc9a3"
+        );
+
         payload.transaction_id = transaction_id_from_payload(&payload).unwrap();
         let encoded = serde_json::to_vec(&payload).unwrap();
         let decoded: CachePointerTransactionPayload = serde_json::from_slice(&encoded).unwrap();
