@@ -6,8 +6,9 @@
 //! code; it never authenticates an MDP request.
 
 use std::{
+    collections::VecDeque,
     env,
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -33,7 +34,11 @@ const MARKET_BARS_ENABLED_ENV: &str = "MDP_MARKET_BARS_ENABLED";
 const MARKET_CACHE_ROOT_ENV: &str = "MDP_MARKET_CACHE_ROOT";
 const MARKET_CACHE_SCOPE_ENV: &str = "MDP_MARKET_CACHE_SCOPE_ID";
 const GATEWAY_DELEGATION_HEADER: HeaderName = HeaderName::from_static("x-eqo-gateway-delegation");
+const MAX_CACHE_INVALIDATION_EVENTS: usize = 128;
 
+#[cfg(all(test, target_os = "linux"))]
+#[path = "market_bars_authority_tests.rs"]
+mod authority_tests;
 mod query;
 mod response;
 
@@ -45,6 +50,84 @@ pub(super) struct MarketBarsRuntime {
     provider: crate::market_query::providers::MarketBarsProviderRuntime,
     cache: Option<crate::archive::reconciliation::CacheVersionStoreV1>,
     cache_scope_id: Option<String>,
+    authority: Option<Arc<MarketBarsAuthorityRuntime>>,
+    page_admission_evidence_source: Option<Arc<dyn MarketBarsPageAdmissionEvidenceSource>>,
+    cache_invalidation_events: Arc<Mutex<VecDeque<MarketBarsCacheInvalidationEvent>>>,
+    #[cfg(test)]
+    synthetic_page_source: Option<Arc<dyn SyntheticMarketBarsPageSource>>,
+}
+
+/// Test-only provider seam for exercising the real authenticated HTTP, supervisor, mapping, and
+/// cache path. The explicit type name and compile guard prevent fixture facts from entering a
+/// production build or being presented as provider verification.
+#[cfg(test)]
+pub(crate) trait SyntheticMarketBarsPageSource: Send + Sync {
+    fn source_capabilities(&self) -> Vec<crate::session_router::SourceCapability>;
+
+    fn cache_identity(
+        &self,
+        selection: &crate::market_query::providers::ProviderPageSelection,
+    ) -> crate::market_query::providers::ProviderCacheIdentity;
+
+    fn fetch_page(
+        &self,
+        plan: &crate::market_query::planning::MarketBarsPlan,
+        selection: &crate::market_query::providers::ProviderPageSelection,
+    ) -> std::result::Result<
+        crate::market_query::providers::ProviderPageFetch,
+        crate::market_query::providers::ProviderQueryError,
+    >;
+}
+
+/// Independently trusted admission material supplied by an embedding owner. There is deliberately
+/// no environment or HTTP path that can construct this authority context.
+pub(super) struct MarketBarsAuthorityRuntime {
+    pub(super) verifier:
+        Arc<dyn crate::archive::reconciliation::authority::TrustedProviderAdmissionVerifierV1>,
+    pub(super) reconciliation_policy:
+        crate::archive::reconciliation::authority::ReconciliationPolicyV1,
+}
+
+/// Optional integration hook for an independently trusted issuer that can attest facts from the
+/// actual provider page. It receives immutable raw and canonical observations plus their exact
+/// query scope. Implementations must return `None` when any source, feed, entitlement, runtime, or
+/// page fact is unavailable; they must never infer those facts from request labels or configuration.
+///
+/// Production startup leaves this unset. The trait does not create keys, sign receipts, or widen
+/// provider permissions; returned evidence still passes the A04 verifier and dataset-binding path.
+pub(crate) struct MarketBarsPageAdmissionContext<'a> {
+    pub(crate) request: &'a BarsRequestV1,
+    pub(crate) source_scope: &'a crate::archive::reconciliation::CacheQuerySourceScopeV1,
+    pub(crate) raw_observations: &'a BarsResponseV1,
+    pub(crate) canonical_response: &'a BarsResponseV1,
+    pub(crate) page_evidence: &'a crate::archive::reconciliation::ProviderPageEvidenceV1,
+    pub(crate) phase_slices:
+        &'a [crate::archive::reconciliation::authority::ProviderPhaseSliceV1],
+    pub(crate) policy: &'a crate::archive::reconciliation::authority::ReconciliationPolicyV1,
+    pub(crate) now_unix_seconds: u64,
+}
+
+pub(crate) trait MarketBarsPageAdmissionEvidenceSource: Send + Sync {
+    fn evidence_for_page(
+        &self,
+        context: MarketBarsPageAdmissionContext<'_>,
+    ) -> Option<crate::archive::reconciliation::authority::ProviderAdmissionEvidenceV1>;
+}
+
+/// A bounded, credential-free record that a trusted logical-session pointer changed and was
+/// reread. This is an integration event for status consumers, not a claim about full-window data.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(super) struct MarketBarsCacheInvalidationEvent {
+    #[serde(skip_serializing)]
+    rights_profile_sha256: String,
+    pub(super) identity_fingerprint_sha256: Option<String>,
+    pub(super) session_instance_id: Option<String>,
+    pub(super) logical_generation: Option<u64>,
+    pub(super) logical_updated_at_unix_seconds: Option<u64>,
+    pub(super) reread_status: &'static str,
+    pub(super) current_provider: Option<String>,
+    pub(super) current_feed: Option<String>,
+    pub(super) current_authority: Option<String>,
 }
 
 /// Static runtime configuration summary for health/status projections.
@@ -90,7 +173,87 @@ impl MarketBarsRuntime {
             provider,
             cache,
             cache_scope_id,
+            authority: None,
+            page_admission_evidence_source: None,
+            cache_invalidation_events: Arc::new(Mutex::new(VecDeque::new())),
+            #[cfg(test)]
+            synthetic_page_source: None,
         })))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn synthetic_for_test(
+        provider: crate::market_query::providers::MarketBarsProviderRuntime,
+        cache: crate::archive::reconciliation::CacheVersionStoreV1,
+        cache_scope_id: String,
+        source: Arc<dyn SyntheticMarketBarsPageSource>,
+    ) -> Self {
+        Self {
+            provider,
+            cache: Some(cache),
+            cache_scope_id: Some(cache_scope_id),
+            authority: None,
+            page_admission_evidence_source: None,
+            cache_invalidation_events: Arc::new(Mutex::new(VecDeque::new())),
+            synthetic_page_source: Some(source),
+        }
+    }
+
+    /// Add authority only from a trusted in-process issuer/loader. Ordinary startup always leaves
+    /// this unset; no boolean setting, OIDC claim, provider label, or cache profile grants it.
+    pub(crate) fn with_verified_admission_context(
+        mut self,
+        verifier: Arc<
+            dyn crate::archive::reconciliation::authority::TrustedProviderAdmissionVerifierV1,
+        >,
+        admissions: Vec<crate::archive::reconciliation::authority::VerifiedProviderAdmissionV1>,
+        reconciliation_policy: crate::archive::reconciliation::authority::ReconciliationPolicyV1,
+    ) -> Self {
+        self.provider = self
+            .provider
+            .with_verified_provider_admissions(admissions.clone());
+        self.authority = Some(Arc::new(MarketBarsAuthorityRuntime {
+            verifier,
+            reconciliation_policy,
+        }));
+        self
+    }
+
+    /// Inject a page evidence source owned by a separately reviewed in-process trust boundary.
+    /// Without this hook, fresh provider pages can only be published as provisional observations.
+    pub(crate) fn with_page_admission_evidence_source(
+        mut self,
+        source: Arc<dyn MarketBarsPageAdmissionEvidenceSource>,
+    ) -> Self {
+        self.page_admission_evidence_source = Some(source);
+        self
+    }
+
+    /// Return only the authenticated rights partition's bounded invalidation history. The ring is
+    /// volatile and process-local; callers must serve it with `Cache-Control: no-store`.
+    /// No source rows, provider credentials, tokens, raw hashes, or signed receipts are retained.
+    pub(super) fn cache_invalidation_events_for_rights_profile(
+        &self,
+        rights_profile_sha256: &str,
+    ) -> Vec<MarketBarsCacheInvalidationEvent> {
+        self.cache_invalidation_events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter(|event| event.rights_profile_sha256 == rights_profile_sha256)
+            .cloned()
+            .collect()
+    }
+
+    pub(super) fn record_cache_invalidation_event(&self, event: MarketBarsCacheInvalidationEvent) {
+        let mut events = self
+            .cache_invalidation_events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if events.len() == MAX_CACHE_INVALIDATION_EVENTS {
+            events.pop_front();
+        }
+        events.push_back(event);
     }
 
     /// Describe static provider attemptability and cache prerequisites without exposing secrets,

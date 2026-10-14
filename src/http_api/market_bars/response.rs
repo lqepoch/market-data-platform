@@ -634,3 +634,25 @@ pub(super) fn provider_error_is_http_fatal(
             | ProviderError::Timeout
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use market_contracts::CoverageGapReasonV1;
+
+    use crate::market_query::providers::ProviderQueryError;
+
+    use super::provider_failure_gap_reason;
+
+    #[test]
+    fn unknown_adjustment_semantics_are_not_reported_as_resolution_failures() {
+        for error in [
+            ProviderQueryError::UnsupportedAdjustment,
+            ProviderQueryError::AdjustmentSemanticsUnverified,
+        ] {
+            assert_eq!(
+                provider_failure_gap_reason(&error),
+                CoverageGapReasonV1::Unknown
+            );
+        }
+    }
+}

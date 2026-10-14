@@ -14,6 +14,8 @@ use market_contracts::{
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+#[cfg(test)]
+pub(crate) use super::authority_types::AdmissionVerifyErrorV1;
 pub(crate) use super::authority_types::{
     ProviderAdmissionClaimsV1, ProviderAdmissionDatasetBindingV1, ProviderAdmissionEvidenceV1,
     ProviderAdmissionReceiptV1, ProviderPhaseSliceV1, ReconciliationPolicyV1,
