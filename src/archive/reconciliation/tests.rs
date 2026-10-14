@@ -9,6 +9,7 @@ use super::authority::{
     ReconciliationPolicyV1, TrustedProviderAdmissionVerifierV1,
     UnavailableProviderAdmissionVerifierV1, signed_payload_for_test, verify_provider_admission_v1,
 };
+use super::logical_index::*;
 use super::*;
 
 fn cache_input<'a>(

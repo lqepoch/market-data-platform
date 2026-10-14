@@ -22,17 +22,9 @@ use thiserror::Error;
 
 pub(crate) mod authority;
 mod authority_types;
-mod logical_index;
+pub(crate) mod logical_index;
 mod store;
 use authority::ProviderAdmissionDatasetBindingV1;
-pub(crate) use logical_index::{
-    CacheLogicalBatchComparisonV1, CacheLogicalComparisonKindV1, CacheLogicalComparisonV1,
-    CacheLogicalCurrentV1, CacheLogicalIdentityV1, CacheLogicalInvalidationV1,
-    CacheLogicalReadResultV1, CacheLogicalSessionChangeV1, CacheLogicalSessionCurrentV1,
-    CacheLogicalVersionRefV1, CacheLogicalVersionSourceV1, LogicalSessionSnapshotRefV1,
-    compare_session_batch, compare_session_overlap, session_coverage_bounds,
-    version_ref_for_session,
-};
 #[allow(unused_imports)] // The frozen HTTP adapter consumes these crate-private store APIs.
 pub(crate) use store::{
     CacheAuthorityV1, CacheBarsResponsesInputV1, CacheCurrentOperationV1, CacheCurrentV1,

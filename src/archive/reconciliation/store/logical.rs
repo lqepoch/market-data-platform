@@ -6,15 +6,16 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use super::super::logical_index::{
-    MAX_LOGICAL_INDEX_BYTES, MAX_LOGICAL_SESSIONS, session_coverage_bounds, version_ref_for_session,
+    CacheLogicalCurrentV1, CacheLogicalIdentityV1, CacheLogicalInvalidationV1,
+    CacheLogicalReadResultV1, CacheLogicalSessionChangeV1, CacheLogicalSessionCurrentV1,
+    CacheLogicalVersionRefV1, CacheLogicalVersionSourceV1, MAX_LOGICAL_INDEX_BYTES,
+    MAX_LOGICAL_SESSIONS, session_coverage_bounds, version_ref_for_session,
 };
 use super::{
-    CacheAuthorityV1, CacheLogicalCurrentV1, CacheLogicalIdentityV1, CacheLogicalInvalidationV1,
-    CacheLogicalReadResultV1, CacheLogicalSessionChangeV1, CacheLogicalSessionCurrentV1,
-    CacheLogicalVersionRefV1, CacheLogicalVersionSourceV1, CacheReadResultV1,
-    CacheReconciliationError, CacheVersionStoreV1, Result, VERSION_NONCE, ensure_worker_supported,
-    hash_domain, is_fresh_at, read_optional_bounded, read_required_bounded, replace_plain_file,
-    sync_directory, valid_dimension, valid_sha256, write_new_synced,
+    CacheAuthorityV1, CacheReadResultV1, CacheReconciliationError, CacheVersionStoreV1, Result,
+    VERSION_NONCE, ensure_worker_supported, hash_domain, is_fresh_at, read_optional_bounded,
+    read_required_bounded, replace_plain_file, sync_directory, valid_dimension, valid_sha256,
+    write_new_synced,
 };
 
 const LOGICAL_CURRENT_DOMAIN: &[u8] = b"lqepoch.mdp.cache-logical-current-manifest.v1\0";

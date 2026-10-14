@@ -24,16 +24,16 @@ use super::authority::{
 mod logical;
 
 use super::logical_index::{
-    CacheLogicalVersionSourceV1, MAX_LOGICAL_SESSIONS, compare_session_batch,
-    session_coverage_bounds, version_ref_for_session,
+    CacheLogicalComparisonKindV1, CacheLogicalComparisonV1, CacheLogicalCurrentV1,
+    CacheLogicalIdentityV1, CacheLogicalInvalidationV1, CacheLogicalSessionCurrentV1,
+    CacheLogicalVersionSourceV1, LogicalSessionSnapshotRefV1, MAX_LOGICAL_SESSIONS,
+    compare_session_batch, session_coverage_bounds, version_ref_for_session,
 };
 use super::{
-    BarsCacheEvidenceV1, CacheKeyV1, CacheLogicalCurrentV1, CacheLogicalIdentityV1,
-    CacheLogicalInvalidationV1, CacheLogicalSessionCurrentV1, CacheQuerySourceScopeV1,
-    CacheReconciliationError, CanonicalRowV1, CoverageEvidenceV1, LogicalSessionSnapshotRefV1,
-    ProviderCursorCacheInputV1, ProviderPageEvidenceV1, Result, SameFeedComparisonV1,
-    SameFeedTolerancePolicyV1, ValidatedProviderCursorReceiptV1, canonical_rows_from_bars,
-    canonical_rows_sha256, compare_same_feed_authoritative, hex_digest,
+    BarsCacheEvidenceV1, CacheKeyV1, CacheQuerySourceScopeV1, CacheReconciliationError,
+    CanonicalRowV1, CoverageEvidenceV1, ProviderCursorCacheInputV1, ProviderPageEvidenceV1, Result,
+    SameFeedComparisonV1, SameFeedTolerancePolicyV1, ValidatedProviderCursorReceiptV1,
+    canonical_rows_from_bars, canonical_rows_sha256, compare_same_feed_authoritative, hex_digest,
     normalize_and_deduplicate_rows, normalize_bars_response, source_evidence_sha256, valid_sha256,
     validate_canonical_rows_linked_to_raw, validate_coverage_rows,
 };
@@ -990,7 +990,7 @@ impl CacheVersionStoreV1 {
             .map(|segment| segment.session_instance_id.clone())
             .collect::<BTreeSet<_>>();
         let mut logical_index_overflow = candidate_sessions.len() > MAX_LOGICAL_SESSIONS;
-        let mut logical_comparisons: Vec<super::CacheLogicalComparisonV1> = Vec::new();
+        let mut logical_comparisons: Vec<CacheLogicalComparisonV1> = Vec::new();
         let mut logical_conflict_sessions;
         let mut logical_session_updates = BTreeMap::new();
         let mut rejected_baseline_version = previous_current
@@ -1049,9 +1049,7 @@ impl CacheVersionStoreV1 {
         let cross_provider_comparison = batch_comparison
             .comparisons
             .values()
-            .find(|comparison| {
-                comparison.kind == super::CacheLogicalComparisonKindV1::CrossProvider
-            })
+            .find(|comparison| comparison.kind == CacheLogicalComparisonKindV1::CrossProvider)
             .map(|comparison| comparison.summary);
 
         for session in candidate_sessions {
