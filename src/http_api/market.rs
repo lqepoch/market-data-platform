@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use axum::{Json, Router, http::StatusCode, routing::get};
+use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use serde_json::{Value, json};
 
 use super::ServiceState;
@@ -16,24 +16,33 @@ pub(super) fn routes() -> Router<Arc<ServiceState>> {
         .route("/v1/market/cache/status", get(cache_status))
 }
 
-async fn capabilities() -> Json<Value> {
+async fn capabilities(State(state): State<Arc<ServiceState>>) -> Json<Value> {
+    let summary = state.market_bars.as_ref().map(|runtime| runtime.summary());
+    let attempt_status = |attemptable| {
+        if attemptable {
+            "historical_attemptable"
+        } else {
+            "not_admitted_or_not_configured"
+        }
+    };
     Json(json!({
+        "runtime": summary,
         "schema_version": "provider-capabilities-v1",
         "execution_enabled": false,
         "providers": [
             {"provider": "alpaca", "feeds": ["sip", "boats", "overnight"],
              "asset_classes": ["stock", "etf"], "data_types": ["bars", "quotes", "trades"],
              "entitlement_status": "unknown", "implementation_owner": "broker-connectors",
-             "runtime_status": "not_configured", "verification_status": "BLOCKED",
+             "runtime_status": attempt_status(summary.as_ref().is_some_and(|runtime| runtime.alpaca_historical_attemptable)), "verification_status": "BLOCKED",
              "historical_bars_feeds": ["sip", "boats"],
              "notes": "overnight is distinct from boats; feed names do not establish entitlement"},
             {"provider": "futu", "feeds": ["futu"], "asset_classes": ["stock", "etf"],
              "data_types": ["bars", "quotes", "trades"], "entitlement_status": "unknown",
-             "implementation_owner": "EqoBoard", "runtime_status": "not_configured",
+             "implementation_owner": "EqoBoard", "runtime_status": attempt_status(summary.as_ref().is_some_and(|runtime| runtime.futu_historical_attemptable)),
              "verification_status": "BLOCKED", "notes": "loopback OpenD capabilities must be verified"},
             {"provider": "yfinance", "source": "Yahoo Finance", "feeds": ["yahoo_finance"],
              "asset_classes": ["stock", "etf"], "data_types": ["bars"], "resolutions": ["1d"],
-             "implementation_owner": "stock_trading_bot", "runtime_status": "not_configured",
+             "implementation_owner": "stock_trading_bot", "runtime_status": attempt_status(summary.as_ref().is_some_and(|runtime| runtime.yfinance_core_bars_attemptable)),
              "verification_status": "BLOCKED", "entitlement_status": "unknown",
              "execution_eligible": false, "notes": "internal read-only bridge; network permission required"},
             {"provider": "yahoo_finance_rss", "data_types": ["news"],
@@ -86,10 +95,16 @@ async fn unsupported_news() -> (StatusCode, Json<Value>) {
     unsupported("news")
 }
 
-async fn cache_status() -> Json<Value> {
+async fn cache_status(State(state): State<Arc<ServiceState>>) -> Json<Value> {
+    let summary = state.market_bars.as_ref().map(|runtime| runtime.summary());
+    let eligible = summary
+        .as_ref()
+        .is_some_and(|runtime| runtime.provisional_cache_prerequisites_configured);
     Json(json!({
-        "schema_version": "market-cache-status-v1", "cache_status": "unavailable",
-        "canonical_market_cache_configured": false, "coverage_asserted": false,
+        "schema_version": "market-cache-status-v1",
+        "cache_status": if eligible { "not_inspected" } else { "unavailable" },
+        "canonical_market_cache_configured": summary.as_ref().is_some_and(|runtime| runtime.cache_configured),
+        "runtime": summary, "coverage_asserted": false,
         "note": "legacy archive cache is separate; discovery does not inspect private storage"
     }))
 }

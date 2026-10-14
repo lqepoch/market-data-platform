@@ -284,7 +284,8 @@ async fn readiness(State(state): State<Arc<ServiceState>>) -> Response {
         "status": if state.auth_configured { "ready" } else { "not_ready" },
         "market_ready": false,
         "market_calendar_configured": state.market_calendar.is_some(),
-        "market_calendar_version": state.market_calendar.as_ref().map(|calendar| calendar.input_sha256.as_str()),
+        "market_calendar_version": state.market_calendar.as_ref().map(|calendar| calendar.snapshot.version.as_str()),
+        "market_calendar_input_sha256": state.market_calendar.as_ref().map(|calendar| calendar.input_sha256.as_str()),
         "source_entitlement": "unverified",
     });
     let status = if state.auth_configured {
