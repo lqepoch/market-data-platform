@@ -1853,8 +1853,7 @@ fn second_session_conflict_keeps_every_existing_logical_pointer() {
     use market_contracts::{
         AdjustmentV1, AssetClassV1, BarCoverageSegmentV1, BarResolutionV1, BarSourceProvenanceV1,
         BarsCacheStatusV1, BarsCoverageStatusV1, BarsEntitlementStatusV1, BarsProviderModeV1,
-        BarsRequestV1, BarsResponseV1, DecimalString, NumericEncodingV1, ProtoTimestampV2,
-        SessionScopeV1,
+        BarsRequestV1, BarsResponseV1, NumericEncodingV1, ProtoTimestampV2, SessionScopeV1,
     };
 
     fn ts(value: &str) -> ProtoTimestampV2 {

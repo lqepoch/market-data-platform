@@ -8,14 +8,14 @@ use serde::{Deserialize, Serialize};
 use super::super::logical_index::{
     CacheLogicalCurrentV1, CacheLogicalIdentityV1, CacheLogicalInvalidationV1,
     CacheLogicalReadResultV1, CacheLogicalSessionChangeV1, CacheLogicalSessionCurrentV1,
-    CacheLogicalVersionRefV1, CacheLogicalVersionSourceV1, MAX_LOGICAL_INDEX_BYTES,
-    MAX_LOGICAL_SESSIONS, session_coverage_bounds, version_ref_for_session,
+    CacheLogicalVersionSourceV1, MAX_LOGICAL_INDEX_BYTES, MAX_LOGICAL_SESSIONS,
+    version_ref_for_session,
 };
+use super::super::{authority::TrustedProviderAdmissionVerifierV1, valid_dimension};
 use super::{
     CacheAuthorityV1, CacheReadResultV1, CacheReconciliationError, CacheVersionStoreV1, Result,
     VERSION_NONCE, ensure_worker_supported, hash_domain, is_fresh_at, read_optional_bounded,
-    read_required_bounded, replace_plain_file, sync_directory, valid_dimension, valid_sha256,
-    write_new_synced,
+    read_required_bounded, replace_plain_file, sync_directory, valid_sha256, write_new_synced,
 };
 
 const LOGICAL_CURRENT_DOMAIN: &[u8] = b"lqepoch.mdp.cache-logical-current-manifest.v1\0";
@@ -50,7 +50,7 @@ impl CacheVersionStoreV1 {
         identity: &CacheLogicalIdentityV1,
         session_instance_id: &str,
         now_unix_seconds: u64,
-        verifier: &dyn super::authority::TrustedProviderAdmissionVerifierV1,
+        verifier: &dyn TrustedProviderAdmissionVerifierV1,
     ) -> Result<CacheLogicalReadResultV1> {
         let result =
             self.load_logical_current_unverified(identity, session_instance_id, now_unix_seconds)?;

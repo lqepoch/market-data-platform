@@ -18,24 +18,24 @@ use crate::cancellation::CancellationToken;
 use crate::parquet_store::ParquetVerification;
 
 use super::authority::{
-    ProviderAdmissionDatasetBindingV1, ProviderAdmissionEvidenceV1, ProviderAdmissionReceiptV1,
-    ProviderPhaseSliceV1, ReconciliationPolicyV1, VerifiedProviderAdmissionV1,
+    ProviderAdmissionDatasetBindingV1, ProviderAdmissionReceiptV1, ProviderPhaseSliceV1,
+    ReconciliationPolicyV1, VerifiedProviderAdmissionV1,
 };
 mod logical;
 
 use super::logical_index::{
-    CacheLogicalComparisonKindV1, CacheLogicalComparisonV1, CacheLogicalCurrentV1,
-    CacheLogicalIdentityV1, CacheLogicalInvalidationV1, CacheLogicalSessionCurrentV1,
-    CacheLogicalVersionSourceV1, LogicalSessionSnapshotRefV1, MAX_LOGICAL_SESSIONS,
-    compare_session_batch, session_coverage_bounds, version_ref_for_session,
+    CacheLogicalComparisonKindV1, CacheLogicalComparisonV1, CacheLogicalIdentityV1,
+    CacheLogicalInvalidationV1, CacheLogicalSessionCurrentV1, CacheLogicalVersionSourceV1,
+    LogicalSessionSnapshotRefV1, MAX_LOGICAL_SESSIONS, compare_session_batch,
+    session_coverage_bounds, version_ref_for_session,
 };
 use super::{
     BarsCacheEvidenceV1, CacheKeyV1, CacheQuerySourceScopeV1, CacheReconciliationError,
     CanonicalRowV1, CoverageEvidenceV1, ProviderCursorCacheInputV1, ProviderPageEvidenceV1, Result,
     SameFeedComparisonV1, SameFeedTolerancePolicyV1, ValidatedProviderCursorReceiptV1,
     canonical_rows_from_bars, canonical_rows_sha256, compare_same_feed_authoritative, hex_digest,
-    normalize_and_deduplicate_rows, normalize_bars_response, source_evidence_sha256, valid_sha256,
-    validate_canonical_rows_linked_to_raw, validate_coverage_rows,
+    normalize_and_deduplicate_rows, normalize_bars_response, source_evidence_sha256,
+    valid_dimension, valid_sha256, validate_canonical_rows_linked_to_raw, validate_coverage_rows,
 };
 
 const ROOT_DIR_MODE: u32 = 0o700;
@@ -504,7 +504,7 @@ struct CacheVersionReceiptV1 {
     #[serde(default)]
     logical_conflict_sessions: Vec<String>,
     #[serde(default)]
-    logical_comparisons: Vec<super::CacheLogicalComparisonV1>,
+    logical_comparisons: Vec<CacheLogicalComparisonV1>,
     #[serde(default)]
     logical_index_overflow: bool,
 }
