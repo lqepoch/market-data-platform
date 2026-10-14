@@ -102,7 +102,7 @@ pub(super) async fn fetch_page(
         request = request.with_cursor(cursor).map_err(map_alpaca_error)?;
     }
 
-    let result = tokio::time::timeout_at(
+    let mut result = tokio::time::timeout_at(
         context.deadline(),
         client.historical_stock_bars_page(&request),
     )

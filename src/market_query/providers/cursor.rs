@@ -1,7 +1,7 @@
 use std::fmt;
 
 use market_contracts::{
-    BarResolutionV1, BarsEntitlementStatusV1, BarsRequestV1, NumericEncodingV1, ProtoTimestampV2,
+    BarsEntitlementStatusV1, BarsRequestV1, NumericEncodingV1, ProtoTimestampV2,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -383,23 +383,27 @@ pub fn select_page(
         })
         .collect::<Vec<_>>();
     let cache_key = digest_json(&(
-        "market-bars-cache-key-v1",
-        plan.request.symbol.as_str(),
-        plan.request.asset_class,
-        plan.request.resolution,
-        plan.request.session_scope,
-        plan.request.provider_mode,
-        plan.request.allow_daily_downgrade,
-        plan.request.limit,
-        run.group.source,
-        run.group.resolution,
-        run.group.adjustment,
-        run.group.fetch_window,
-        timeline_position,
-        plan.calendar_source_id.as_str(),
-        plan.calendar_version.as_str(),
-        slices,
-        provider_cursor.as_ref(),
+        (
+            "market-bars-cache-key-v1",
+            plan.request.symbol.as_str(),
+            plan.request.asset_class,
+            plan.request.resolution,
+            plan.request.session_scope,
+            plan.request.provider_mode,
+            plan.request.allow_daily_downgrade,
+            plan.request.limit,
+        ),
+        (
+            run.group.source,
+            run.group.resolution,
+            run.group.adjustment,
+            run.group.fetch_window,
+            timeline_position,
+            plan.calendar_source_id.as_str(),
+            plan.calendar_version.as_str(),
+            slices,
+            provider_cursor.as_ref(),
+        ),
     ))?;
     Ok(ProviderPageSelection {
         request_sha256,
@@ -856,10 +860,12 @@ mod tests {
         assert_eq!(first.timeline_position(), 0);
         assert_eq!(first.provider_group().source, PlannedSource::Futu);
 
-        request.cursor = first
-            .cursor_for_next_group()
-            .expect("encode next temporal run")
-            .expect("second run exists");
+        request.cursor = Some(
+            first
+                .cursor_for_next_group()
+                .expect("encode next temporal run")
+                .expect("second run exists"),
+        );
         let second = select_page(&request, &plan).expect("second temporal run");
         assert_eq!(second.group_index(), 1);
         assert_eq!(second.timeline_position(), 1);
