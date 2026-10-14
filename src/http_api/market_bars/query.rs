@@ -401,11 +401,9 @@ fn publish_cache_observation(
     // not treat provider-local session IDs as trusted calendar evidence.
     if cache
         .publish_bars_responses_cancellable(
-            request,
-            scope,
-            raw_page,
-            cache_page,
-            evidence,
+            crate::archive::reconciliation::CacheBarsResponsesInputV1::new(
+                request, scope, raw_page, cache_page, evidence,
+            ),
             unix_seconds_now(),
             &crate::archive::reconciliation::SameFeedTolerancePolicyV1::default(),
             cancellation,
