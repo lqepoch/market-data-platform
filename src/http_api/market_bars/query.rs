@@ -713,7 +713,7 @@ fn logical_authoritative_cache_page(
     clipped_segments.sort_by_key(|(start, end, _)| (*start, *end));
     let mut coverage_cursor = slice.window.start;
     for (start, end, _) in &clipped_segments {
-        if start != coverage_cursor || end <= start {
+        if *start != coverage_cursor || *end <= *start {
             return None;
         }
         coverage_cursor = *end;
@@ -814,11 +814,11 @@ fn logical_cache_source_matches(
     target_feed: &str,
     actual_provider: &str,
     actual_feed: &str,
-    entitlement: BarsEntitlementStatusV1,
+    entitlement: EntitlementState,
 ) -> bool {
     actual_provider == "alpaca"
         && actual_feed == target_feed
-        && entitlement == BarsEntitlementStatusV1::Authorized
+        && entitlement == EntitlementState::Authorized
 }
 
 fn cache_request_for_group(
@@ -1047,7 +1047,7 @@ fn authority_publish_is_eligible(
     evidence: &crate::archive::reconciliation::ProviderPageEvidenceV1,
     phase_slices: &[crate::archive::reconciliation::authority::ProviderPhaseSliceV1],
 ) -> bool {
-    use crate::session_router::{AlpacaFeed, PlannedSource, SessionRank};
+    use crate::session_router::{AlpacaFeed, PlannedSource};
     use market_contracts::{BarsCoverageStatusV1, BarsEntitlementStatusV1};
 
     let Some(identity) = cache_identity else {
@@ -1305,7 +1305,7 @@ mod authority_eligibility_tests {
 
     #[test]
     fn logical_cache_respects_provider_mode_and_exact_actual_feed() {
-        use market_contracts::{BarsEntitlementStatusV1, BarsProviderModeV1};
+        use market_contracts::{BarsProviderModeV1, EntitlementState};
 
         assert!(logical_cache_mode_allows_alpaca(BarsProviderModeV1::Auto));
         assert!(logical_cache_mode_allows_alpaca(
@@ -1322,37 +1322,37 @@ mod authority_eligibility_tests {
             "sip",
             "alpaca",
             "sip",
-            BarsEntitlementStatusV1::Authorized,
+            EntitlementState::Authorized,
         ));
         assert!(logical_cache_source_matches(
             "boats",
             "alpaca",
             "boats",
-            BarsEntitlementStatusV1::Authorized,
+            EntitlementState::Authorized,
         ));
         assert!(!logical_cache_source_matches(
             "sip",
             "alpaca",
             "boats",
-            BarsEntitlementStatusV1::Authorized,
+            EntitlementState::Authorized,
         ));
         assert!(!logical_cache_source_matches(
             "boats",
             "alpaca",
             "sip",
-            BarsEntitlementStatusV1::Authorized,
+            EntitlementState::Authorized,
         ));
         assert!(!logical_cache_source_matches(
             "sip",
             "futu",
             "futu",
-            BarsEntitlementStatusV1::Authorized,
+            EntitlementState::Authorized,
         ));
         assert!(!logical_cache_source_matches(
             "sip",
             "alpaca",
             "unknown",
-            BarsEntitlementStatusV1::Unknown,
+            EntitlementState::Unknown,
         ));
     }
 }

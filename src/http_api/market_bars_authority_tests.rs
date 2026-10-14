@@ -16,8 +16,8 @@ use chrono::{DateTime, Duration, NaiveDate, SecondsFormat, Utc};
 use market_contracts::{
     AdjustmentV1, AssetClassV1, BarCoverageSegmentV1, BarResolutionV1, BarRowV1,
     BarSourceProvenanceV1, BarsCacheStatusV1, BarsCoverageStatusV1, BarsEntitlementStatusV1,
-    BarsProviderModeV1, BarsRequestV1, BarsResponseV1, BarsValidationStateV1, DecimalString,
-    EntitlementState, NumericEncodingV1, ProtoTimestampV2, SessionScopeV1,
+    BarsResponseV1, BarsValidationStateV1, DecimalString, EntitlementState, NumericEncodingV1,
+    ProtoTimestampV2,
 };
 use sha2::{Digest, Sha256};
 use tower::ServiceExt;
@@ -29,11 +29,10 @@ use super::{
 };
 use crate::{
     archive::reconciliation::{
-        CacheLimitsV1, CacheVersionStoreV1, ProviderPageEvidenceV1, SameFeedTolerancePolicyV1,
+        CacheLimitsV1, CacheVersionStoreV1, SameFeedTolerancePolicyV1,
         authority::{
             AdmissionVerifyErrorV1, ProviderAdmissionClaimsV1, ProviderAdmissionEvidenceV1,
-            ProviderAdmissionReceiptV1, ProviderPhaseSliceV1, ReconciliationPolicyV1,
-            TrustedProviderAdmissionVerifierV1, UnavailableProviderAdmissionVerifierV1,
+            ProviderAdmissionReceiptV1, ReconciliationPolicyV1, TrustedProviderAdmissionVerifierV1,
             signed_payload_for_test,
         },
     },
@@ -325,6 +324,20 @@ struct SyntheticAdmissionVerifier {
     reject_all: bool,
 }
 
+struct UnavailableSyntheticAdmissionVerifier;
+
+impl TrustedProviderAdmissionVerifierV1 for UnavailableSyntheticAdmissionVerifier {
+    fn verify_signature(
+        &self,
+        _issuer: &str,
+        _key_id: &str,
+        _canonical_payload: &[u8],
+        _signature_base64: &str,
+    ) -> Result<(), AdmissionVerifyErrorV1> {
+        Err(AdmissionVerifyErrorV1::Unavailable)
+    }
+}
+
 impl TrustedProviderAdmissionVerifierV1 for SyntheticAdmissionVerifier {
     fn verify_signature(
         &self,
@@ -413,7 +426,7 @@ async fn harness_with_cache_limits(
     let cache = CacheVersionStoreV1::new(temp.path().join("market-cache"), cache_limits).unwrap();
     let provider = MarketBarsProviderRuntime::from_environment().unwrap();
     let verifier: Arc<dyn TrustedProviderAdmissionVerifierV1> = if reject_admission {
-        Arc::new(UnavailableProviderAdmissionVerifierV1)
+        Arc::new(UnavailableSyntheticAdmissionVerifier)
     } else {
         Arc::new(SyntheticAdmissionVerifier { reject_all: false })
     };
