@@ -2357,15 +2357,15 @@
       },
       {
         "path": "src/archive/reconciliation.rs",
-        "sha256": "d749ea2563a0ab239a5272d2f940b0e12964e743aa956d5c96f467249c7730a4"
+        "sha256": "909fd9a6e7b687872324c797851a5a40f4a706c90e7b152f25c3c47fb6e0c889"
       },
       {
         "path": "src/archive/reconciliation/store.rs",
-        "sha256": "77a611109bdb9570cbe76345d2cc24a4b276e7aadd1940f96955518be0d33e66"
+        "sha256": "47bb365301f75d738cae6bc79bd33473d6ed41164e1423a062018396db99b333"
       },
       {
         "path": "src/archive/reconciliation/tests.rs",
-        "sha256": "e8e84db48c98a4c9fd2054e75e0667e70b75039fffab3c21563e859f00ac3a51"
+        "sha256": "3b83b87beda4cc799220b7ea81aa0924424934f65c9f2344e53a70de454924b2"
       },
       {
         "path": "src/archive/tests.rs",
@@ -2405,15 +2405,15 @@
       },
       {
         "path": "src/http_api/market_bars/query.rs",
-        "sha256": "0627040c65319bc759bc0bf3ea3ca894a03c9fbef392502a0ea7b1275771eca3"
+        "sha256": "f7f1a65aa1ac138b7dbd3f896998a3d1b2e69e6ce7cfccb07e5886abc38874e1"
       },
       {
         "path": "src/http_api/market_bars/response.rs",
-        "sha256": "9e34ec3875bd6e00073c9c983302675257969bc8b77fb5f3314f5ba95ce76371"
+        "sha256": "7aa3ead461b0850b1f9caa33def478b7d754ac57b38cecda1041b58d9bd55b52"
       },
       {
         "path": "src/http_api/market_bars_tests.rs",
-        "sha256": "daf354a13c7cf6eace91001f3e0ea4f1f73b38e837d562348150e42ce4f88c2b"
+        "sha256": "5752217d54cf43775fd766bb6b37a8691344b89a158f493b209b0cadbc66e99e"
       },
       {
         "path": "src/http_api/supervisor.rs",
@@ -2445,23 +2445,23 @@
       },
       {
         "path": "src/market_query/planning.rs",
-        "sha256": "35bb4697c5425dcf1e96b14d6000e6e91a9ed7ff2d4799ab4834d9f6b39267de"
+        "sha256": "89661d2ddc1bbd1b117bd231fbd2bb9220435d590decbef8012678766e0bca05"
       },
       {
         "path": "src/market_query/planning_tests.rs",
-        "sha256": "9d3c919b53c990b4b908b30ddcb27d469dccd93d8d1fd700c6d3dd52d9c225ac"
+        "sha256": "3adf8a66fdcf03654f58631638f2f51141ec5e62b5898b6cc7b92645c876a8e0"
       },
       {
         "path": "src/market_query/providers.rs",
-        "sha256": "d057651f60a66fc5fcb459eab004875222d736861761d1d0aa3cac8519234ec2"
+        "sha256": "f23bcf8108f56f93e982e59c27434f2afb09594fe95031bdc4b5e36ba2e63412"
       },
       {
         "path": "src/market_query/providers/alpaca.rs",
-        "sha256": "57187398051b763253c46294e161a08a2c87790e3718aa0d72dbabfbd842bdca"
+        "sha256": "6de77fca9f0ee0d327623c374c9ae7898d30c9432c6c3b089a2bb300148aa989"
       },
       {
         "path": "src/market_query/providers/cursor.rs",
-        "sha256": "edaea2ac8a28a40feab9c25c19bb4e8f47c592f476061cc37563ce112af048cb"
+        "sha256": "45db3cb6e197b7db0cd9cb4dc96a1e3bd697be2cc493699a8496f516ff570057"
       },
       {
         "path": "src/market_query/providers/error.rs",
@@ -2469,11 +2469,11 @@
       },
       {
         "path": "src/market_query/providers/futu.rs",
-        "sha256": "b9ba8285b30aff81c9e75aa9397d3edef343db9f08ef7a77938fd79dc9a198fb"
+        "sha256": "45290f93e5edc751c289bbd19e1c240b0eff159a64fc1fed4ecaa61bbca10962"
       },
       {
         "path": "src/market_query/providers/projection.rs",
-        "sha256": "cf1a8a95a129803f69a5c76abccccae0e1248ca6789414fa1f0831b21e0c55fb"
+        "sha256": "709ed7b1029df101d161b9add5911134633964d05f3a0d21406837afd533b45e"
       },
       {
         "path": "src/market_query/providers/types.rs",
@@ -2616,7 +2616,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "51b9dc67817e6c141f252e4d2b63534bbd8e21051b67241403a8a6f7ae9ad3c4"
+    "sha256": "e76a2f718ad0102d8c696e3be691665e5382a4a1262e50700330bbf9ea108c78"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
