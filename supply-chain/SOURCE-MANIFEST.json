@@ -2357,7 +2357,7 @@
       },
       {
         "path": "src/archive/reconciliation.rs",
-        "sha256": "936f37d20a382ff4c847f9a980ee604974382e98a40fb3f53fa8e2c0ce980099"
+        "sha256": "d749ea2563a0ab239a5272d2f940b0e12964e743aa956d5c96f467249c7730a4"
       },
       {
         "path": "src/archive/reconciliation/store.rs",
@@ -2457,7 +2457,7 @@
       },
       {
         "path": "src/market_query/providers/alpaca.rs",
-        "sha256": "09e22b81e5155b44b798824ac78d37ec4a6fb834195c1b836c33c4b8f44bd1ea"
+        "sha256": "57187398051b763253c46294e161a08a2c87790e3718aa0d72dbabfbd842bdca"
       },
       {
         "path": "src/market_query/providers/cursor.rs",
@@ -2469,7 +2469,7 @@
       },
       {
         "path": "src/market_query/providers/futu.rs",
-        "sha256": "cadeaea456e795b61b26b2b2bd7a863268afc0f0a75e0a4f5bcbae9a69132be5"
+        "sha256": "b9ba8285b30aff81c9e75aa9397d3edef343db9f08ef7a77938fd79dc9a198fb"
       },
       {
         "path": "src/market_query/providers/projection.rs",
@@ -2616,7 +2616,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "ec9d8e9dd28ab6c79076d2c67d4e28258307a3f1c7f8a9c38bfe0ad5b469c560"
+    "sha256": "51b9dc67817e6c141f252e4d2b63534bbd8e21051b67241403a8a6f7ae9ad3c4"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",

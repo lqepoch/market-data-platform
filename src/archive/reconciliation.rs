@@ -680,9 +680,8 @@ impl CoverageEvidenceV1 {
             let end =
                 UtcTimestamp::parse_for_arrow_nanoseconds(core_segment.end_exclusive_utc.as_str())
                     .map_err(|_| CacheReconciliationError::InvalidInput)?;
-            covered_start = Some(
-                covered_start.map_or(start.clone(), |current| current.min(start.clone())),
-            );
+            covered_start =
+                Some(covered_start.map_or(start.clone(), |current| current.min(start.clone())));
             covered_end = Some(covered_end.map_or(end.clone(), |current| current.max(end.clone())));
             let raw_rows = rows_for_raw_core_segment(&raw_response.rows, core_segment)?;
             let canonical_rows = rows_for_core_segment(&canonical_response.rows, core_segment)?;
