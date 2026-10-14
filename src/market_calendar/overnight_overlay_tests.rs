@@ -632,13 +632,38 @@ fn signature_tamper_raw_pin_mismatch_and_out_of_coverage_never_add_windows() {
         None,
         vec![futu_only_route()],
     );
-    let outside = select(
+    // A request inside cash-calendar coverage retains the complete trusted
+    // overlay for historical ranking, even when it does not intersect an OVER
+    // window. NoWindowCoverage is reserved for requests outside the full cash
+    // snapshot coverage.
+    let ranking_context = select(
         &install(cash.clone(), &fixture),
         window("2025-03-11T01:00:00Z", "2025-03-11T02:00:00Z"),
         1_741_600_000,
     );
+    assert_eq!(ranking_context.status, OvernightOverlayStatus::Applied);
+    assert_eq!(
+        ranking_context
+            .snapshot
+            .instances
+            .iter()
+            .find(|instance| instance.phase == SessionPhase::Over)
+            .map(|instance| instance.window),
+        Some(over_window)
+    );
+    assert_eq!(
+        ranking_context.allowed_overnight_routes,
+        vec![futu_only_route()]
+    );
+
+    let outside = select(
+        &install(cash.clone(), &fixture),
+        window("2025-03-11T04:00:00Z", "2025-03-11T04:00:01Z"),
+        1_741_600_000,
+    );
     assert_eq!(outside.status, OvernightOverlayStatus::NoWindowCoverage);
     assert_cash_projection(outside.snapshot.as_ref(), &cash);
+    assert!(outside.allowed_overnight_routes.is_empty());
 
     let wrong_pin =
         LoadedMarketCalendar::synthetic_cash_snapshot_for_tests(cash.clone(), CASH_INPUT_SHA256)
