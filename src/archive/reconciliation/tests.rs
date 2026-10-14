@@ -1681,8 +1681,15 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
     let raw_first_response = mapped_snapshot.raw_response.clone();
     let canonical_first_response = mapped_snapshot.response.clone();
     let key = CacheKeyV1::from_request(&request, &source_scope).unwrap();
+    // This fixture sets every OHLC field to the supplied close value, so each replacement
+    // changes all four decimal fields by the same delta.
     let tolerance = SameFeedTolerancePolicyV1 {
-        max_abs_delta_by_field: BTreeMap::from([("close".to_owned(), "0.01".to_owned())]),
+        max_abs_delta_by_field: BTreeMap::from([
+            ("close".to_owned(), "0.01".to_owned()),
+            ("high".to_owned(), "0.01".to_owned()),
+            ("low".to_owned(), "0.01".to_owned()),
+            ("open".to_owned(), "0.01".to_owned()),
+        ]),
         max_changed_rows: 1,
         max_added_rows: 0,
         allow_removed_rows: false,
@@ -1908,11 +1915,48 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
         )
     };
 
+    assert_pointer_pair(&store, &second_id, 1_800_000_029);
+    let source_before_fault = store.load_current(&key, 1_800_000_029).unwrap();
+    let logical_before_fault = store
+        .load_logical_current(&identity, "2026-10-08-regular", 1_800_000_029)
+        .unwrap();
+    assert_eq!(source_before_fault.bars_rows[0].close.as_str(), "600.26");
+    assert_eq!(
+        logical_before_fault.snapshot.bars_rows[0].close.as_str(),
+        "600.26"
+    );
+
     store.set_transaction_fault_for_test(CacheTransactionFaultV1::BeforeCommitpoint);
-    assert!(matches!(
-        publish_verified(&store, "600.27", 1_800_000_030),
-        Err(CacheReconciliationError::UnknownOutcome)
-    ));
+    let before_commit_result = publish_verified(&store, "600.27", 1_800_000_030);
+    let before_commit_result_debug = match &before_commit_result {
+        Ok(_) => "Ok".to_owned(),
+        Err(error) => match error {
+            CacheReconciliationError::InvalidInput => "Err(InvalidInput)".to_owned(),
+            CacheReconciliationError::Incomplete => "Err(Incomplete)".to_owned(),
+            CacheReconciliationError::Conflict => "Err(Conflict)".to_owned(),
+            CacheReconciliationError::UnknownOutcome => "Err(UnknownOutcome)".to_owned(),
+            CacheReconciliationError::LockHeld => "Err(LockHeld)".to_owned(),
+            CacheReconciliationError::LimitExceeded => "Err(LimitExceeded)".to_owned(),
+            CacheReconciliationError::Io(_) => "Err(Io)".to_owned(),
+            CacheReconciliationError::Json(_) => "Err(Json)".to_owned(),
+            CacheReconciliationError::Readback => "Err(Readback)".to_owned(),
+            CacheReconciliationError::Cancelled => "Err(Cancelled)".to_owned(),
+            CacheReconciliationError::Unsupported => "Err(Unsupported)".to_owned(),
+            CacheReconciliationError::NotFound => "Err(NotFound)".to_owned(),
+            CacheReconciliationError::Expired => "Err(Expired)".to_owned(),
+            CacheReconciliationError::ForeignNonEmptyRoot => "Err(ForeignNonEmptyRoot)".to_owned(),
+            CacheReconciliationError::BlockedExternal => "Err(BlockedExternal)".to_owned(),
+            CacheReconciliationError::AdmissionMismatch => "Err(AdmissionMismatch)".to_owned(),
+            CacheReconciliationError::AdmissionExpired => "Err(AdmissionExpired)".to_owned(),
+        },
+    };
+    assert!(
+        matches!(
+            before_commit_result,
+            Err(CacheReconciliationError::UnknownOutcome)
+        ),
+        "BeforeCommitpoint returned {before_commit_result_debug}"
+    );
     assert_pointer_pair(&store, &second_id, 1_800_000_031);
     let before_commit_reopen =
         CacheVersionStoreV1::new(temp.path().join("cache"), CacheLimitsV1::default()).unwrap();
