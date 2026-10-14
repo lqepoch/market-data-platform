@@ -206,9 +206,11 @@ temporary-file peak. A limit failure stays before the commitpoint; the store doe
 versions to make room.
 
 Linux fault-injection tests exercise the pre-commit boundary, post-commit head, and each mirror
-replacement, then reopen the store and assert that source and logical reads select the same complete
-version. These are synthetic reopen simulations, not process-kill or storage-device durability
-qualification.
+replacement, then reopen the store and assert that source and logical reads recover the pointer pair
+from the same committed transaction head. A provisional source rollback preserves the still-fresh
+authoritative logical version; the two layer pointers need not have the same version ID. Assertions
+check each layer’s rows, lineage, authority, and TTL. These are synthetic reopen simulations, not
+process-kill or storage-device durability qualification.
 
 `list_verified_versions` verifies immutable data and receipt integrity, but its authority field is a
 historical publication result, not current permission to serve that data. `rollback_to` and
