@@ -60,8 +60,10 @@ The signed claims bind the exact cash source id, version, and native input SHA-2
 separate source provider/feed, calendar source id/version/reference; declare a sorted, bounded set
 of eligible Stock/ETF symbols; and list every UTC OVER window explicitly. They also sign a bounded
 `compatible_routes` list, which can contain only `(alpaca, boats)` and/or `(futu, futu)`. Calendar
-source identity and market-data routes are separate claims. Runtime selection returns only those
-signed routes, and the provider's actual feed entitlement remains an independent requirement.
+source identity and market-data routes are separate claims. Artifacts are limited to 2 MiB, 8,192
+windows, and 10,000 eligible symbols; exceeding a limit is `invalid_artifact`, never partial
+coverage. Runtime selection returns only those signed routes, and the provider's actual feed
+entitlement remains an independent requirement.
 
 Each window must belong to an open cash trade date and lie inside the 20:00 previous New York
 civil-day to 04:00 trade-date band. The UTC boundaries come from adjacent, contiguous 23/24/25-hour

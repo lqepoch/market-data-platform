@@ -1,7 +1,14 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use ring::hmac;
+
 use super::*;
 use crate::archive::reconciliation::authority::AdmissionVerifyErrorV1;
+
+// This fixed key and domain are compiled only into tests and convey no provider authority.
+const TEST_SIGNATURE_DOMAIN: &[u8] = b"lqepoch.mdp.synthetic-overnight-calendar.test-hmac.v1\0";
+const TEST_HMAC_KEY: &[u8] = b"synthetic-only-market-calendar-test-key-v1";
+const TEST_SIGNATURE_PREFIX: &str = "synthetic-hmac-sha256-v1:";
 
 pub(crate) struct SyntheticOverlayVerifier {
     revoked: AtomicBool,
@@ -21,16 +28,21 @@ impl TrustedProviderAdmissionVerifierV1 for SyntheticOverlayVerifier {
         canonical_payload: &[u8],
         signature_base64: &str,
     ) -> Result<(), AdmissionVerifyErrorV1> {
-        let expected = format!("synthetic-overlay:{}", sha256(canonical_payload));
-        if self.revoked.load(Ordering::SeqCst)
-            || issuer != "synthetic-overlay-issuer"
-            || key_id != "synthetic-overlay-key"
-            || signature_base64 != expected
-        {
-            Err(AdmissionVerifyErrorV1::Rejected)
-        } else {
-            Ok(())
+        if self.revoked.load(Ordering::SeqCst) {
+            return Err(AdmissionVerifyErrorV1::Rejected);
         }
+        let Some(tag_hex) = signature_base64.strip_prefix(TEST_SIGNATURE_PREFIX) else {
+            return Err(AdmissionVerifyErrorV1::Rejected);
+        };
+        let tag = hex::decode(tag_hex).map_err(|_| AdmissionVerifyErrorV1::Rejected)?;
+        let authenticated_payload = test_signature_payload(canonical_payload);
+        let key = hmac::Key::new(hmac::HMAC_SHA256, TEST_HMAC_KEY);
+        hmac::verify(&key, &authenticated_payload, &tag)
+            .map_err(|_| AdmissionVerifyErrorV1::Rejected)?;
+        if issuer != "synthetic-test-issuer" || key_id != "synthetic-test-key" {
+            return Err(AdmissionVerifyErrorV1::Rejected);
+        }
+        Ok(())
     }
 }
 
@@ -42,6 +54,7 @@ pub(crate) struct SyntheticOvernightWindow {
     pub(crate) window: UtcWindow,
 }
 
+/// Test-only artifact whose tagged hex HMAC is accepted only by `SyntheticOverlayVerifier`.
 pub(crate) struct SyntheticOverlayArtifact {
     pub(crate) bytes: Vec<u8>,
     pub(crate) verifier: std::sync::Arc<SyntheticOverlayVerifier>,
@@ -64,8 +77,8 @@ pub(crate) fn signed_overlay_for_tests(
     let claims = SignedOvernightCalendarClaimsV1 {
         schema_id: OVERLAY_SCHEMA_ID.to_owned(),
         authority_role: "market-calendar:overnight".to_owned(),
-        issuer: "synthetic-overlay-issuer".to_owned(),
-        key_id: "synthetic-overlay-key".to_owned(),
+        issuer: "synthetic-test-issuer".to_owned(),
+        key_id: "synthetic-test-key".to_owned(),
         issued_at_unix_seconds,
         expires_at_unix_seconds,
         revoked_at_unix_seconds,
@@ -103,7 +116,7 @@ pub(crate) fn signed_overlay_for_tests(
     let payload = canonical_signed_payload(&claims).expect("synthetic claims serialize");
     let artifact = SignedOvernightCalendarArtifactV1 {
         claims,
-        signature_base64: format!("synthetic-overlay:{}", sha256(&payload)),
+        signature_base64: synthetic_signature_for_tests(&payload),
     };
     SyntheticOverlayArtifact {
         bytes: serde_json::to_vec(&artifact).expect("synthetic artifact serializes"),
@@ -111,4 +124,28 @@ pub(crate) fn signed_overlay_for_tests(
             revoked: AtomicBool::new(false),
         }),
     }
+}
+
+pub(crate) fn resign_with_identity_for_tests(bytes: &[u8], issuer: &str, key_id: &str) -> Vec<u8> {
+    let mut artifact: SignedOvernightCalendarArtifactV1 =
+        serde_json::from_slice(bytes).expect("synthetic artifact parses");
+    artifact.claims.issuer = issuer.to_owned();
+    artifact.claims.key_id = key_id.to_owned();
+    let payload = canonical_signed_payload(&artifact.claims).expect("synthetic claims serialize");
+    artifact.signature_base64 = synthetic_signature_for_tests(&payload);
+    serde_json::to_vec(&artifact).expect("synthetic artifact serializes")
+}
+
+fn synthetic_signature_for_tests(payload: &[u8]) -> String {
+    let authenticated_payload = test_signature_payload(payload);
+    let key = hmac::Key::new(hmac::HMAC_SHA256, TEST_HMAC_KEY);
+    let tag = hmac::sign(&key, &authenticated_payload);
+    format!("{TEST_SIGNATURE_PREFIX}{}", hex::encode(tag.as_ref()))
+}
+
+fn test_signature_payload(payload: &[u8]) -> Vec<u8> {
+    let mut authenticated_payload = Vec::with_capacity(TEST_SIGNATURE_DOMAIN.len() + payload.len());
+    authenticated_payload.extend_from_slice(TEST_SIGNATURE_DOMAIN);
+    authenticated_payload.extend_from_slice(payload);
+    authenticated_payload
 }

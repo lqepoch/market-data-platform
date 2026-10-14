@@ -25,9 +25,10 @@ const COMPOSITE_CALENDAR_DOMAIN: &[u8] = b"lqepoch.mdp.composite-market-calendar
 const CASH_CALENDAR_DOMAIN: &[u8] = b"lqepoch.mdp.cash-market-calendar.v1\0";
 const OVERLAY_SCHEMA_ID: &str = "mdp.trusted-overnight-calendar.v1";
 const NEW_YORK_TIMEZONE: &str = "America/New_York";
-const MAX_OVERLAY_BYTES: usize = 16 * 1024 * 1024;
-const MAX_OVERLAY_WINDOWS: usize = 200_000;
-const MAX_ELIGIBLE_SYMBOLS: usize = 50_000;
+const MAX_OVERLAY_BYTES: usize = 2 * 1024 * 1024;
+// 8,192 windows cover more than 30 years at roughly 252 trading dates per year.
+const MAX_OVERLAY_WINDOWS: usize = 8_192;
+const MAX_ELIGIBLE_SYMBOLS: usize = 10_000;
 const MAX_ISSUER_BYTES: usize = 128;
 const MAX_DIMENSION_BYTES: usize = 256;
 const MAX_SIGNATURE_BYTES: usize = 4096;

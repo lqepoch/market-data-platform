@@ -7,7 +7,9 @@ use market_contracts::AssetClassV1;
 
 use super::{
     OvernightOverlayStatus, OvernightRouteFeedV1, OvernightRouteV1,
-    test_support::{SyntheticOvernightWindow, signed_overlay_for_tests},
+    test_support::{
+        SyntheticOvernightWindow, resign_with_identity_for_tests, signed_overlay_for_tests,
+    },
 };
 use crate::{
     market_calendar::LoadedMarketCalendar,
@@ -654,7 +656,8 @@ fn signature_tamper_raw_pin_mismatch_and_out_of_coverage_never_add_windows() {
 
     let mut tampered: serde_json::Value =
         serde_json::from_slice(&fixture.bytes).expect("synthetic artifact JSON");
-    tampered["signature_base64"] = serde_json::Value::String("bad-signature".to_owned());
+    tampered["signature_base64"] =
+        serde_json::Value::String(format!("synthetic-hmac-sha256-v1:{}", "0".repeat(64)));
     let tampered = serde_json::to_vec(&tampered).expect("tampered JSON serializes");
     let tampered_calendar =
         LoadedMarketCalendar::synthetic_cash_snapshot_for_tests(cash.clone(), CASH_INPUT_SHA256)
@@ -670,6 +673,144 @@ fn signature_tamper_raw_pin_mismatch_and_out_of_coverage_never_add_windows() {
         selection.components.overnight_input_sha256,
         Some(super::sha256(&tampered))
     );
+}
+
+#[test]
+fn synthetic_hmac_authentication_rejects_tampered_claims_and_untrusted_identity() {
+    let cash = spring_cash_snapshot();
+    let over_window = window("2025-03-10T00:00:00Z", "2025-03-10T08:00:00Z");
+    let fixture = signed_fixture(
+        &cash,
+        over_window,
+        1_741_500_000,
+        1_742_500_000,
+        None,
+        vec![futu_only_route()],
+    );
+
+    let mut changed_claims: serde_json::Value =
+        serde_json::from_slice(&fixture.bytes).expect("synthetic artifact JSON");
+    changed_claims["claims"]["content"]["calendar_version"] =
+        serde_json::Value::String("synthetic.v2".to_owned());
+    let changed_claims = serde_json::to_vec(&changed_claims).expect("tampered claims serialize");
+    let calendar =
+        LoadedMarketCalendar::synthetic_cash_snapshot_for_tests(cash.clone(), CASH_INPUT_SHA256)
+            .with_signed_overnight_overlay(
+                &changed_claims,
+                &super::sha256(&changed_claims),
+                Arc::clone(&fixture.verifier),
+            );
+    let selection = select(&calendar, over_window, 1_741_600_000);
+    assert_eq!(selection.status, OvernightOverlayStatus::TrustRejected);
+    assert!(selection.allowed_overnight_routes.is_empty());
+
+    for (issuer, key_id) in [
+        ("untrusted-test-issuer", "synthetic-test-key"),
+        ("synthetic-test-issuer", "untrusted-test-key"),
+    ] {
+        let wrong_identity = resign_with_identity_for_tests(&fixture.bytes, issuer, key_id);
+        let calendar = LoadedMarketCalendar::synthetic_cash_snapshot_for_tests(
+            cash.clone(),
+            CASH_INPUT_SHA256,
+        )
+        .with_signed_overnight_overlay(
+            &wrong_identity,
+            &super::sha256(&wrong_identity),
+            Arc::clone(&fixture.verifier),
+        );
+        let selection = select(&calendar, over_window, 1_741_600_000);
+        assert_eq!(selection.status, OvernightOverlayStatus::TrustRejected);
+        assert!(selection.allowed_overnight_routes.is_empty());
+    }
+}
+
+#[test]
+fn overlay_resource_limits_reject_oversized_bytes_windows_and_symbols() {
+    let cash = spring_cash_snapshot();
+    let over_window = window("2025-03-10T00:00:00Z", "2025-03-10T08:00:00Z");
+    let day = cash.days.last().expect("open cash day");
+    let CalendarDayState::Open { session_id } = &day.state else {
+        panic!("last cash day is open");
+    };
+    let make_window = |index: usize| SyntheticOvernightWindow {
+        trade_date: day.trade_date,
+        session_id: session_id.clone(),
+        session_instance_id: format!("{session_id}-over-{index:05}"),
+        window: over_window,
+    };
+
+    let too_many_windows = signed_overlay_for_tests(
+        &cash,
+        CASH_INPUT_SHA256,
+        Provider::Futu,
+        OvernightRouteFeedV1::Futu,
+        vec![futu_only_route()],
+        vec![AssetClassV1::Etf],
+        vec!["SPY".to_owned()],
+        (0..=super::MAX_OVERLAY_WINDOWS).map(make_window).collect(),
+        1_741_500_000,
+        1_742_500_000,
+        None,
+    );
+    assert!(too_many_windows.bytes.len() <= super::MAX_OVERLAY_BYTES);
+    let window_calendar =
+        LoadedMarketCalendar::synthetic_cash_snapshot_for_tests(cash.clone(), CASH_INPUT_SHA256)
+            .with_signed_overnight_overlay(
+                &too_many_windows.bytes,
+                &super::sha256(&too_many_windows.bytes),
+                Arc::clone(&too_many_windows.verifier),
+            );
+    let selection = select(&window_calendar, over_window, 1_741_600_000);
+    assert_eq!(selection.status, OvernightOverlayStatus::InvalidArtifact);
+    assert!(selection.allowed_overnight_routes.is_empty());
+
+    let mut symbols = (0..super::MAX_ELIGIBLE_SYMBOLS)
+        .map(|index| format!("S{index:05}"))
+        .collect::<Vec<_>>();
+    symbols.push("SPY".to_owned());
+    let too_many_symbols = signed_overlay_for_tests(
+        &cash,
+        CASH_INPUT_SHA256,
+        Provider::Futu,
+        OvernightRouteFeedV1::Futu,
+        vec![futu_only_route()],
+        vec![AssetClassV1::Etf],
+        symbols,
+        vec![make_window(0)],
+        1_741_500_000,
+        1_742_500_000,
+        None,
+    );
+    let symbol_calendar =
+        LoadedMarketCalendar::synthetic_cash_snapshot_for_tests(cash.clone(), CASH_INPUT_SHA256)
+            .with_signed_overnight_overlay(
+                &too_many_symbols.bytes,
+                &super::sha256(&too_many_symbols.bytes),
+                Arc::clone(&too_many_symbols.verifier),
+            );
+    let selection = select(&symbol_calendar, over_window, 1_741_600_000);
+    assert_eq!(selection.status, OvernightOverlayStatus::InvalidArtifact);
+    assert!(selection.allowed_overnight_routes.is_empty());
+
+    let valid_fixture = signed_fixture(
+        &cash,
+        over_window,
+        1_741_500_000,
+        1_742_500_000,
+        None,
+        vec![futu_only_route()],
+    );
+    let oversized_bytes = vec![b'x'; super::MAX_OVERLAY_BYTES + 1];
+    let oversized_calendar =
+        LoadedMarketCalendar::synthetic_cash_snapshot_for_tests(cash.clone(), CASH_INPUT_SHA256)
+            .with_signed_overnight_overlay(
+                &oversized_bytes,
+                &super::sha256(&oversized_bytes),
+                Arc::clone(&valid_fixture.verifier),
+            );
+    let selection = select(&oversized_calendar, over_window, 1_741_600_000);
+    assert_eq!(selection.status, OvernightOverlayStatus::InvalidArtifact);
+    assert!(selection.allowed_overnight_routes.is_empty());
 }
 
 #[test]
