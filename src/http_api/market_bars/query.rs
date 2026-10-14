@@ -58,7 +58,25 @@ pub(super) async fn run_market_bars_query(
             .provider
             .planning_as_of(&prepare_request, &now)
             .map_err(provider_query_error_to_market_data)?;
-        let capabilities = prepare_runtime.provider.source_capabilities();
+        let now_unix_seconds = unix_seconds_now();
+        let rights_profile_sha256 = cache_profile
+            .as_deref()
+            .map(|profile| hash_cache_rights_profile(profile, &principal_scope_sha256));
+        // Request-scoped admissions are considered only when an operator profile is configured
+        // and bound to this verified principal. Without one, use the runtime's closed generic
+        // capabilities, which advertise configured Alpaca attempts but no Futu admission.
+        let capabilities = match rights_profile_sha256.as_deref() {
+            Some(rights_profile_sha256) => {
+                prepare_runtime.provider.source_capabilities_for_request(
+                    &prepare_request,
+                    &as_of,
+                    &prepare_calendar,
+                    rights_profile_sha256,
+                    now_unix_seconds,
+                )
+            }
+            None => prepare_runtime.provider.source_capabilities(),
+        };
         let plan = crate::market_query::planning::plan_market_bars(
             &prepare_request,
             &as_of,
@@ -75,12 +93,21 @@ pub(super) async fn run_market_bars_query(
         let selection = if plan.provider_groups.is_empty() {
             None
         } else {
-            Some(
-                prepare_runtime
-                    .provider
-                    .select_page(&prepare_request, &plan)
-                    .map_err(provider_query_error_to_market_data)?,
-            )
+            let selection = match rights_profile_sha256.as_deref() {
+                Some(rights_profile_sha256) => prepare_runtime.provider.select_page_for_request(
+                    &prepare_request,
+                    &plan,
+                    rights_profile_sha256,
+                    now_unix_seconds,
+                ),
+                None => crate::market_query::providers::select_page_at(
+                    &prepare_request,
+                    &plan,
+                    now_unix_seconds,
+                ),
+            }
+            .map_err(provider_query_error_to_market_data)?;
+            Some(selection)
         };
         let (cache_request, cache_scope, cache_hit, cache_status) = match selection.as_ref() {
             Some(selection) => cache_preflight(
