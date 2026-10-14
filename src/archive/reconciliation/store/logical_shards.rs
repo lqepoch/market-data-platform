@@ -21,7 +21,7 @@ const SHARDS_DIR: &str = "shards";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CacheLogicalIndexRootV2 {
+pub(super) struct CacheLogicalIndexRootV2 {
     format_version: u32,
     identity: CacheLogicalIdentityV1,
     generation: u64,
@@ -31,11 +31,11 @@ struct CacheLogicalIndexRootV2 {
     shards: BTreeMap<String, CacheLogicalShardRefV1>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CacheLogicalIndexRootEnvelopeV2 {
-    payload: CacheLogicalIndexRootV2,
-    payload_sha256: String,
+pub(super) struct CacheLogicalIndexRootEnvelopeV2 {
+    pub(super) payload: CacheLogicalIndexRootV2,
+    pub(super) payload_sha256: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -48,9 +48,14 @@ struct CacheLogicalShardV2 {
     session_months: BTreeMap<String, String>,
 }
 
-struct PlannedShardV2 {
-    reference: CacheLogicalShardRefV1,
-    bytes: Vec<u8>,
+pub(super) struct PlannedShardV2 {
+    pub(super) reference: CacheLogicalShardRefV1,
+    pub(super) bytes: Vec<u8>,
+}
+
+pub(super) struct PreparedLogicalRootV2 {
+    pub(super) envelope: CacheLogicalIndexRootEnvelopeV2,
+    pub(super) planned_shards: Vec<PlannedShardV2>,
 }
 
 pub(super) fn read_logical_current(
@@ -65,6 +70,15 @@ pub(super) fn read_logical_current(
         return Ok(None);
     };
     let envelope: CacheLogicalIndexRootEnvelopeV2 = serde_json::from_slice(&bytes)?;
+    read_logical_current_from_envelope(store, identity, identity_fingerprint, &envelope)
+}
+
+pub(super) fn read_logical_current_from_envelope(
+    store: &CacheVersionStoreV1,
+    identity: &CacheLogicalIdentityV1,
+    identity_fingerprint: &str,
+    envelope: &CacheLogicalIndexRootEnvelopeV2,
+) -> Result<Option<CacheLogicalCurrentV1>> {
     let payload_sha = root_hash(&envelope.payload)?;
     if envelope.payload.format_version != 2
         || payload_sha != envelope.payload_sha256
@@ -111,8 +125,7 @@ pub(super) fn read_logical_current(
             || !valid_shard_month(month)
             || shard.sessions.is_empty()
             || shard.sessions.len() > MAX_LOGICAL_SESSIONS_PER_SHARD
-            || usize::try_from(reference.session_count)
-                .map_or(true, |count| shard.sessions.len() != count)
+            || usize::try_from(reference.session_count) != Ok(shard.sessions.len())
             || shard.session_months.len() != shard.sessions.len()
         {
             return Err(CacheReconciliationError::UnknownOutcome);
@@ -141,7 +154,7 @@ pub(super) fn read_logical_current(
     if total_bytes > MAX_LOGICAL_TOTAL_BYTES as u64
         || total_bytes != envelope.payload.shard_bytes
         || referenced_sessions != envelope.payload.session_count
-        || usize::try_from(referenced_sessions).map_or(true, |count| sessions.len() != count)
+        || usize::try_from(referenced_sessions) != Ok(sessions.len())
     {
         return Err(CacheReconciliationError::UnknownOutcome);
     }
@@ -165,11 +178,21 @@ pub(super) fn read_logical_current(
     Ok(Some(current))
 }
 
+#[cfg(test)]
 pub(super) fn write_logical_current(
     store: &CacheVersionStoreV1,
     identity_fingerprint: &str,
     payload: &CacheLogicalCurrentV1,
 ) -> Result<()> {
+    let prepared = prepare_logical_root(identity_fingerprint, payload)?;
+    persist_logical_shards(store, identity_fingerprint, &prepared)?;
+    write_logical_root(store, identity_fingerprint, &prepared.envelope)
+}
+
+pub(super) fn prepare_logical_root(
+    identity_fingerprint: &str,
+    payload: &CacheLogicalCurrentV1,
+) -> Result<PreparedLogicalRootV2> {
     payload.validate()?;
     if payload.identity.fingerprint()? != identity_fingerprint {
         return Err(CacheReconciliationError::InvalidInput);
@@ -198,15 +221,28 @@ pub(super) fn write_logical_current(
         shard_bytes,
         shards: references.clone(),
     };
-    let bytes = encode_root(&root)?;
+    let envelope = encode_root(&root)?;
+    let bytes = serde_json::to_vec(&envelope)?;
     if bytes.len() > MAX_LOGICAL_INDEX_BYTES {
         return Err(CacheReconciliationError::LimitExceeded);
     }
 
+    Ok(PreparedLogicalRootV2 {
+        envelope,
+        planned_shards,
+    })
+}
+
+pub(super) fn persist_logical_shards(
+    store: &CacheVersionStoreV1,
+    identity_fingerprint: &str,
+    prepared: &PreparedLogicalRootV2,
+) -> Result<()> {
     let logical_dir = store.logical_dir(identity_fingerprint)?;
     let shards_dir = logical_dir.join(SHARDS_DIR);
     create_private_dir(&shards_dir)?;
-    for planned in planned_shards {
+    sync_directory(&logical_dir)?;
+    for planned in &prepared.planned_shards {
         let path = shards_dir.join(format!("{}.json", planned.reference.content_sha256));
         match write_new_synced(&path, &planned.bytes) {
             Ok(()) => {}
@@ -224,20 +260,72 @@ pub(super) fn write_logical_current(
         }
     }
     sync_directory(&shards_dir)?;
+    sync_directory(&logical_dir)?;
+    read_logical_current_from_envelope(
+        store,
+        &prepared.envelope.payload.identity,
+        identity_fingerprint,
+        &prepared.envelope,
+    )?
+    .ok_or(CacheReconciliationError::UnknownOutcome)?;
+    Ok(())
+}
 
-    let mut committed = payload.clone();
-    committed.shards = references.clone();
-    committed.validate()?;
+pub(super) fn planned_shard_bytes_to_add(
+    store: &CacheVersionStoreV1,
+    identity_fingerprint: &str,
+    prepared: &PreparedLogicalRootV2,
+) -> Result<u64> {
+    let shards_dir = store.logical_dir(identity_fingerprint)?.join(SHARDS_DIR);
+    let mut total = 0_u64;
+    for planned in &prepared.planned_shards {
+        let path = shards_dir.join(format!("{}.json", planned.reference.content_sha256));
+        match std::fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_file() => {}
+            Ok(_) => return Err(CacheReconciliationError::UnknownOutcome),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                total = total
+                    .checked_add(planned.bytes.len() as u64)
+                    .ok_or(CacheReconciliationError::LimitExceeded)?;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(total)
+}
+
+pub(super) fn write_logical_root(
+    store: &CacheVersionStoreV1,
+    identity_fingerprint: &str,
+    envelope: &CacheLogicalIndexRootEnvelopeV2,
+) -> Result<()> {
+    if envelope.payload.identity.fingerprint()? != identity_fingerprint
+        || root_hash(&envelope.payload)? != envelope.payload_sha256
+    {
+        return Err(CacheReconciliationError::UnknownOutcome);
+    }
+    let bytes = serde_json::to_vec(envelope)?;
+    if bytes.len() > MAX_LOGICAL_INDEX_BYTES {
+        return Err(CacheReconciliationError::LimitExceeded);
+    }
+    let committed = read_logical_current_from_envelope(
+        store,
+        &envelope.payload.identity,
+        identity_fingerprint,
+        envelope,
+    )?
+    .ok_or(CacheReconciliationError::UnknownOutcome)?;
+    let logical_dir = store.logical_dir(identity_fingerprint)?;
     let temporary = logical_dir.join(format!(
         ".current-{}-{}.tmp",
-        payload.generation,
+        envelope.payload.generation,
         fresh_temp_component()?
     ));
     write_new_synced(&temporary, &bytes)?;
     replace_plain_file(&temporary, &logical_dir.join(ROOT_FILE))
         .map_err(|_| CacheReconciliationError::UnknownOutcome)?;
     sync_directory(&logical_dir).map_err(|_| CacheReconciliationError::UnknownOutcome)?;
-    let readback = read_logical_current(store, &payload.identity, identity_fingerprint)?
+    let readback = read_logical_current(store, &committed.identity, identity_fingerprint)?
         .ok_or(CacheReconciliationError::UnknownOutcome)?;
     if readback != committed {
         return Err(CacheReconciliationError::UnknownOutcome);
@@ -388,12 +476,11 @@ fn root_hash(payload: &CacheLogicalIndexRootV2) -> Result<String> {
     Ok(hash_domain(ROOT_DOMAIN, &serde_json::to_vec(payload)?))
 }
 
-fn encode_root(payload: &CacheLogicalIndexRootV2) -> Result<Vec<u8>> {
-    let envelope = CacheLogicalIndexRootEnvelopeV2 {
+fn encode_root(payload: &CacheLogicalIndexRootV2) -> Result<CacheLogicalIndexRootEnvelopeV2> {
+    Ok(CacheLogicalIndexRootEnvelopeV2 {
         payload_sha256: root_hash(payload)?,
         payload: payload.clone(),
-    };
-    Ok(serde_json::to_vec(&envelope)?)
+    })
 }
 
 fn shard_hash(bytes: &[u8]) -> String {

@@ -33,6 +33,9 @@ pub(crate) use store::{
 };
 
 #[cfg(test)]
+pub(crate) use store::CacheTransactionFaultV1;
+
+#[cfg(test)]
 mod tests;
 
 const CACHE_KEY_DOMAIN: &[u8] = b"lqepoch.mdp.cache-key.v1\0";

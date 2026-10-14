@@ -279,8 +279,10 @@ permission or content changes. The cursor receipt binds provider kind, actual pr
 entitlement realm, cache key, payload hash, and original expiry; it never stores the MDP outer
 cursor, a Gateway delegation, or credentials. A02
 rewraps the locator into a fresh outer cursor and does not extend its lifetime. Production source
-authority remains closed. Its provider-neutral reconciliation index commits all changed sessions
-through one checksummed root pointer and bounded immutable shards; session-to-month assignment
+authority remains closed. A checksummed transaction head commits the source current pointer and
+provider-neutral logical root together; per-key and logical `current.json` files are verified
+mirrors. Readers fail closed on a missing or corrupt head once transaction mode is recorded. The
+reconciliation index stores changed sessions in bounded immutable shards; session-to-month assignment
 uses validated calendar phase slices rather than parsing opaque IDs. Missing phase mapping keeps
 provisional artifacts without advancing the logical index. Expired observations are not served,
 but remain available for material-conflict audit. This store has no provider or remote-archive

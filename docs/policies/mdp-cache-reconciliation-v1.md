@@ -145,22 +145,46 @@ The store root is local and private (`0700` directories, `0600` files). A new ro
 empty directory is claimed with the fixed `.mdp-cache-owner` marker using create-only semantics.
 An unmarked non-empty directory is rejected before changing permissions or contents; the store
 does not migrate another cache or archive root. Reopening requires the exact marker and private
-owner-only modes. For each key it holds a
-mutable `current.json`, a bounded `versions/<version-id>/` directory with raw and canonical Parquet,
-normalized comparison rows, and a version receipt, plus compact rejected-candidate audit entries.
+owner-only modes. For each key it holds a bounded `versions/<version-id>/` directory with raw and
+canonical Parquet, normalized comparison rows, and a version receipt, plus compact
+rejected-candidate audit entries. The mutable `logical/<identity>/transaction.json` is the single
+effective commitpoint for one source-key current pointer and its provider-neutral logical root.
+Per-key and logical `current.json` files are checksummed mirrors, not independent commitpoints. A
+fixed transaction-mode marker makes a missing or malformed transaction head return
+`UnknownOutcome` instead of falling back to a possibly divergent mirror.
 Version receipts bind the exact key, coverage, artifact sizes/hashes, Core schema fingerprints,
 source observations, row checksum/count, authority basis, generation, predecessor, and TTL.
 The current pointer contains a domain-separated checksum and the exact version-receipt hash.
 
-Publish takes process-shared per-key and total-budget file locks. It writes both Core-schema Parquet
-objects into private staging, verifies them through the existing bounded Linux worker, checks
-source facts/schema/row counts, hashes and reads back the objects, syncs files/directories, and
-renames the complete stage to an immutable version. Only then does it write and atomically replace
-`current.json`, sync the key directory, and read back/check the manifest checksum. If an error occurs
-before pointer replacement, the previous pointer remains current. An error after replacement can
-have an unknown outcome; callers must reload and verify current rather than retry blindly. Process
-death after immutable rename but before pointer replacement leaves an orphan version, never an
-auto-promoted cache entry.
+Publish takes process-shared per-key, total-budget, and logical-identity file locks. It writes both
+Core-schema Parquet objects into private staging, verifies them through the existing bounded Linux
+worker, checks source facts/schema/row counts, hashes and reads back the objects, syncs files and
+directories, and renames the complete stage to an immutable version. It also writes and verifies
+any new immutable logical shards. The transaction head then atomically commits the source pointer
+and the complete logical root together. Only after that commitpoint are the two `current.json`
+mirrors materialized, synced, read back, and sealed with transaction-hash sidecars. Before the head
+rename, a failure leaves the previous effective pointer in place; after it, callers may receive
+`UnknownOutcome`, but readers resolve the whole new source/logical pair from the head. Every next
+mutation verifies and materializes the prior committed mirrors before replacing the head. The
+identity-level transaction marker is installed before the first head so a crash in that interval
+fails closed. The per-source marker is deferred until after the head commitpoint, so a failed
+pre-commit attempt cannot hide that source's legacy current while another source owns the head. A
+first transaction that is interrupted after the identity marker but before the head is detected
+returns `UnknownOutcome` rather than falling back to a mirror. An explicit `recover_to` may reassert
+a selected version or repair a damaged source mirror through the same transaction path; it does
+not replace a missing or corrupt transaction head because the associated logical state cannot then
+be reconstructed safely. Process death after immutable rename but before the transaction-head
+rename leaves an orphan version, never an auto-promoted cache entry.
+
+Before persisting logical shards or installing a transaction head, the store reserves the new shard
+bytes plus bounded head/current/root/mirror temporary files and both transaction markers against
+the current tree total. A limit failure stays before the commitpoint; the store does not evict old
+versions to make room.
+
+Linux fault-injection tests exercise the pre-commit boundary, post-commit head, and each mirror
+replacement, then reopen the store and assert that source and logical reads select the same complete
+version. These are synthetic reopen simulations, not process-kill or storage-device durability
+qualification.
 
 `list_verified_versions` verifies immutable data and receipt integrity, but its authority field is a
 historical publication result, not current permission to serve that data. `rollback_to` and

@@ -14,6 +14,9 @@ use market_contracts::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+#[cfg(test)]
+use std::sync::atomic::AtomicU8;
+
 use crate::cancellation::CancellationToken;
 use crate::parquet_store::ParquetVerification;
 
@@ -23,7 +26,12 @@ use super::authority::{
 };
 mod logical;
 mod logical_shards;
+mod transaction;
+mod transaction_format;
 mod version_ops;
+
+#[cfg(test)]
+pub(crate) use transaction::CacheTransactionFaultV1;
 
 use super::logical_index::{
     CacheLogicalBatchComparisonV1, CacheLogicalComparisonKindV1, CacheLogicalComparisonV1,
@@ -580,11 +588,14 @@ struct RejectedCandidateV1<'a> {
 ///
 /// The store has no provider or remote-archive writer. Candidate Parquet is copied into a private
 /// version directory, verified using the CLI's bounded Linux worker, hashed, read back and only
-/// then made current with one atomic manifest rename. On non-Linux platforms the store fails
-/// closed because the existing resource-limited worker is unsupported there.
+/// then committed together with its logical-index root by one atomic transaction-head rename.
+/// Per-key and logical `current.json` files are sealed mirrors of that head. On non-Linux platforms
+/// the store fails closed because the existing resource-limited worker is unsupported there.
 pub(crate) struct CacheVersionStoreV1 {
     root: PathBuf,
     limits: CacheLimitsV1,
+    #[cfg(test)]
+    transaction_fault: AtomicU8,
 }
 
 impl CacheVersionStoreV1 {
@@ -596,7 +607,13 @@ impl CacheVersionStoreV1 {
         create_private_dir(&root.join("keys"))?;
         create_private_dir(&root.join("locks"))?;
         create_private_dir(&root.join("logical"))?;
-        Ok(Self { root, limits })
+        sync_directory(&root)?;
+        Ok(Self {
+            root,
+            limits,
+            #[cfg(test)]
+            transaction_fault: AtomicU8::new(0),
+        })
     }
 
     /// Persist SDK-normalized provider observations and the adapter's canonical response as a
@@ -1386,7 +1403,6 @@ impl CacheVersionStoreV1 {
                     .map(|value| value.version_id.clone()),
                 updated_at_unix_seconds: now_unix_seconds,
             };
-            self.write_current_atomic(&key_dir, &next)?;
             Some(next)
         } else {
             previous_current.clone()
@@ -1423,13 +1439,23 @@ impl CacheVersionStoreV1 {
                 },
             ));
         }
-        let logical_invalidation = self.commit_logical_session_updates_unlocked(
+        let (logical_next, logical_invalidation) = self.plan_logical_session_updates_unlocked(
             &logical_identity,
             &logical_fingerprint,
             existing_logical.as_ref(),
             logical_updates,
             now_unix_seconds,
         )?;
+        if can_replace_current || logical_next.is_some() {
+            let effective_logical = logical_next.as_ref().or(existing_logical.as_ref());
+            self.commit_pointer_transaction(
+                &snapshot.key,
+                current.as_ref(),
+                effective_logical,
+                now_unix_seconds,
+                false,
+            )?;
+        }
         let invalidation = previous_current.as_ref().and_then(|previous| {
             current
                 .as_ref()
@@ -1491,6 +1517,9 @@ impl CacheVersionStoreV1 {
         key.validate()?;
         let key_fingerprint = key.fingerprint()?;
         let _key_lock = self.lock(&format!("key-{key_fingerprint}.lock"))?;
+        let logical_identity = CacheLogicalIdentityV1::from_key(key)?;
+        let logical_fingerprint = logical_identity.fingerprint()?;
+        let _logical_lock = self.lock(&format!("logical-{logical_fingerprint}.lock"))?;
         self.read_current_unlocked(key, &key_fingerprint, now_unix_seconds, true)?
             .ok_or(CacheReconciliationError::NotFound)
     }
@@ -1553,9 +1582,23 @@ impl CacheVersionStoreV1 {
         now_unix_seconds: u64,
         require_fresh: bool,
     ) -> Result<Option<CacheReadResultV1>> {
+        self.read_transactional_current(key, key_fingerprint, now_unix_seconds, require_fresh)
+    }
+
+    pub(super) fn read_current_physical_unlocked(
+        &self,
+        key: &CacheKeyV1,
+        key_fingerprint: &str,
+        now_unix_seconds: u64,
+        require_fresh: bool,
+    ) -> Result<Option<CacheReadResultV1>> {
         let key_dir = self.key_dir(key_fingerprint)?;
         let current_path = key_dir.join(CURRENT_FILE);
-        let Some(bytes) = read_optional_bounded(&current_path, 64 * 1024)? else {
+        let Some(bytes) = read_optional_bounded(
+            &current_path,
+            transaction_format::MAX_CURRENT_MANIFEST_BYTES,
+        )?
+        else {
             return Ok(None);
         };
         let envelope: CacheCurrentEnvelopeV1 = serde_json::from_slice(&bytes)?;
@@ -1776,12 +1819,7 @@ impl CacheVersionStoreV1 {
     }
 
     fn write_current_atomic(&self, key_dir: &Path, payload: &CacheCurrentV1) -> Result<()> {
-        let payload_bytes = serde_json::to_vec(payload)?;
-        let envelope = CacheCurrentEnvelopeV1 {
-            payload: payload.clone(),
-            payload_sha256: hash_domain(CURRENT_DOMAIN, &payload_bytes),
-        };
-        let bytes = serde_json::to_vec(&envelope)?;
+        let bytes = transaction_format::current_manifest_bytes(payload)?;
         let temporary = key_dir.join(format!(
             ".current-{}-{}.tmp",
             payload.generation,
@@ -1791,7 +1829,10 @@ impl CacheVersionStoreV1 {
         replace_plain_file(&temporary, &key_dir.join(CURRENT_FILE))
             .map_err(|_| CacheReconciliationError::UnknownOutcome)?;
         sync_directory(key_dir).map_err(|_| CacheReconciliationError::UnknownOutcome)?;
-        let readback = read_required_bounded(&key_dir.join(CURRENT_FILE), 64 * 1024)?;
+        let readback = read_required_bounded(
+            &key_dir.join(CURRENT_FILE),
+            transaction_format::MAX_CURRENT_MANIFEST_BYTES,
+        )?;
         let envelope: CacheCurrentEnvelopeV1 = serde_json::from_slice(&readback)?;
         if envelope.payload != *payload
             || envelope.payload_sha256

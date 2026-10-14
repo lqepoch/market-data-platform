@@ -1882,13 +1882,100 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
     assert_eq!(versions.len(), 4);
     assert!(versions.iter().all(|version| version.is_fresh));
     assert!(versions.iter().any(|version| version.conflict_rejected));
-    let rollback = store.rollback_to(&key, &first_id, 1_800_000_020).unwrap();
+    let identity = CacheLogicalIdentityV1::from_key(&key).unwrap();
+    let assert_pointer_pair = |store: &CacheVersionStoreV1, expected_version: &str, now| {
+        let source = store.load_current(&key, now).unwrap();
+        let logical = store
+            .load_logical_current(&identity, "2026-10-08-regular", now)
+            .unwrap();
+        assert_eq!(source.current.version_id, expected_version);
+        assert_eq!(logical.session.current.version_id, expected_version);
+    };
+    let publish_verified = |store: &CacheVersionStoreV1, close: &str, now| {
+        let response = test_response(close);
+        store.publish_synthetic_verified_bars_responses(
+            cache_input_with_test_phases(
+                &request,
+                &source_scope,
+                response.clone(),
+                response,
+                test_page_evidence(),
+            ),
+            now,
+            &tolerance,
+        )
+    };
+
+    store.set_transaction_fault_for_test(CacheTransactionFaultV1::BeforeCommitpoint);
+    assert!(matches!(
+        publish_verified(&store, "600.27", 1_800_000_030),
+        Err(CacheReconciliationError::UnknownOutcome)
+    ));
+    assert_pointer_pair(&store, &second_id, 1_800_000_031);
+    let before_commit_reopen =
+        CacheVersionStoreV1::new(temp.path().join("cache"), CacheLimitsV1::default()).unwrap();
+    assert_pointer_pair(&before_commit_reopen, &second_id, 1_800_000_031);
+
+    store.set_transaction_fault_for_test(CacheTransactionFaultV1::AfterCommitpoint);
+    assert!(matches!(
+        publish_verified(&store, "600.27", 1_800_000_032),
+        Err(CacheReconciliationError::UnknownOutcome)
+    ));
+    let committed_27 = store
+        .load_current(&key, 1_800_000_033)
+        .unwrap()
+        .current
+        .version_id
+        .clone();
+    assert_pointer_pair(&store, &committed_27, 1_800_000_033);
+    let after_commit_reopen =
+        CacheVersionStoreV1::new(temp.path().join("cache"), CacheLimitsV1::default()).unwrap();
+    assert_pointer_pair(&after_commit_reopen, &committed_27, 1_800_000_033);
+
+    store.set_transaction_fault_for_test(CacheTransactionFaultV1::AfterSourceMirror);
+    assert!(matches!(
+        publish_verified(&store, "600.28", 1_800_000_034),
+        Err(CacheReconciliationError::UnknownOutcome)
+    ));
+    let committed_28 = store
+        .load_current(&key, 1_800_000_035)
+        .unwrap()
+        .current
+        .version_id
+        .clone();
+    assert_pointer_pair(&store, &committed_28, 1_800_000_035);
+    let after_source_mirror_reopen =
+        CacheVersionStoreV1::new(temp.path().join("cache"), CacheLimitsV1::default()).unwrap();
+    assert_pointer_pair(&after_source_mirror_reopen, &committed_28, 1_800_000_035);
+
+    store.set_transaction_fault_for_test(CacheTransactionFaultV1::AfterLogicalMirror);
+    assert!(matches!(
+        publish_verified(&store, "600.29", 1_800_000_036),
+        Err(CacheReconciliationError::UnknownOutcome)
+    ));
+    let committed_29 = store
+        .load_current(&key, 1_800_000_037)
+        .unwrap()
+        .current
+        .version_id
+        .clone();
+    assert_pointer_pair(&store, &committed_29, 1_800_000_037);
+    let after_logical_mirror_reopen =
+        CacheVersionStoreV1::new(temp.path().join("cache"), CacheLimitsV1::default()).unwrap();
+    assert_pointer_pair(&after_logical_mirror_reopen, &committed_29, 1_800_000_037);
+
+    store.set_transaction_fault_for_test(CacheTransactionFaultV1::AfterCommitpoint);
+    assert!(matches!(
+        store.rollback_to(&key, &first_id, 1_800_000_040),
+        Err(CacheReconciliationError::UnknownOutcome)
+    ));
+    let restored = store.load_current(&key, 1_800_000_041).unwrap();
+    assert_eq!(restored.current.version_id, first_id);
     assert_eq!(
-        rollback.current.unwrap().operation,
+        restored.current.operation,
         CacheCurrentOperationV1::Rollback
     );
-    let restored = store.load_current(&key, 1_800_000_021).unwrap();
-    assert_eq!(restored.current.version_id, first_id);
+    assert_pointer_pair(&store, &first_id, 1_800_000_041);
     std::fs::remove_file(
         temp.path()
             .join("cache")
@@ -1897,21 +1984,219 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
             .join("current.json"),
     )
     .unwrap();
-    let recovered = store.recover_to(&key, &first_id, 1_800_000_022).unwrap();
+    store.set_transaction_fault_for_test(CacheTransactionFaultV1::AfterLogicalMirror);
+    assert!(matches!(
+        store.recover_to(&key, &first_id, 1_800_000_042),
+        Err(CacheReconciliationError::UnknownOutcome)
+    ));
+    let recovered = store.load_current(&key, 1_800_000_043).unwrap();
     assert_eq!(
-        recovered.current.unwrap().operation,
+        recovered.current.operation,
         CacheCurrentOperationV1::Recovery
     );
+    assert_pointer_pair(&store, &first_id, 1_800_000_043);
+    let logical_dir = temp
+        .path()
+        .join("cache")
+        .join("logical")
+        .join(identity.fingerprint().unwrap());
+    let transaction_path = logical_dir.join("transaction.json");
+    let transaction_bytes = fs::read(&transaction_path).unwrap();
+    fs::write(&transaction_path, b"corrupt transaction head").unwrap();
+    assert!(matches!(
+        store.load_current(&key, 1_800_000_044),
+        Err(CacheReconciliationError::UnknownOutcome)
+    ));
+    assert!(matches!(
+        store.load_logical_current(&identity, "2026-10-08-regular", 1_800_000_044),
+        Err(CacheReconciliationError::UnknownOutcome)
+    ));
+    assert!(matches!(
+        store.recover_to(&key, &first_id, 1_800_000_045),
+        Err(CacheReconciliationError::UnknownOutcome)
+    ));
+    fs::write(&transaction_path, transaction_bytes).unwrap();
+    assert_pointer_pair(&store, &first_id, 1_800_000_046);
     assert!(matches!(
         store.load_current(&key, 1_800_000_900),
         Err(CacheReconciliationError::Expired)
     ));
-    let current = store.load_current(&key, 1_800_000_023).unwrap();
+    let current = store.load_current(&key, 1_800_000_047).unwrap();
     std::fs::write(&current.raw_parquet_path, b"tampered parquet object").unwrap();
     assert!(matches!(
-        store.load_current(&key, 1_800_000_024),
+        store.load_current(&key, 1_800_000_048),
         Err(CacheReconciliationError::UnknownOutcome)
     ));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn synthetic_interrupted_first_transaction_fails_closed_on_reopen() {
+    let temp = tempfile::tempdir().unwrap();
+    let cache_root = temp.path().join("cache");
+    let store = CacheVersionStoreV1::new(cache_root.clone(), CacheLimitsV1::default()).unwrap();
+    let request = admission_test_request();
+    let source_scope = admission_test_scope();
+    let response = admission_test_response("600.25");
+    let key = CacheKeyV1::from_request(&request, &source_scope).unwrap();
+    let identity = CacheLogicalIdentityV1::from_key(&key).unwrap();
+
+    store.set_transaction_fault_for_test(CacheTransactionFaultV1::AfterIdentityMarker);
+    assert!(matches!(
+        store.publish_bars_responses(
+            cache_input(
+                &request,
+                &source_scope,
+                response.clone(),
+                response,
+                admission_test_evidence(),
+            ),
+            1_800_000_090,
+            &SameFeedTolerancePolicyV1::default(),
+        ),
+        Err(CacheReconciliationError::UnknownOutcome)
+    ));
+
+    let logical_dir = cache_root
+        .join("logical")
+        .join(identity.fingerprint().unwrap());
+    assert!(logical_dir.join(".transaction-mode").exists());
+    assert!(!logical_dir.join("transaction.json").exists());
+    let reopened = CacheVersionStoreV1::new(cache_root, CacheLimitsV1::default()).unwrap();
+    assert!(matches!(
+        reopened.load_current(&key, 1_800_000_091),
+        Err(CacheReconciliationError::UnknownOutcome)
+    ));
+    assert!(matches!(
+        reopened.load_logical_current(&identity, "2026-10-08-regular", 1_800_000_091),
+        Err(CacheReconciliationError::UnknownOutcome)
+    ));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn synthetic_precommit_failure_preserves_another_sources_legacy_current() {
+    let temp = tempfile::tempdir().unwrap();
+    let cache_root = temp.path().join("cache");
+    let store = CacheVersionStoreV1::new(cache_root.clone(), CacheLimitsV1::default()).unwrap();
+    let tolerance = SameFeedTolerancePolicyV1::default();
+
+    let alpaca_request = admission_test_request();
+    let alpaca_scope = admission_test_scope();
+    let alpaca_response = admission_test_response("600.25");
+    let alpaca_key = CacheKeyV1::from_request(&alpaca_request, &alpaca_scope).unwrap();
+    let alpaca_version = store
+        .publish_bars_responses(
+            cache_input(
+                &alpaca_request,
+                &alpaca_scope,
+                alpaca_response.clone(),
+                alpaca_response,
+                admission_test_evidence(),
+            ),
+            1_800_000_100,
+            &tolerance,
+        )
+        .unwrap()
+        .published_version_id;
+    let identity = CacheLogicalIdentityV1::from_key(&alpaca_key).unwrap();
+    let logical_dir = cache_root
+        .join("logical")
+        .join(identity.fingerprint().unwrap());
+    let transaction_path = logical_dir.join("transaction.json");
+    let alpaca_transaction = fs::read(&transaction_path).unwrap();
+
+    let mut futu_request = alpaca_request.clone();
+    futu_request.provider_mode = BarsProviderModeV1::Auto;
+    let mut futu_scope = alpaca_scope.clone();
+    futu_scope.provider = "futu".to_owned();
+    futu_scope.feed = "futu".to_owned();
+    futu_scope.source_scope_id = "futu-unknown-history-v1".to_owned();
+    futu_scope.entitlement_scope_sha256 = "9".repeat(64);
+    futu_scope.entitlement = EntitlementState::Unknown;
+    let futu_key = CacheKeyV1::from_request(&futu_request, &futu_scope).unwrap();
+    let mut futu_response = admission_test_response("600.26");
+    futu_response.provider = "futu".to_owned();
+    futu_response.feed = "futu".to_owned();
+    futu_response.entitlement_status = market_contracts::BarsEntitlementStatusV1::Unknown;
+    futu_response.source_provenance[0].provider = "futu".to_owned();
+    futu_response.source_provenance[0].feed = "futu".to_owned();
+    futu_response.source_provenance[0].source = "Futu SDK observation".to_owned();
+    futu_response.source_provenance[0].entitlement_status =
+        market_contracts::BarsEntitlementStatusV1::Unknown;
+    let futu_version = store
+        .publish_bars_responses(
+            cache_input(
+                &futu_request,
+                &futu_scope,
+                futu_response.clone(),
+                futu_response,
+                admission_test_evidence(),
+            ),
+            1_800_000_101,
+            &tolerance,
+        )
+        .unwrap()
+        .published_version_id;
+
+    // Recreate a legacy source mirror while another provider owns the effective transaction head.
+    // This models an existing old-format current that has not yet joined the transaction protocol.
+    let futu_key_dir = cache_root
+        .join("keys")
+        .join(futu_key.fingerprint().unwrap());
+    fs::write(&transaction_path, alpaca_transaction).unwrap();
+    fs::remove_file(futu_key_dir.join(".transaction-mode")).unwrap();
+    fs::remove_file(futu_key_dir.join("transaction-mirror.json")).unwrap();
+    assert_eq!(
+        store
+            .load_current(&futu_key, 1_800_000_102)
+            .unwrap()
+            .current
+            .version_id,
+        futu_version
+    );
+
+    store.set_transaction_fault_for_test(CacheTransactionFaultV1::BeforeCommitpoint);
+    let mut changed_futu_response = admission_test_response("600.27");
+    changed_futu_response.provider = "futu".to_owned();
+    changed_futu_response.feed = "futu".to_owned();
+    changed_futu_response.entitlement_status = market_contracts::BarsEntitlementStatusV1::Unknown;
+    changed_futu_response.source_provenance[0].provider = "futu".to_owned();
+    changed_futu_response.source_provenance[0].feed = "futu".to_owned();
+    changed_futu_response.source_provenance[0].source = "Futu SDK observation".to_owned();
+    changed_futu_response.source_provenance[0].entitlement_status =
+        market_contracts::BarsEntitlementStatusV1::Unknown;
+    assert!(matches!(
+        store.publish_bars_responses(
+            cache_input(
+                &futu_request,
+                &futu_scope,
+                changed_futu_response.clone(),
+                changed_futu_response,
+                admission_test_evidence(),
+            ),
+            1_800_000_103,
+            &tolerance,
+        ),
+        Err(CacheReconciliationError::UnknownOutcome)
+    ));
+    assert!(!futu_key_dir.join(".transaction-mode").exists());
+    assert_eq!(
+        store
+            .load_current(&futu_key, 1_800_000_104)
+            .unwrap()
+            .current
+            .version_id,
+        futu_version
+    );
+    assert_eq!(
+        store
+            .load_current(&alpaca_key, 1_800_000_104)
+            .unwrap()
+            .current
+            .version_id,
+        alpaca_version
+    );
 }
 
 #[cfg(target_os = "linux")]

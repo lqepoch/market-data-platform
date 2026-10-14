@@ -109,9 +109,10 @@ impl CacheVersionStoreV1 {
         identity: &CacheLogicalIdentityV1,
         identity_fingerprint: &str,
     ) -> Result<Option<CacheLogicalCurrentV1>> {
-        super::logical_shards::read_logical_current(self, identity, identity_fingerprint)
+        self.read_transactional_logical_current(identity, identity_fingerprint)
     }
 
+    #[cfg(test)]
     fn write_logical_current_atomic(
         &self,
         identity_fingerprint: &str,
@@ -128,16 +129,19 @@ impl CacheVersionStoreV1 {
         self.write_logical_current_atomic(&payload.identity.fingerprint()?, payload)
     }
 
-    pub(super) fn commit_logical_session_updates_unlocked(
+    pub(super) fn plan_logical_session_updates_unlocked(
         &self,
         identity: &CacheLogicalIdentityV1,
         identity_fingerprint: &str,
         previous: Option<&CacheLogicalCurrentV1>,
         updates: Vec<(String, CacheLogicalSessionCurrentV1)>,
         now_unix_seconds: u64,
-    ) -> Result<Option<CacheLogicalInvalidationV1>> {
+    ) -> Result<(
+        Option<CacheLogicalCurrentV1>,
+        Option<CacheLogicalInvalidationV1>,
+    )> {
         if updates.is_empty() {
-            return Ok(None);
+            return Ok((None, None));
         }
         identity.validate()?;
         let mut next = previous.cloned().unwrap_or_else(|| CacheLogicalCurrentV1 {
@@ -168,7 +172,7 @@ impl CacheVersionStoreV1 {
             next.sessions.insert(session, entry);
         }
         if changes.is_empty() {
-            return Ok(None);
+            return Ok((None, None));
         }
         if next.sessions.len() > MAX_LOGICAL_TOTAL_SESSIONS {
             return Err(CacheReconciliationError::LimitExceeded);
@@ -179,34 +183,29 @@ impl CacheVersionStoreV1 {
             .ok_or(CacheReconciliationError::LimitExceeded)?;
         next.generation = generation;
         next.updated_at_unix_seconds = now_unix_seconds;
-        self.write_logical_current_atomic(identity_fingerprint, &next)?;
-        Ok(Some(CacheLogicalInvalidationV1 {
+        let invalidation = CacheLogicalInvalidationV1 {
             identity_fingerprint_sha256: identity_fingerprint.to_owned(),
             changes,
             generation,
             updated_at_unix_seconds: now_unix_seconds,
-        }))
+        };
+        Ok((Some(next), Some(invalidation)))
     }
 
-    pub(super) fn move_logical_pointer_to_version(
+    pub(super) fn plan_logical_pointer_to_version_unlocked(
         &self,
         target: &CacheReadResultV1,
+        previous: Option<&CacheLogicalCurrentV1>,
         now_unix_seconds: u64,
-        repair_damaged_pointer: bool,
-    ) -> Result<Option<CacheLogicalInvalidationV1>> {
+    ) -> Result<(
+        Option<CacheLogicalCurrentV1>,
+        Option<CacheLogicalInvalidationV1>,
+    )> {
         if target.current.authority != CacheAuthorityV1::Authoritative {
-            return Ok(None);
+            return Ok((None, None));
         }
         let identity = CacheLogicalIdentityV1::from_key(&target.key)?;
         let identity_fingerprint = identity.fingerprint()?;
-        let _logical_lock = self.lock(&format!("logical-{identity_fingerprint}.lock"))?;
-        let previous = if repair_damaged_pointer {
-            self.read_logical_current_unlocked(&identity, &identity_fingerprint)
-                .ok()
-                .flatten()
-        } else {
-            self.read_logical_current_unlocked(&identity, &identity_fingerprint)?
-        };
         let (version_receipt, _) = self.read_version_receipt(
             &target.current.key_fingerprint_sha256,
             &target.current.version_id,
@@ -277,10 +276,10 @@ impl CacheVersionStoreV1 {
                 },
             ));
         }
-        self.commit_logical_session_updates_unlocked(
+        self.plan_logical_session_updates_unlocked(
             &identity,
             &identity_fingerprint,
-            previous.as_ref(),
+            previous,
             updates,
             now_unix_seconds,
         )

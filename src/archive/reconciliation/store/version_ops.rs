@@ -37,12 +37,16 @@ impl CacheVersionStoreV1 {
             return Err(CacheReconciliationError::InvalidInput);
         }
         let key_fingerprint = key.fingerprint()?;
-        let key_dir = self.key_dir(&key_fingerprint)?;
         let _key_lock = self.lock(&format!("key-{key_fingerprint}.lock"))?;
         let _budget_lock = self.lock("budget.lock")?;
+        let logical_identity = CacheLogicalIdentityV1::from_key(key)?;
+        let logical_fingerprint = logical_identity.fingerprint()?;
+        let _logical_lock = self.lock(&format!("logical-{logical_fingerprint}.lock"))?;
         let previous = self
             .read_current_unlocked(key, &key_fingerprint, now_unix_seconds, false)?
             .ok_or(CacheReconciliationError::NotFound)?;
+        let previous_logical =
+            self.read_logical_current_unlocked(&logical_identity, &logical_fingerprint)?;
         let target = self.read_version(key, &key_fingerprint, target_version_id)?;
         let (target_receipt, _) = self.read_version_receipt(&key_fingerprint, target_version_id)?;
         self.require_current_admission(&target, now_unix_seconds, verifier)?;
@@ -57,8 +61,21 @@ impl CacheVersionStoreV1 {
             return Err(CacheReconciliationError::Expired);
         }
         if previous.current.version_id == target_version_id {
-            let logical_invalidation =
-                self.move_logical_pointer_to_version(&target, now_unix_seconds, false)?;
+            let (logical_next, logical_invalidation) = self
+                .plan_logical_pointer_to_version_unlocked(
+                    &target,
+                    previous_logical.as_ref(),
+                    now_unix_seconds,
+                )?;
+            if logical_next.is_some() {
+                self.commit_pointer_transaction(
+                    key,
+                    Some(&previous.current),
+                    logical_next.as_ref().or(previous_logical.as_ref()),
+                    now_unix_seconds,
+                    false,
+                )?;
+            }
             return Ok(CachePublishResultV1 {
                 current: Some(previous.current),
                 published_version_id: target_version_id.to_owned(),
@@ -88,9 +105,18 @@ impl CacheVersionStoreV1 {
             previous_current_version_id: Some(previous.current.version_id.clone()),
             updated_at_unix_seconds: now_unix_seconds,
         };
-        self.write_current_atomic(&key_dir, &next)?;
-        let logical_invalidation =
-            self.move_logical_pointer_to_version(&target, now_unix_seconds, false)?;
+        let (logical_next, logical_invalidation) = self.plan_logical_pointer_to_version_unlocked(
+            &target,
+            previous_logical.as_ref(),
+            now_unix_seconds,
+        )?;
+        self.commit_pointer_transaction(
+            key,
+            Some(&next),
+            logical_next.as_ref().or(previous_logical.as_ref()),
+            now_unix_seconds,
+            false,
+        )?;
         Ok(CachePublishResultV1 {
             current: Some(next.clone()),
             published_version_id: target_version_id.to_owned(),
@@ -148,9 +174,11 @@ impl CacheVersionStoreV1 {
             return Err(CacheReconciliationError::InvalidInput);
         }
         let key_fingerprint = key.fingerprint()?;
-        let key_dir = self.key_dir(&key_fingerprint)?;
         let _key_lock = self.lock(&format!("key-{key_fingerprint}.lock"))?;
         let _budget_lock = self.lock("budget.lock")?;
+        let logical_identity = CacheLogicalIdentityV1::from_key(key)?;
+        let logical_fingerprint = logical_identity.fingerprint()?;
+        let _logical_lock = self.lock(&format!("logical-{logical_fingerprint}.lock"))?;
         let target = self.read_version(key, &key_fingerprint, target_version_id)?;
         let (target_receipt, _) = self.read_version_receipt(&key_fingerprint, target_version_id)?;
         self.require_current_admission(&target, now_unix_seconds, verifier)?;
@@ -168,13 +196,43 @@ impl CacheVersionStoreV1 {
             .read_current_unlocked(key, &key_fingerprint, now_unix_seconds, false)
             .ok()
             .flatten();
+        let previous_logical = self
+            .read_logical_current_unlocked(&logical_identity, &logical_fingerprint)
+            .ok()
+            .flatten();
         if let Some(current) = previous.as_ref()
             && current.current.version_id == target_version_id
         {
-            let logical_invalidation =
-                self.move_logical_pointer_to_version(&target, now_unix_seconds, true)?;
+            let (logical_next, logical_invalidation) = self
+                .plan_logical_pointer_to_version_unlocked(
+                    &target,
+                    previous_logical.as_ref(),
+                    now_unix_seconds,
+                )?;
+            let generation = current
+                .current
+                .generation
+                .checked_add(1)
+                .ok_or(CacheReconciliationError::LimitExceeded)?;
+            let next = CacheCurrentV1 {
+                key_fingerprint_sha256: key_fingerprint,
+                version_id: target_version_id.to_owned(),
+                receipt_sha256: target.receipt_sha256.clone(),
+                generation,
+                authority: target.current.authority,
+                operation: CacheCurrentOperationV1::Recovery,
+                previous_current_version_id: Some(current.current.version_id.clone()),
+                updated_at_unix_seconds: now_unix_seconds,
+            };
+            self.commit_pointer_transaction(
+                key,
+                Some(&next),
+                logical_next.as_ref().or(previous_logical.as_ref()),
+                now_unix_seconds,
+                true,
+            )?;
             return Ok(CachePublishResultV1 {
-                current: Some(current.current.clone()),
+                current: Some(next),
                 published_version_id: target_version_id.to_owned(),
                 authority: target.current.authority,
                 current_changed: false,
@@ -211,9 +269,18 @@ impl CacheVersionStoreV1 {
                 .map(|current| current.current.version_id.clone()),
             updated_at_unix_seconds: now_unix_seconds,
         };
-        self.write_current_atomic(&key_dir, &next)?;
-        let logical_invalidation =
-            self.move_logical_pointer_to_version(&target, now_unix_seconds, true)?;
+        let (logical_next, logical_invalidation) = self.plan_logical_pointer_to_version_unlocked(
+            &target,
+            previous_logical.as_ref(),
+            now_unix_seconds,
+        )?;
+        self.commit_pointer_transaction(
+            key,
+            Some(&next),
+            logical_next.as_ref().or(previous_logical.as_ref()),
+            now_unix_seconds,
+            true,
+        )?;
         let invalidation = previous.as_ref().map(|current| CacheInvalidationV1 {
             key_fingerprint_sha256: key_fingerprint,
             invalidated_version_id: current.current.version_id.clone(),
