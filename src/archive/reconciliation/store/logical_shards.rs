@@ -96,6 +96,7 @@ pub(super) fn read_logical_current_from_envelope(
         return Err(CacheReconciliationError::UnknownOutcome);
     }
 
+    let logical_dir = store.logical_dir(identity_fingerprint)?;
     let shards_dir = logical_dir.join(SHARDS_DIR);
     let mut sessions = BTreeMap::new();
     let mut session_months = BTreeMap::new();
@@ -365,7 +366,8 @@ pub(super) fn logical_capacity_status(
                 shard_bytes,
                 shards: references,
             };
-            if encode_root(&root)?.len() > MAX_LOGICAL_INDEX_BYTES {
+            let root_bytes = serde_json::to_vec(&encode_root(&root)?)?;
+            if root_bytes.len() > MAX_LOGICAL_INDEX_BYTES {
                 Ok(CacheLogicalIndexStatusV1::IndexByteOverflow)
             } else {
                 Ok(CacheLogicalIndexStatusV1::Updated)
