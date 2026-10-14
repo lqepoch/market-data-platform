@@ -30,6 +30,34 @@ pub(crate) enum CacheTransactionFaultV1 {
 }
 
 impl CacheVersionStoreV1 {
+    /// Seal a previously committed transaction head in tests without publishing another data
+    /// version. This keeps fault-injection sequences focused on pointer recovery rather than
+    /// creating a same-price source refresh that may be logically equivalent to an older version.
+    #[cfg(test)]
+    pub(crate) fn settle_pointer_transaction_for_test(&self, key: &CacheKeyV1) -> Result<()> {
+        key.validate()?;
+        let source_key_fingerprint = key.fingerprint()?;
+        let identity = CacheLogicalIdentityV1::from_key(key)?;
+        let identity_fingerprint = identity.fingerprint()?;
+        let _key_lock = self.lock(&format!("key-{source_key_fingerprint}.lock"))?;
+        let _budget_lock = self.lock("budget.lock")?;
+        let _logical_lock = self.lock(&format!("logical-{identity_fingerprint}.lock"))?;
+
+        let envelope = self
+            .read_pointer_transaction(&identity, &identity_fingerprint)?
+            .ok_or(CacheReconciliationError::UnknownOutcome)?;
+        if envelope.payload.source_key_fingerprint_sha256 != source_key_fingerprint
+            || &envelope.payload.source_key != key
+        {
+            return Err(CacheReconciliationError::UnknownOutcome);
+        }
+        self.ensure_transaction_materialized(&envelope)?;
+        if !self.transaction_mirrors_are_sealed(&envelope)? {
+            return Err(CacheReconciliationError::UnknownOutcome);
+        }
+        Ok(())
+    }
+
     /// Atomically publish the source pointer and logical root through one identity-scoped head.
     /// The caller holds key, budget, and logical locks in that order.
     pub(super) fn commit_pointer_transaction(

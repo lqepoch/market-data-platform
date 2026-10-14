@@ -461,17 +461,68 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
     assert!(versions.iter().all(|version| version.is_fresh));
     assert!(versions.iter().any(|version| version.conflict_rejected));
     let identity = CacheLogicalIdentityV1::from_key(&key).unwrap();
-    let assert_pointer_state =
-        |store: &CacheVersionStoreV1, expected_version: &str, expected_close: &str, now| {
-            let source = store.load_current(&key, now).unwrap();
-            let logical = store
-                .load_logical_current(&identity, "2026-10-08-regular", now)
-                .unwrap();
-            assert_eq!(source.current.version_id, expected_version);
-            assert_eq!(logical.session.current.version_id, expected_version);
-            assert_eq!(source.bars_rows[0].close.as_str(), expected_close);
-            assert_eq!(logical.snapshot.bars_rows[0].close.as_str(), expected_close);
-        };
+    let assert_pointer_state = |store: &CacheVersionStoreV1,
+                                stage: &str,
+                                expected_source: (&str, &str, CacheAuthorityV1),
+                                expected_logical: (&str, &str, CacheAuthorityV1),
+                                now: u64| {
+        let source = store.load_current(&key, now).unwrap();
+        let logical = store
+            .load_logical_current(&identity, "2026-10-08-regular", now)
+            .unwrap();
+        assert_eq!(
+            source.current.version_id, expected_source.0,
+            "{stage}: source version mismatch at now={now}; expected close={} authority={:?}",
+            expected_source.1, expected_source.2
+        );
+        assert_eq!(
+            logical.session.current.version_id, expected_logical.0,
+            "{stage}: logical version mismatch at now={now}; source={} expected logical close={} authority={:?}",
+            source.current.version_id, expected_logical.1, expected_logical.2
+        );
+        assert_eq!(
+            source.bars_rows[0].close.as_str(),
+            expected_source.1,
+            "{stage}: source close mismatch at now={now}"
+        );
+        assert_eq!(
+            logical.snapshot.bars_rows[0].close.as_str(),
+            expected_logical.1,
+            "{stage}: logical close mismatch at now={now}"
+        );
+        assert_eq!(
+            source.current.authority, expected_source.2,
+            "{stage}: source authority"
+        );
+        assert_eq!(
+            logical.snapshot.current.authority, expected_logical.2,
+            "{stage}: logical authority"
+        );
+        if expected_source.1 == expected_logical.1 {
+            assert_eq!(
+                source.raw_bars_rows_sha256, logical.snapshot.raw_bars_rows_sha256,
+                "{stage}: raw observation lineage differs between equivalent source and logical current"
+            );
+            assert_eq!(
+                source.bars_rows_sha256, logical.snapshot.bars_rows_sha256,
+                "{stage}: canonical rows differ between equivalent source and logical current"
+            );
+        } else {
+            assert_ne!(
+                source.bars_rows_sha256, logical.snapshot.bars_rows_sha256,
+                "{stage}: different source and logical rows unexpectedly share a canonical hash"
+            );
+        }
+        assert!(
+            source.created_at_unix_seconds <= now && now < source.expires_at_unix_seconds,
+            "{stage}: source version is outside its TTL at now={now}"
+        );
+        assert!(
+            logical.snapshot.created_at_unix_seconds <= now
+                && now < logical.snapshot.expires_at_unix_seconds,
+            "{stage}: logical version is outside its TTL at now={now}"
+        );
+    };
     let publish_verified = |store: &CacheVersionStoreV1, close: &str, now| {
         let response = test_response(close);
         store.publish_synthetic_verified_bars_responses(
@@ -487,7 +538,34 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
         )
     };
 
-    assert_pointer_state(&store, &second_id, "600.26", 1_800_000_029);
+    assert_pointer_state(
+        &store,
+        "before-same-price-refresh",
+        (&second_id, "600.26", CacheAuthorityV1::Authoritative),
+        (&second_id, "600.26", CacheAuthorityV1::Authoritative),
+        1_800_000_027,
+    );
+
+    // A same-price source refresh advances the immutable source and logical versions while
+    // preserving identical verified rows, lineage, authority, and TTL.
+    let same_price_26 = publish_verified(&store, "600.26", 1_800_000_028).unwrap();
+    assert!(same_price_26.current_changed);
+    assert_eq!(same_price_26.authority, CacheAuthorityV1::Authoritative);
+    assert!(same_price_26.logical_invalidation.is_some());
+    let settled_26 = store
+        .load_current(&key, 1_800_000_028)
+        .unwrap()
+        .current
+        .version_id
+        .clone();
+    assert_ne!(settled_26, second_id);
+    assert_pointer_state(
+        &store,
+        "same-price-source-refresh",
+        (&settled_26, "600.26", CacheAuthorityV1::Authoritative),
+        (&settled_26, "600.26", CacheAuthorityV1::Authoritative),
+        1_800_000_028,
+    );
 
     store.set_transaction_fault_for_test(CacheTransactionFaultV1::BeforeCommitpoint);
     let before_commit_result = publish_verified(&store, "600.27", 1_800_000_030);
@@ -499,10 +577,22 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
         ),
         "BeforeCommitpoint returned {before_commit_result_debug}"
     );
-    assert_pointer_state(&store, &second_id, "600.26", 1_800_000_031);
+    assert_pointer_state(
+        &store,
+        "before-commitpoint-live",
+        (&settled_26, "600.26", CacheAuthorityV1::Authoritative),
+        (&settled_26, "600.26", CacheAuthorityV1::Authoritative),
+        1_800_000_031,
+    );
     let before_commit_reopen =
         CacheVersionStoreV1::new(temp.path().join("cache"), CacheLimitsV1::default()).unwrap();
-    assert_pointer_state(&before_commit_reopen, &second_id, "600.26", 1_800_000_031);
+    assert_pointer_state(
+        &before_commit_reopen,
+        "before-commitpoint-reopen",
+        (&settled_26, "600.26", CacheAuthorityV1::Authoritative),
+        (&settled_26, "600.26", CacheAuthorityV1::Authoritative),
+        1_800_000_031,
+    );
 
     store.set_transaction_fault_for_test(CacheTransactionFaultV1::AfterCommitpoint);
     let after_commit_result = publish_verified(&store, "600.27", 1_800_000_032);
@@ -522,24 +612,27 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
             .current
             .previous_current_version_id
             .as_deref(),
-        Some(second_id.as_str())
+        Some(settled_26.as_str())
     );
-    assert_pointer_state(&store, &committed_27, "600.27", 1_800_000_033);
+    assert_pointer_state(
+        &store,
+        "after-commitpoint-live",
+        (&committed_27, "600.27", CacheAuthorityV1::Authoritative),
+        (&committed_27, "600.27", CacheAuthorityV1::Authoritative),
+        1_800_000_033,
+    );
     let after_commit_reopen =
         CacheVersionStoreV1::new(temp.path().join("cache"), CacheLimitsV1::default()).unwrap();
-    assert_pointer_state(&after_commit_reopen, &committed_27, "600.27", 1_800_000_033);
-
-    // Seal the .27 head left by AfterCommitpoint before injecting the next transaction fault.
-    // A successful, changed publish returns only after both current mirrors are materialized.
-    let settle_27_result = publish_verified(&store, "600.27", 1_800_000_034).unwrap();
-    assert!(settle_27_result.current_changed);
-    let settled_27 = store
-        .load_current(&key, 1_800_000_034)
-        .unwrap()
-        .current
-        .version_id
-        .clone();
-    assert_pointer_state(&store, &settled_27, "600.27", 1_800_000_034);
+    after_commit_reopen
+        .settle_pointer_transaction_for_test(&key)
+        .unwrap();
+    assert_pointer_state(
+        &after_commit_reopen,
+        "after-commitpoint-reopen-and-settle",
+        (&committed_27, "600.27", CacheAuthorityV1::Authoritative),
+        (&committed_27, "600.27", CacheAuthorityV1::Authoritative),
+        1_800_000_033,
+    );
 
     store.set_transaction_fault_for_test(CacheTransactionFaultV1::AfterSourceMirror);
     let after_source_mirror_result = publish_verified(&store, "600.28", 1_800_000_035);
@@ -554,35 +647,33 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
     );
     let committed_28_read = store.load_current(&key, 1_800_000_036).unwrap();
     let committed_28 = committed_28_read.current.version_id.clone();
-    assert_ne!(committed_28, settled_27);
+    assert_ne!(committed_28, committed_27);
     assert_eq!(
         committed_28_read
             .current
             .previous_current_version_id
             .as_deref(),
-        Some(settled_27.as_str())
+        Some(committed_27.as_str())
     );
-    assert_pointer_state(&store, &committed_28, "600.28", 1_800_000_036);
-    let after_source_mirror_reopen =
-        CacheVersionStoreV1::new(temp.path().join("cache"), CacheLimitsV1::default()).unwrap();
     assert_pointer_state(
-        &after_source_mirror_reopen,
-        &committed_28,
-        "600.28",
+        &store,
+        "after-source-mirror-live",
+        (&committed_28, "600.28", CacheAuthorityV1::Authoritative),
+        (&committed_28, "600.28", CacheAuthorityV1::Authoritative),
         1_800_000_036,
     );
-
-    // Complete the pending .28 mirror repair before applying AfterLogicalMirror to a new head.
-    // The successful changed publish seals the prior transaction before its own commit.
-    let settle_28_result = publish_verified(&store, "600.28", 1_800_000_037).unwrap();
-    assert!(settle_28_result.current_changed);
-    let settled_28 = store
-        .load_current(&key, 1_800_000_037)
-        .unwrap()
-        .current
-        .version_id
-        .clone();
-    assert_pointer_state(&store, &settled_28, "600.28", 1_800_000_037);
+    let after_source_mirror_reopen =
+        CacheVersionStoreV1::new(temp.path().join("cache"), CacheLimitsV1::default()).unwrap();
+    after_source_mirror_reopen
+        .settle_pointer_transaction_for_test(&key)
+        .unwrap();
+    assert_pointer_state(
+        &after_source_mirror_reopen,
+        "after-source-mirror-reopen-and-settle",
+        (&committed_28, "600.28", CacheAuthorityV1::Authoritative),
+        (&committed_28, "600.28", CacheAuthorityV1::Authoritative),
+        1_800_000_036,
+    );
 
     store.set_transaction_fault_for_test(CacheTransactionFaultV1::AfterLogicalMirror);
     let after_logical_mirror_result = publish_verified(&store, "600.29", 1_800_000_038);
@@ -597,21 +688,38 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
     );
     let committed_29_read = store.load_current(&key, 1_800_000_039).unwrap();
     let committed_29 = committed_29_read.current.version_id.clone();
-    assert_ne!(committed_29, settled_28);
+    assert_ne!(committed_29, committed_28);
     assert_eq!(
         committed_29_read
             .current
             .previous_current_version_id
             .as_deref(),
-        Some(settled_28.as_str())
+        Some(committed_28.as_str())
     );
-    assert_pointer_state(&store, &committed_29, "600.29", 1_800_000_039);
+    assert_pointer_state(
+        &store,
+        "after-logical-mirror-live",
+        (&committed_29, "600.29", CacheAuthorityV1::Authoritative),
+        (&committed_29, "600.29", CacheAuthorityV1::Authoritative),
+        1_800_000_039,
+    );
     let after_logical_mirror_reopen =
         CacheVersionStoreV1::new(temp.path().join("cache"), CacheLimitsV1::default()).unwrap();
     assert_pointer_state(
         &after_logical_mirror_reopen,
-        &committed_29,
-        "600.29",
+        "after-logical-mirror-reopen",
+        (&committed_29, "600.29", CacheAuthorityV1::Authoritative),
+        (&committed_29, "600.29", CacheAuthorityV1::Authoritative),
+        1_800_000_039,
+    );
+    after_logical_mirror_reopen
+        .settle_pointer_transaction_for_test(&key)
+        .unwrap();
+    assert_pointer_state(
+        &after_logical_mirror_reopen,
+        "after-logical-mirror-reopen-and-settle",
+        (&committed_29, "600.29", CacheAuthorityV1::Authoritative),
+        (&committed_29, "600.29", CacheAuthorityV1::Authoritative),
         1_800_000_039,
     );
 
@@ -639,7 +747,14 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
         restored.current.generation,
         committed_29_read.current.generation + 1
     );
-    assert_pointer_state(&store, &first_id, "600.25", 1_800_000_042);
+    store.settle_pointer_transaction_for_test(&key).unwrap();
+    assert_pointer_state(
+        &store,
+        "after-rollback-settle",
+        (&first_id, "600.25", CacheAuthorityV1::Provisional),
+        (&committed_29, "600.29", CacheAuthorityV1::Authoritative),
+        1_800_000_042,
+    );
     std::fs::remove_file(
         temp.path()
             .join("cache")
@@ -656,7 +771,13 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
         initial_recovery_current.operation,
         CacheCurrentOperationV1::Recovery
     );
-    assert_pointer_state(&store, &first_id, "600.25", 1_800_000_043);
+    assert_pointer_state(
+        &store,
+        "after-recovery-live",
+        (&first_id, "600.25", CacheAuthorityV1::Provisional),
+        (&committed_29, "600.29", CacheAuthorityV1::Authoritative),
+        1_800_000_043,
+    );
 
     store.set_transaction_fault_for_test(CacheTransactionFaultV1::AfterLogicalMirror);
     let recovery_fault_result = store.recover_to(&key, &first_id, 1_800_000_044);
@@ -682,7 +803,13 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
         recovered.current.generation,
         initial_recovery_current.generation + 1
     );
-    assert_pointer_state(&store, &first_id, "600.25", 1_800_000_045);
+    assert_pointer_state(
+        &store,
+        "after-recovery-fault-live",
+        (&first_id, "600.25", CacheAuthorityV1::Provisional),
+        (&committed_29, "600.29", CacheAuthorityV1::Authoritative),
+        1_800_000_045,
+    );
     let logical_dir = temp
         .path()
         .join("cache")
@@ -712,7 +839,13 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
         Err(CacheReconciliationError::UnknownOutcome)
     ));
     fs::write(&logical_marker_path, logical_marker_bytes).unwrap();
-    assert_pointer_state(&store, &first_id, "600.25", 1_800_000_048);
+    assert_pointer_state(
+        &store,
+        "after-transaction-marker-restored",
+        (&first_id, "600.25", CacheAuthorityV1::Provisional),
+        (&committed_29, "600.29", CacheAuthorityV1::Authoritative),
+        1_800_000_048,
+    );
     assert!(matches!(
         store.load_current(&key, 1_800_000_900),
         Err(CacheReconciliationError::Expired)
