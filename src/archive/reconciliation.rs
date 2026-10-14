@@ -680,8 +680,10 @@ impl CoverageEvidenceV1 {
             let end =
                 UtcTimestamp::parse_for_arrow_nanoseconds(core_segment.end_exclusive_utc.as_str())
                     .map_err(|_| CacheReconciliationError::InvalidInput)?;
-            covered_start = Some(covered_start.map_or(start, |current| current.min(start)));
-            covered_end = Some(covered_end.map_or(end, |current| current.max(end)));
+            covered_start = Some(
+                covered_start.map_or(start.clone(), |current| current.min(start.clone())),
+            );
+            covered_end = Some(covered_end.map_or(end.clone(), |current| current.max(end.clone())));
             let raw_rows = rows_for_raw_core_segment(&raw_response.rows, core_segment)?;
             let canonical_rows = rows_for_core_segment(&canonical_response.rows, core_segment)?;
             if raw_rows.is_empty() || canonical_rows.is_empty() {
@@ -1441,7 +1443,7 @@ pub(crate) fn validate_coverage_rows(
             .map_err(|_| CacheReconciliationError::InvalidInput)?;
         let end = UtcTimestamp::parse_for_arrow_nanoseconds(&segment.covered_end_exclusive_utc)
             .map_err(|_| CacheReconciliationError::InvalidInput)?;
-        let raw = rows_for_lineage_segment(raw_rows, segment, start, end, false)?;
+        let raw = rows_for_lineage_segment(raw_rows, segment, start.clone(), end.clone(), false)?;
         let canonical = rows_for_lineage_segment(canonical_rows, segment, start, end, true)?;
         let raw_identities = raw
             .iter()
@@ -1546,6 +1548,13 @@ fn bar_market_observation_identity(row: &BarRowV1) -> Result<Vec<u8>> {
 
 fn sha256_bytes(value: &[u8]) -> String {
     hex_digest(Sha256::digest(value).as_slice())
+}
+
+fn hash_domain(domain: &[u8], payload: &[u8]) -> String {
+    let mut digest = Sha256::new();
+    digest.update(domain);
+    digest.update(payload);
+    hex_digest(digest.finalize().as_slice())
 }
 
 pub(crate) fn enum_label<T: Serialize>(value: &T) -> Result<String> {

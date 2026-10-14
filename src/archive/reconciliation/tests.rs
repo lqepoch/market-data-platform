@@ -650,6 +650,9 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
         }
     }
 
+    let request = test_request();
+    let source_scope = test_source_scope();
+
     let mut malformed_bar = test_response("600.25");
     malformed_bar.rows[0].high = DecimalString::new("599.99").unwrap();
     assert!(

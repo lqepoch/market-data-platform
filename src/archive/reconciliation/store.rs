@@ -1384,7 +1384,7 @@ impl Drop for CacheStageDir {
     }
 }
 
-fn derive_response_authority(
+pub(super) fn derive_response_authority(
     basis: CacheAuthorityBasisV1,
     key: &CacheKeyV1,
     complete: bool,
@@ -1575,6 +1575,7 @@ fn version_id(
     digest.update(canonical_sha.as_bytes());
     digest.update(rows_sha.as_bytes());
     digest.update(raw_bars_rows_sha.as_bytes());
+    digest.update(bars_rows_sha.as_bytes());
     digest.update(raw_source_evidence_sha.as_bytes());
     digest.update(source_evidence_sha.as_bytes());
     digest.update(coverage_evidence_sha.as_bytes());
