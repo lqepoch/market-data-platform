@@ -11,7 +11,7 @@ create an entitlement/completeness certificate.
 `CacheQuerySourceScopeV1`. It fingerprints the selected actual provider and feed (`unknown` remains
 `unknown`), stable non-secret route identity, SHA-256 of the stable entitlement realm, entitlement
 state, expected numeric encoding, asset class, requested and effective resolution, provider mode,
-adjustment, symbol, session scope and calendar-derived session instances, half-open UTC request
+domain-separated rights-profile SHA-256, adjustment, symbol, session scope and calendar-derived session instances, half-open UTC request
 window, optional calendar version, request-cursor digest, and Core-owned schema ID/version/
 fingerprint. It contains no
 credential or raw page cursor. `auto` requests for distinct actual providers remain distinct keys.
@@ -67,11 +67,17 @@ a cache error only if its independent provider route and entitlement checks pass
 ## Authority and reconciliation
 
 Production publication currently has no trusted provider-admission proof and therefore remains
-`Provisional`, including Alpaca SIP/BOATS. The admission gate is intentionally closed while actual
-feed and entitlement evidence is unavailable; a requested feed or top-level summary cannot
-substitute for source provenance. Test-only synthetic evidence exercises authoritative rollback and
-conflict paths but is not provider or production evidence. OPRA is never a historical stock-bars
-authority candidate. Cache status does not establish adapter or user entitlement.
+`Provisional`, including Alpaca SIP/BOATS. `verify_provider_admission_v1` accepts only a signed,
+query-bound receipt verified by an injected `TrustedProviderAdmissionVerifierV1`, together with
+actual authorization-context and SDK/Gateway runtime observations. The default
+`UnavailableProviderAdmissionVerifierV1` fails closed. Missing actual feed, entitlement, runtime
+facts, or an independently reviewed issuer/key set keeps admission `BlockedExternal`; request feed,
+environment variables, dependency lockfiles, and top-level summaries cannot substitute for source
+provenance. Capability receipts are cursor-agnostic; dataset receipts bind the exact page cursor and
+the raw/canonical observations, rows, coverage, and reconciliation-policy hashes. Test-only
+synthetic evidence exercises authoritative rollback and conflict paths but is not provider or
+production evidence. OPRA is never a historical stock-bars authority candidate. Cache status does
+not establish adapter or user entitlement.
 
 When an eligible same-feed candidate is compared with an already verified authoritative current
 version, rows are normalized with Core `ExactDecimal`, deduplicated by stable identity, and compared

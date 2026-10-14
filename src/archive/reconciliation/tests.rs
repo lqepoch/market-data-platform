@@ -75,6 +75,7 @@ fn key(provider: &str, feed: &str, entitlement: EntitlementState) -> CacheKeyV1 
         },
         source_scope_id: format!("{provider}-{feed}-v1"),
         entitlement_scope_sha256: "5".repeat(64),
+        rights_profile_sha256: "8".repeat(64),
         asset_class: "etf".to_owned(),
         symbol: "QQQ".to_owned(),
         session_scope: "regular".to_owned(),
@@ -463,6 +464,7 @@ fn request_key_is_available_before_fetch_and_never_contains_the_raw_cursor() {
         feed: "sip".to_owned(),
         source_scope_id: "alpaca-sip-v1".to_owned(),
         entitlement_scope_sha256: "6".repeat(64),
+        rights_profile_sha256: "7".repeat(64),
         entitlement: EntitlementState::Authorized,
         numeric_encoding: NumericEncodingV1::DecimalToken,
         effective_resolution: BarResolutionV1::OneMinute,
@@ -542,6 +544,65 @@ fn production_sources_without_admission_evidence_remain_provisional() {
     }
 }
 
+#[test]
+fn provider_admission_preflight_without_signed_evidence_fails_closed() {
+    use market_contracts::{
+        AdjustmentV1, AssetClassV1, BarResolutionV1, BarsProviderModeV1, BarsRequestV1,
+        NumericEncodingV1, ProtoTimestampV2, SessionScopeV1,
+    };
+
+    let request = BarsRequestV1 {
+        symbol: "QQQ".to_owned(),
+        asset_class: AssetClassV1::Etf,
+        start: ProtoTimestampV2::parse("2026-10-08T13:30:00Z").unwrap(),
+        end: ProtoTimestampV2::parse("2026-10-08T13:31:00Z").unwrap(),
+        resolution: BarResolutionV1::OneMinute,
+        session_scope: SessionScopeV1::Regular,
+        adjustment: AdjustmentV1::Unadjusted,
+        provider_mode: BarsProviderModeV1::AlpacaOnly,
+        allow_daily_downgrade: false,
+        limit: 1000,
+        cursor: None,
+    };
+    let scope = CacheQuerySourceScopeV1 {
+        provider: "alpaca".to_owned(),
+        feed: "sip".to_owned(),
+        source_scope_id: "alpaca-sip-v1".to_owned(),
+        entitlement_scope_sha256: "6".repeat(64),
+        rights_profile_sha256: "7".repeat(64),
+        entitlement: EntitlementState::Authorized,
+        numeric_encoding: NumericEncodingV1::DecimalToken,
+        effective_resolution: BarResolutionV1::OneMinute,
+        session_instance_ids: vec!["2026-10-08-regular".to_owned()],
+        market_calendar_version: Some("XNYS-2026a".to_owned()),
+    };
+    let phases = [ProviderPhaseSliceV1 {
+        phase: "regular".to_owned(),
+        session_instance_id: "2026-10-08-regular".to_owned(),
+        start_utc: "2026-10-08T13:30:00Z".to_owned(),
+        end_exclusive_utc: "2026-10-08T13:31:00Z".to_owned(),
+    }];
+
+    assert!(matches!(
+        verify_provider_admission_v1(
+            &request,
+            &scope,
+            &ProviderAdmissionEvidenceV1::default(),
+            &UnavailableProviderAdmissionVerifierV1,
+            &phases,
+            1_800_000_000,
+        ),
+        Err(CacheReconciliationError::BlockedExternal)
+    ));
+
+    let mut unscoped = scope;
+    unscoped.rights_profile_sha256 = "not-a-sha256".to_owned();
+    assert!(matches!(
+        CacheKeyV1::from_request(&request, &unscoped),
+        Err(CacheReconciliationError::InvalidInput)
+    ));
+}
+
 #[cfg(not(target_os = "linux"))]
 #[test]
 fn cache_store_reports_bounded_worker_unsupported_without_inline_fallback() {
@@ -590,6 +651,7 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
             feed: "sip".to_owned(),
             source_scope_id: "alpaca-sip-v1".to_owned(),
             entitlement_scope_sha256: "6".repeat(64),
+            rights_profile_sha256: "7".repeat(64),
             entitlement: EntitlementState::Authorized,
             numeric_encoding: NumericEncodingV1::DecimalToken,
             effective_resolution: BarResolutionV1::OneMinute,

@@ -20,7 +20,16 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod authority;
+mod authority_types;
 mod store;
+pub(crate) use authority::{
+    AdmissionVerifyErrorV1, ProviderAdmissionClaimsV1, ProviderAdmissionDatasetBindingV1,
+    ProviderAdmissionEvidenceV1, ProviderAdmissionReceiptV1, ProviderPhaseSliceV1,
+    ReconciliationPolicyV1, TrustedProviderAdmissionVerifierV1,
+    UnavailableProviderAdmissionVerifierV1, VerifiedProviderAdmissionV1,
+    verify_provider_admission_v1,
+};
 #[allow(unused_imports)] // The frozen HTTP adapter consumes these crate-private store APIs.
 pub(crate) use store::{
     CacheAuthorityV1, CacheBarsResponsesInputV1, CacheCurrentOperationV1, CacheCurrentV1,
@@ -74,6 +83,12 @@ pub(crate) enum CacheReconciliationError {
     Expired,
     #[error("cache root is non-empty and is not owned by this cache store")]
     ForeignNonEmptyRoot,
+    #[error("independent provider-admission evidence is unavailable")]
+    BlockedExternal,
+    #[error("provider-admission evidence does not match this query or dataset")]
+    AdmissionMismatch,
+    #[error("provider-admission evidence has expired")]
+    AdmissionExpired,
 }
 
 pub(crate) type Result<T> = std::result::Result<T, CacheReconciliationError>;
@@ -96,6 +111,7 @@ pub(crate) struct CacheKeyV1 {
     pub provider_mode: String,
     pub source_scope_id: String,
     pub entitlement_scope_sha256: String,
+    pub rights_profile_sha256: String,
     pub asset_class: String,
     pub symbol: String,
     pub session_scope: String,
@@ -155,6 +171,7 @@ impl CacheKeyV1 {
             provider_mode: enum_label(&request.provider_mode)?,
             source_scope_id: source_scope.source_scope_id.clone(),
             entitlement_scope_sha256: source_scope.entitlement_scope_sha256.clone(),
+            rights_profile_sha256: source_scope.rights_profile_sha256.clone(),
             asset_class: enum_label(&request.asset_class)?,
             symbol: request.symbol.clone(),
             session_scope: enum_label(&request.session_scope)?,
@@ -181,6 +198,7 @@ impl CacheKeyV1 {
             self.effective_resolution.as_str(),
             self.provider_mode.as_str(),
             self.source_scope_id.as_str(),
+            self.rights_profile_sha256.as_str(),
             self.asset_class.as_str(),
             self.symbol.as_str(),
             self.session_scope.as_str(),
@@ -195,6 +213,7 @@ impl CacheKeyV1 {
             || !matches!(self.asset_class.as_str(), "stock" | "etf")
             || !valid_sha256(&self.schema_fingerprint_sha256)
             || !valid_sha256(&self.entitlement_scope_sha256)
+            || !valid_sha256(&self.rights_profile_sha256)
             || self
                 .request_cursor_sha256
                 .as_deref()
@@ -249,6 +268,9 @@ pub(crate) struct CacheQuerySourceScopeV1 {
     pub source_scope_id: String,
     /// SHA-256 of a stable entitlement realm; never a key, token, header, or account password.
     pub entitlement_scope_sha256: String,
+    /// Domain-separated SHA-256 of verified principal identity plus fixed operator rights profile.
+    /// It contains no provider/feed/calendar/window/token/JTI value.
+    pub rights_profile_sha256: String,
     /// Entitlement state observed for this route.
     pub entitlement: EntitlementState,
     /// Numeric representation expected from the actual source route.
@@ -267,6 +289,7 @@ impl CacheQuerySourceScopeV1 {
             || !valid_dimension(&self.feed)
             || !valid_dimension(&self.source_scope_id)
             || !valid_sha256(&self.entitlement_scope_sha256)
+            || !valid_sha256(&self.rights_profile_sha256)
             || self.numeric_encoding == NumericEncodingV1::Unspecified
             || self.numeric_encoding.is_raw_bytes()
             || self.session_instance_ids.is_empty()
