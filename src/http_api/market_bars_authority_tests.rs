@@ -618,8 +618,10 @@ async fn partial_old_page_does_not_seed_logical_cache_reuse() {
 
 #[tokio::test]
 async fn expired_logical_authority_is_a_miss_and_refetches() {
-    let mut limits = CacheLimitsV1::default();
-    limits.ttl = std::time::Duration::from_secs(1);
+    let limits = CacheLimitsV1 {
+        ttl: std::time::Duration::from_secs(1),
+        ..CacheLimitsV1::default()
+    };
     let mut harness = harness_with_cache_limits(
         SyntheticFacts::KnownSipAuthorized,
         false,
