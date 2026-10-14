@@ -79,6 +79,6 @@ provider permissions, or source coverage. Futu and Alpaca provider capability cl
 ## Local checks
 
 ```sh
-rustup run 1.98.1 cargo test --offline --test session_router
+cargo +1.99.0 test --locked --test session_router # public GitHub Actions runner only
 python3 tools/test_xnys_snapshot_adapter.py
 ```

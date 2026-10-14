@@ -105,7 +105,9 @@ confidence-threshold = 0.95
 include-dev = true
 include-build = true
 unused-allowed-license = "warn"
-exceptions = []
+# Exact root-certificate dataset introduced by the existing Broker REST TLS stack.
+# License text is redistributed under supply-chain/licenses; no global license allowance.
+exceptions = [{ crate = "webpki-root-certs@1.0.9", allow = ["CDLA-Permissive-2.0"] }]
 
 [licenses.private]
 ignore = false

@@ -67,9 +67,9 @@ and local documentation.
 - Realtime watermark completion is a separate mode and is not represented by the historical/synthetic
   EOF path.
 
-## Local commands
+## Public runner commands
 
-Use Rust 1.99.0 from `rust-toolchain.toml`.
+Use Rust 1.99.0 from `rust-toolchain.toml` in public GitHub Actions. The Cargo examples below compile and are runner commands for this integration, not local build instructions; operators can use an already built CLI for separately authorized read-only work. No local Docker is required.
 The shared contracts and read-only Alpaca port/stream crates are pinned in `Cargo.toml` and
 `Cargo.lock` to one compatible dependency graph: `trading-core` revision
 `f793be47ab90ebff9f530c8b08f41db5e774e4e5` and frozen `broker-connectors` candidate

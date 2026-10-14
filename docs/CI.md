@@ -1,12 +1,12 @@
 # Continuous integration
 
 The unified market-query integration uses Rust 1.99.0 because the existing Broker Alpaca REST
-SDK declares that minimum. The earlier archive baseline used 1.98.1. CLI, local checks, supply-chain
+SDK declares that minimum. The earlier archive baseline used 1.98.1. CLI, non-compiling local checks, supply-chain
 generation and both public workflow toolchains must use the same version; lowering a dependency's
 declared minimum does not establish compatibility. No manual workflow dispatch is required.
 
-Pull requests targeting `main` and pushes to `main` run the same local Rust and supply-chain
-verification commands. The workflow uses Rust 1.99.0, `cargo-deny` 0.20.2, and
+Pull requests targeting `main` and pushes to `main` run the Rust and supply-chain verification commands below in GitHub Actions.
+Public build/test compilation must run on the PR head in Actions, not locally. The workflow uses Rust 1.99.0, `cargo-deny` 0.20.2, and
 `cargo-cyclonedx` 0.5.9. It does not read stored repository, organization, or provider secrets,
 connect to market-data providers, perform OAuth, read an operator's rclone configuration, query or
 publish remote archives, or upload data and test artifacts. The verification job's automatic
@@ -17,10 +17,9 @@ full commit SHA `3d3c42e5aac5ba805825da76410c181273ba90b1` (release `v7.0.1`). I
 checkout credentials. The job token has `contents: read`; all other workflow permissions are
 disabled.
 
-## Reproduce the PR checks locally
+## Public PR verification commands (GitHub Actions)
 
-Install the repository toolchain and the pinned standalone supply-chain tools, then fetch the locked
-public dependencies once:
+The public runner installs pinned tools and fetches locked public dependencies:
 
 ```sh
 rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
@@ -29,7 +28,7 @@ cargo +1.99.0 install cargo-cyclonedx --version 0.5.9 --locked
 cargo +1.99.0 fetch --locked
 ```
 
-Run the checks from the repository root:
+The public runner executes from the repository root:
 
 ```sh
 cargo +1.99.0 fmt --all -- --check
@@ -59,9 +58,11 @@ same query supervisor, including authorization before storage access, compact/no
 tamper rejection, deadline/drop/shutdown cancellation, worker reap, staging cleanup, and capacity
 recovery. They do not establish a capture rollup or provider completeness.
 
-## Optional offline HTTP container smoke
+## Existing offline HTTP container smoke (not a local task gate)
 
-`scripts/container_smoke.sh` requires `MDP_RUNTIME_IMAGE_ID` to name an already cached immutable
+This task does not start local Docker or run this host-build helper. The existing script is retained
+for its separately authorized environment; public CI and controlled private native validation remain
+separate. `scripts/container_smoke.sh` requires `MDP_RUNTIME_IMAGE_ID` to name an already cached immutable
 Linux image; it does not pull images or compile Rust inside Docker. The script builds the host binary
 with `--offline --locked`, then copies it into the runtime-only image and exercises LocalTest HTTP
 startup, authentication, a synthetic V1 query, and graceful signal shutdown. Set

@@ -68,3 +68,7 @@ SHA-256 over path-sorted entries encoded as
 hash itself, sign the build, establish CI identity, attest a release, or prove that dependencies are
 safe beyond the checks recorded here. SBOM generation and local tests do not connect to Alpaca or
 Google Drive and do not use market-data credentials.
+
+## Exact Broker REST TLS certificate-data review
+
+The pinned Broker REST adapter adds `reqwest 0.13.5` → `rustls-platform-verifier 0.7.1` → `webpki-root-certs 1.0.9`. The last package distributes Mozilla trust-anchor data under [CDLA-Permissive-2.0](https://spdx.org/licenses/CDLA-Permissive-2.0.html). Its redistribution condition is met by retaining the complete package license at `supply-chain/licenses/webpki-root-certs-1.0.9.LICENSE` (SHA-256 `e271993808fec50ab29350b39539cdec611a9103f827e0aa26d61da70e2d33f8`). `Cargo.lock` retains the registry package checksum. The cargo-deny exception is restricted to this exact package/version, and the supply-chain validator rejects any wider exception set; advisories, duplicate-version and unknown-source rejection remain in effect. This is certificate-data licensing, not a Yahoo/Alpaca market-data license or entitlement grant.
