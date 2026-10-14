@@ -118,7 +118,7 @@
     },
     {
       "path": "docs/policies/mdp-cache-reconciliation-v1.md",
-      "sha256": "19b26b0038b467c3a1ea18dce1970cdb12c2507e219655db268bd6892cd7d718"
+      "sha256": "4f2b196a2d02b11c823b4c95f3298bf709d008a1521ec17a728ec87fdb14e57d"
     },
     {
       "path": "supply-chain/git-source-pins.json",
@@ -2357,23 +2357,31 @@
       },
       {
         "path": "src/archive/reconciliation.rs",
-        "sha256": "c940b7fa2fd5191b3ed099231b1b80cc288b84a154274788a7e82d1345d7a3fb"
+        "sha256": "c6ab22df255b82547fea0477d21829bfa7c1e43b2971ac510299bd6f3b7967d4"
       },
       {
         "path": "src/archive/reconciliation/authority.rs",
-        "sha256": "c0bf41355c4d9166587406ee8833d9d91abf0a7dc0ffe73e321ff7b0ee04badf"
+        "sha256": "fa6a1a5e5772a123bad1887d928aab810bab04e0f50c504a53c7f98104c258b7"
       },
       {
         "path": "src/archive/reconciliation/authority_types.rs",
         "sha256": "f1ffea05be24758c22110a4009d9a2e928362e145d436b50593b3e5f9da1d45c"
       },
       {
+        "path": "src/archive/reconciliation/logical_index.rs",
+        "sha256": "31432e6455dc581307e9592a30a3e7e6869f6783fa2b437cd3abadf9e7f9a024"
+      },
+      {
         "path": "src/archive/reconciliation/store.rs",
-        "sha256": "47bb365301f75d738cae6bc79bd33473d6ed41164e1423a062018396db99b333"
+        "sha256": "30bd66c9363e0d624eee19289c84bc614263c871c0d2cc77c28abd5ea677ae16"
+      },
+      {
+        "path": "src/archive/reconciliation/store/logical.rs",
+        "sha256": "1e0df48cf3b17f87cbbaf64f52b27c0dadcac01ff2acc234ef9fcd263bd383d0"
       },
       {
         "path": "src/archive/reconciliation/tests.rs",
-        "sha256": "7543121a8a0d68ec7db3db72abb94550b98ccc42e7804bc59728635741355d20"
+        "sha256": "c875d0c1229866abdb610f85cd6a8115c2a997fdc5e17e585ea0a9105f9e95d8"
       },
       {
         "path": "src/archive/tests.rs",
@@ -2628,7 +2636,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "1e4fe982ca79863c7dc468c6a2a101079f79732dfcd8fe3bc5179bb7c7c0ab59"
+    "sha256": "a3ceedb91e5517c8de59a778b8a7953c030ee33d52c7338008d7da76e8953353"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
