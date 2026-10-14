@@ -9260,6 +9260,7 @@
         "git+https://github.com/lqepoch/trading-core?rev=f793be47ab90ebff9f530c8b08f41db5e774e4e5#market-contracts@0.1.0",
         "registry+https://github.com/rust-lang/crates.io-index#parquet@60.0.0",
         "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.13.5",
+        "registry+https://github.com/rust-lang/crates.io-index#ring@0.17.14",
         "registry+https://github.com/rust-lang/crates.io-index#rustix@1.1.5",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
         "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",

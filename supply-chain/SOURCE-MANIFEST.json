@@ -1,7 +1,7 @@
 {
   "artifacts": {
     "supply-chain/NOTICE.txt": "07c1e61cf9f3207113fe8fdeffb7675abd86d507aba02c5d105e8174330fe21b",
-    "supply-chain/market-data-platform.cdx.json": "a763d9e82d541c65b43a0e8503d23155b196d9e30d554390096b3f0fa1c5807d"
+    "supply-chain/market-data-platform.cdx.json": "993c58b5be9a26c2941a1f98d2f45e2c9a3cdb5893f6a5faa92fcd5d9c270176"
   },
   "component": {
     "license": "MIT",
@@ -34,11 +34,11 @@
   "inputs": [
     {
       "path": "Cargo.toml",
-      "sha256": "2d38c3f98449bd7bc548935c3e6b72f92c2e58171632b6d9b7e0210df0cabb9f"
+      "sha256": "7dd6fcf9d59e975817622f6156928245409131505d285329ef2419936a50f115"
     },
     {
       "path": "Cargo.lock",
-      "sha256": "579c8dff2850753b447ae3afe1320f0fd00ef2110b89c4bd0aa55ed65b4256d0"
+      "sha256": "4acaa76cd86394fe11205d5406f83a4373efe375af05dcee1413566410b61702"
     },
     {
       "path": "Dockerfile",
@@ -2373,15 +2373,15 @@
       },
       {
         "path": "src/archive/reconciliation/store.rs",
-        "sha256": "30bd66c9363e0d624eee19289c84bc614263c871c0d2cc77c28abd5ea677ae16"
+        "sha256": "e47c46a6f306b32ad6d542a9badf9f56b6a9499a99e92a4cccabb09544f6e8da"
       },
       {
         "path": "src/archive/reconciliation/store/logical.rs",
-        "sha256": "1e0df48cf3b17f87cbbaf64f52b27c0dadcac01ff2acc234ef9fcd263bd383d0"
+        "sha256": "d24310551c7bdddfd128667754b7f9a6529630612a2a28ab339764fde741cfc2"
       },
       {
         "path": "src/archive/reconciliation/tests.rs",
-        "sha256": "c875d0c1229866abdb610f85cd6a8115c2a997fdc5e17e585ea0a9105f9e95d8"
+        "sha256": "315242558d7f07fca4c20b738744a4e1393953239fc2e7070a1af7b23b19b1cc"
       },
       {
         "path": "src/archive/tests.rs",
@@ -2636,7 +2636,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "a3ceedb91e5517c8de59a778b8a7953c030ee33d52c7338008d7da76e8953353"
+    "sha256": "d25eb467d2ae3e908a3479c41de4fdc678b7968e42729c3b68afc4640d1b721c"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
