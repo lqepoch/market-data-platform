@@ -141,11 +141,15 @@ cross-source tolerance gate before the logical pointer can advance.
 
 ## Durable publication and recovery
 
-The store root is local and private (`0700` directories, `0600` files). A new root or an existing
-empty directory is claimed with the fixed `.mdp-cache-owner` marker using create-only semantics.
-An unmarked non-empty directory is rejected before changing permissions or contents; the store
-does not migrate another cache or archive root. Reopening requires the exact marker and private
-owner-only modes. For each key it holds a bounded `versions/<version-id>/` directory with raw and
+The store root is local and private (`0700` directories, `0600` files). A new root is created with
+create-only directory semantics; an existing empty directory is claimed with the fixed
+`.mdp-cache-owner` marker using create-only file semantics. If a concurrent initializer adds an
+entry after the initial marker check, the store revalidates the exact private marker before
+accepting the root. An unmarked non-empty directory is rejected before changing permissions or
+contents; the store does not migrate another cache or archive root. Reopening requires the exact
+marker and private owner-only modes. This marker identifies local cache ownership only; it is not
+provider, feed, entitlement, or data-authority evidence. For each key it holds a bounded
+`versions/<version-id>/` directory with raw and
 canonical Parquet, normalized comparison rows, and a version receipt, plus compact
 rejected-candidate audit entries. The mutable `logical/<identity>/transaction.json` is the single
 effective commitpoint for one source-key current pointer and its provider-neutral logical root.

@@ -611,7 +611,7 @@ fn concurrent_cache_root_initialization_uses_one_valid_marker() {
             let barrier = barrier.clone();
             std::thread::spawn(move || {
                 barrier.wait();
-                CacheVersionStoreV1::new(root, CacheLimitsV1::default()).is_ok()
+                CacheVersionStoreV1::new(root, CacheLimitsV1::default())
             })
         })
         .collect::<Vec<_>>();
@@ -619,7 +619,20 @@ fn concurrent_cache_root_initialization_uses_one_valid_marker() {
         .into_iter()
         .map(|worker| worker.join().unwrap())
         .collect::<Vec<_>>();
-    assert!(results.into_iter().all(|success| success));
+    let failures = results
+        .iter()
+        .enumerate()
+        .filter_map(|(index, result)| {
+            result
+                .as_ref()
+                .err()
+                .map(|error| format!("worker {index}: {error:?}"))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        results.iter().all(|result| result.is_ok()),
+        "concurrent cache-root initializers failed: {failures:?}"
+    );
     assert_eq!(
         std::fs::read(root.join(".mdp-cache-owner")).unwrap(),
         b"lqepoch.mdp.cache-root.v1\n"

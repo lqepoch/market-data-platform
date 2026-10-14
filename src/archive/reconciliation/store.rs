@@ -2556,31 +2556,39 @@ fn create_private_dir(path: &Path) -> Result<()> {
 /// Claim a new or empty cache root exactly once. Existing non-empty directories are never
 /// chmodded or populated unless their private ownership marker already validates.
 fn initialize_owned_cache_root(path: &Path) -> Result<()> {
-    let existed = match fs::symlink_metadata(path) {
+    match fs::symlink_metadata(path) {
         Ok(metadata) => {
             if !metadata.file_type().is_dir() {
                 return Err(CacheReconciliationError::ForeignNonEmptyRoot);
             }
-            true
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            fs::create_dir_all(path)?;
-            false
+            match create_cache_root_directory(path) {
+                Ok(()) => set_private_dir(path)?,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let metadata = fs::symlink_metadata(path)?;
+                    if !metadata.file_type().is_dir() {
+                        return Err(CacheReconciliationError::ForeignNonEmptyRoot);
+                    }
+                }
+                Err(error) => return Err(error.into()),
+            }
         }
         Err(error) => return Err(error.into()),
     };
 
     let marker_path = path.join(ROOT_OWNERSHIP_MARKER_FILE);
-    if existed {
-        match fs::symlink_metadata(&marker_path) {
-            Ok(_) => return validate_owned_cache_root_after_concurrent_init(path),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-        let mut entries = fs::read_dir(path)?;
-        if entries.next().transpose()?.is_some() {
-            return Err(CacheReconciliationError::ForeignNonEmptyRoot);
-        }
+    match fs::symlink_metadata(&marker_path) {
+        Ok(_) => return validate_owned_cache_root_after_concurrent_init(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    let mut entries = fs::read_dir(path)?;
+    if entries.next().transpose()?.is_some() {
+        // Another initializer can publish the marker after the initial metadata check but
+        // before this directory scan. Revalidate only the exact private marker; unmarked data
+        // remains foreign and is never chmodded or modified.
+        return validate_owned_cache_root_after_concurrent_init(path);
     }
 
     require_current_user_cache_root(path)?;
@@ -2598,6 +2606,22 @@ fn initialize_owned_cache_root(path: &Path) -> Result<()> {
         }
         Err(error) => Err(error),
     }
+}
+
+fn create_cache_root_directory(path: &Path) -> std::io::Result<()> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let mut builder = fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(ROOT_DIR_MODE);
+    }
+    builder.create(path)
 }
 
 fn require_current_user_cache_root(path: &Path) -> Result<()> {
