@@ -676,7 +676,7 @@ fn parse_bars_request(uri: &Uri) -> Result<BarsRequestV1, MarketBarsHttpError> {
 }
 
 fn parse_sessions_query(uri: &Uri) -> Result<MarketSessionsQuery, MarketBarsHttpError> {
-    let query = parse_query(uri)?;
+    let query: MarketSessionsQuery = parse_query(uri)?;
     if query.symbol.is_some() != query.asset_class.is_some() {
         return Err(MarketBarsHttpError::InvalidRequest);
     }

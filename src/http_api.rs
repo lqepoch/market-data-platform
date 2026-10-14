@@ -280,12 +280,13 @@ async fn liveness() -> impl IntoResponse {
 }
 
 async fn readiness(State(state): State<Arc<ServiceState>>) -> Response {
+    // Readiness reports only the configured cash base; overnight overlays are instrument-scoped.
     let response = serde_json::json!({
         "status": if state.auth_configured { "ready" } else { "not_ready" },
         "market_ready": false,
         "market_calendar_configured": state.market_calendar.is_some(),
-        "market_calendar_version": state.market_calendar.as_ref().map(|calendar| calendar.snapshot.version.as_str()),
-        "market_calendar_input_sha256": state.market_calendar.as_ref().map(|calendar| calendar.input_sha256.as_str()),
+        "market_calendar_version": state.market_calendar.as_ref().map(|calendar| calendar.raw_snapshot().version.as_str()),
+        "market_calendar_input_sha256": state.market_calendar.as_ref().map(|calendar| calendar.input_sha256()),
         "source_entitlement": "unverified",
     });
     let status = if state.auth_configured {

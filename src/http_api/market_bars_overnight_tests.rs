@@ -17,9 +17,9 @@ use axum::{
 };
 use chrono::{DateTime, Duration, NaiveDate, SecondsFormat, Utc};
 use market_contracts::{
-    AdjustmentV1, AssetClassV1, BarCoverageSegmentV1, BarResolutionV1, BarRowV1,
-    BarSourceProvenanceV1, BarsCacheStatusV1, BarsCoverageStatusV1, BarsEntitlementStatusV1,
-    BarsResponseV1, BarsValidationStateV1, DecimalString, NumericEncodingV1, ProtoTimestampV2,
+    AssetClassV1, BarCoverageSegmentV1, BarRowV1, BarSourceProvenanceV1, BarsCacheStatusV1,
+    BarsCoverageStatusV1, BarsEntitlementStatusV1, BarsResponseV1, BarsValidationStateV1,
+    DecimalString, NumericEncodingV1, ProtoTimestampV2,
 };
 use sha2::{Digest, Sha256};
 use tower::ServiceExt;
@@ -39,8 +39,8 @@ use crate::{
     remote_query::{RemoteArchiveReader, RemoteCacheLimits},
     session_router::{
         AlpacaFeed, CalendarDay, CalendarDayState, CalendarVerificationStatus, DataInterval,
-        PlannedSource, Provider, SessionInstance, SessionPhase, SourceCapability,
-        TrustedCalendarSnapshot, UtcWindow,
+        PlannedSource, Provider, SessionPhase, SourceCapability, TrustedCalendarSnapshot,
+        UtcWindow,
     },
     storage::LocalTestTransport,
 };
@@ -197,14 +197,14 @@ struct BarsQuery<'a> {
     cursor: Option<&'a str>,
 }
 
-fn bars_query(
-    symbol: &str,
-    provider_mode: &str,
-    session_scope: &str,
-    start: &str,
-    end: &str,
-    cursor: Option<&str>,
-) -> BarsQuery<'_> {
+fn bars_query<'a>(
+    symbol: &'a str,
+    provider_mode: &'a str,
+    session_scope: &'a str,
+    start: &'a str,
+    end: &'a str,
+    cursor: Option<&'a str>,
+) -> BarsQuery<'a> {
     BarsQuery {
         symbol,
         provider_mode,
@@ -803,7 +803,7 @@ fn signed_calendar(
     let verifier = Arc::clone(&fixture.verifier);
     let input_sha256 = sha256_hex(&bytes);
     let calendar = LoadedMarketCalendar::synthetic_cash_snapshot_for_tests(cash, CASH_INPUT_SHA256)
-        .with_signed_overnight_overlay(&bytes, &input_sha256, Arc::clone(&verifier));
+        .with_signed_overnight_overlay(&bytes, &input_sha256, verifier.clone());
     (calendar, verifier, bytes)
 }
 
@@ -836,7 +836,7 @@ fn bad_signature_calendar() -> (LoadedMarketCalendar, Vec<u8>) {
         serde_json::Value::String("synthetic-overlay:invalid".to_owned());
     let bytes = serde_json::to_vec(&artifact).unwrap();
     let calendar = LoadedMarketCalendar::synthetic_cash_snapshot_for_tests(cash, CASH_INPUT_SHA256)
-        .with_signed_overnight_overlay(&bytes, &sha256_hex(&bytes), Arc::clone(&fixture.verifier));
+        .with_signed_overnight_overlay(&bytes, &sha256_hex(&bytes), fixture.verifier.clone());
     (calendar, bytes)
 }
 
