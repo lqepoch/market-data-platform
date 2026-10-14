@@ -2397,7 +2397,7 @@
       },
       {
         "path": "src/archive/reconciliation/tests.rs",
-        "sha256": "b79e45ef33093237c77f3ae1044a2a7dc179c6372e86797b00b1b9478892ee9c"
+        "sha256": "1232867deb9b449311f2e49424ba4cf9976b8c5de9520e13d6b2bd8d94b49308"
       },
       {
         "path": "src/archive/reconciliation/transaction_tests.rs",
@@ -2449,11 +2449,11 @@
       },
       {
         "path": "src/http_api/market_bars_authority_tests.rs",
-        "sha256": "000b86cc433544bebf66bbf48740b61da9cb5195343f1196d0b44552641dfae1"
+        "sha256": "8b6746571d0d3e100952a6277008950232a408d4083d116e96edceed233a9889"
       },
       {
         "path": "src/http_api/market_bars_overnight_tests.rs",
-        "sha256": "5a72590fa4073279e9f412edc8da22d2bd1bac879dea40c3762183ac822cb433"
+        "sha256": "606e0048c2e59f280f16644b15130cc3df2feced0244296bc43a426a47307999"
       },
       {
         "path": "src/http_api/market_bars_tests.rs",
@@ -2493,7 +2493,7 @@
       },
       {
         "path": "src/market_calendar/overnight_overlay_tests.rs",
-        "sha256": "85ac42747c1e90797b343c402990f8cbe881ca72a1bcb93c05d0c2f8731c33fa"
+        "sha256": "e9461252401f14a3262093eb099a538b96b5f33eb7757472336faa907134708f"
       },
       {
         "path": "src/market_query.rs",
@@ -2676,7 +2676,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "324887ab3905b8a391810a7877455fc11590e38e86349d54b7e16d2889c2c0f3"
+    "sha256": "27e5be8c7987586a26cb7e982254e94ebbb0764f6d995365d38b79685b167b69"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
