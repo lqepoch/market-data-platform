@@ -12,7 +12,7 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
-use chrono::{DateTime, Duration, NaiveDate, SecondsFormat, Utc};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, SecondsFormat, Utc, Weekday};
 use market_contracts::{
     AdjustmentV1, AssetClassV1, BarCoverageSegmentV1, BarResolutionV1, BarRowV1,
     BarSourceProvenanceV1, BarsCacheStatusV1, BarsCoverageStatusV1, BarsEntitlementStatusV1,
@@ -443,7 +443,7 @@ async fn harness_with_cache_limits(
     let state = Arc::new(ServiceState {
         auth_configured: true,
         market_calendar: Some(LoadedMarketCalendar::synthetic_cash_snapshot_for_tests(
-            one_day_calendar(),
+            authority_calendar_with_current_as_of_context(),
             "d".repeat(64),
         )),
         market_bars: Some(Arc::clone(&runtime)),
@@ -464,6 +464,7 @@ async fn harness_with_cache_limits(
 
 #[tokio::test]
 async fn synthetic_verified_dataset_flows_through_authenticated_http_and_cold_cache_reverify() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let mut harness = harness(SyntheticFacts::KnownSipAuthorized, false).await;
     for expected_cache_status in ["miss", "hit"] {
         let response =
@@ -511,6 +512,7 @@ async fn synthetic_verified_dataset_flows_through_authenticated_http_and_cold_ca
 
 #[tokio::test]
 async fn authoritative_old_session_is_reused_for_a_narrower_fetch_key() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let mut harness = harness(SyntheticFacts::KnownSipAuthorized, false).await;
     let first = send_bars_request_for_window(
         &harness.app,
@@ -550,6 +552,7 @@ async fn authoritative_old_session_is_reused_for_a_narrower_fetch_key() {
 
 #[tokio::test]
 async fn logical_old_cache_does_not_cross_futu_only_mode() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let mut harness = harness(SyntheticFacts::KnownSipAuthorized, false).await;
     let first = send_bars_request(&harness.app, &test_support::terminal_token("market:read")).await;
     assert_eq!(first.status(), StatusCode::OK);
@@ -573,6 +576,7 @@ async fn logical_old_cache_does_not_cross_futu_only_mode() {
 
 #[tokio::test]
 async fn logical_old_cache_does_not_cross_verified_principal_rights() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let mut harness = harness(SyntheticFacts::KnownSipAuthorized, false).await;
     let first = send_bars_request(&harness.app, &test_support::terminal_token("market:read")).await;
     assert_eq!(first.status(), StatusCode::OK);
@@ -595,6 +599,7 @@ async fn logical_old_cache_does_not_cross_verified_principal_rights() {
 
 #[tokio::test]
 async fn partial_old_page_does_not_seed_logical_cache_reuse() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let mut harness = harness(SyntheticFacts::UnknownFeedAndEntitlement, false).await;
     let first = send_bars_request(&harness.app, &test_support::terminal_token("market:read")).await;
     assert_eq!(first.status(), StatusCode::PARTIAL_CONTENT);
@@ -618,6 +623,7 @@ async fn partial_old_page_does_not_seed_logical_cache_reuse() {
 
 #[tokio::test]
 async fn expired_logical_authority_is_a_miss_and_refetches() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let limits = CacheLimitsV1 {
         ttl: std::time::Duration::from_secs(1),
         ..CacheLimitsV1::default()
@@ -652,6 +658,7 @@ async fn expired_logical_authority_is_a_miss_and_refetches() {
 
 #[tokio::test]
 async fn unknown_provider_facts_never_reach_the_attestor_or_claim_authority() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let mut harness = harness(SyntheticFacts::UnknownFeedAndEntitlement, false).await;
     let response =
         send_bars_request(&harness.app, &test_support::terminal_token("market:read")).await;
@@ -675,6 +682,7 @@ async fn unknown_provider_facts_never_reach_the_attestor_or_claim_authority() {
 
 #[tokio::test]
 async fn valid_synthetic_receipt_is_not_enough_when_the_runtime_verifier_is_unavailable() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let mut harness = harness(SyntheticFacts::KnownSipAuthorized, true).await;
     let response =
         send_bars_request(&harness.app, &test_support::terminal_token("market:read")).await;
@@ -693,6 +701,7 @@ async fn valid_synthetic_receipt_is_not_enough_when_the_runtime_verifier_is_unav
 
 #[tokio::test]
 async fn default_runtime_without_injected_authority_can_only_publish_provisional_pages() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let mut harness = harness_without_authority(SyntheticFacts::KnownSipAuthorized).await;
     let response =
         send_bars_request(&harness.app, &test_support::terminal_token("market:read")).await;
@@ -711,6 +720,7 @@ async fn default_runtime_without_injected_authority_can_only_publish_provisional
 
 #[tokio::test]
 async fn signed_receipt_for_another_principal_is_rejected() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let mut harness = harness_with_evidence_mutation(
         SyntheticFacts::KnownSipAuthorized,
         EvidenceMutation::WrongPrincipal,
@@ -739,6 +749,7 @@ async fn signed_receipt_for_another_principal_is_rejected() {
 
 #[tokio::test]
 async fn correctly_signed_receipt_for_a_different_dataset_is_rejected() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let mut harness = harness_with_evidence_mutation(
         SyntheticFacts::KnownSipAuthorized,
         EvidenceMutation::WrongDataset,
@@ -761,6 +772,7 @@ async fn correctly_signed_receipt_for_a_different_dataset_is_rejected() {
 
 #[tokio::test]
 async fn verified_principal_rights_partition_prevents_cross_principal_cache_reuse() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let mut harness = harness(SyntheticFacts::KnownSipAuthorized, false).await;
     for token in [
         test_support::terminal_token("market:read"),
@@ -797,6 +809,7 @@ async fn verified_principal_rights_partition_prevents_cross_principal_cache_reus
 
 #[tokio::test]
 async fn cache_status_returns_principal_scoped_bounded_and_sanitized_events_over_http() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let mut harness = harness(SyntheticFacts::KnownSipAuthorized, false).await;
     let terminal_token = test_support::terminal_token("market:read");
     let bar_response = send_bars_request(&harness.app, &terminal_token).await;
@@ -989,7 +1002,20 @@ async fn send_bars_request_for_window(
         .header("authorization", format!("Bearer {token}"))
         .body(Body::empty())
         .unwrap();
-    app.clone().oneshot(request).await.unwrap()
+    let response = app.clone().oneshot(request).await.unwrap();
+    if !response.status().is_success() {
+        let (parts, body) = response.into_parts();
+        let bytes = to_bytes(body, 64 * 1024)
+            .await
+            .expect("bounded error response body is readable");
+        eprintln!(
+            "synthetic market-bars test response {}: {}",
+            parts.status,
+            String::from_utf8_lossy(&bytes)
+        );
+        return axum::response::Response::from_parts(parts, Body::from(bytes));
+    }
+    response
 }
 
 async fn response_json(response: axum::response::Response) -> serde_json::Value {
@@ -1076,6 +1102,102 @@ pub(super) fn one_day_calendar() -> TrustedCalendarSnapshot {
             },
         ],
     }
+}
+
+/// Extend the explicitly synthetic Jan 5 fixture through the real test wall clock so the HTTP
+/// planner can rank that historical request against today's phase without changing production
+/// clock handling. Weekends remain closed; post-Jan-5 weekdays are provisional context only.
+fn authority_calendar_with_current_as_of_context() -> TrustedCalendarSnapshot {
+    const MAX_CONTEXT_DAYS: i64 = 1_024;
+
+    let mut calendar = one_day_calendar();
+    let through = Utc::now().date_naive();
+    let first_context_date = calendar.coverage_end_exclusive;
+    let context_days = through.signed_duration_since(first_context_date).num_days() + 1;
+    assert!(
+        (0..=MAX_CONTEXT_DAYS).contains(&context_days),
+        "synthetic calendar context exceeds its explicit day bound"
+    );
+
+    let verified_through = calendar.coverage_end_exclusive.pred_opt().unwrap();
+    calendar.version = "synthetic-xnys-authority-context-v1".to_owned();
+    calendar.source_metadata.source_name =
+        "Synthetic XNYS authority context fixture; not production data".to_owned();
+    calendar.source_metadata.verification_status =
+        "Jan 5 fixture verified; later context is provisional".to_owned();
+    calendar.source_metadata.official_verified_through = verified_through;
+    calendar.source_metadata.next_review_at = verified_through.succ_opt().unwrap();
+
+    let mut date = first_context_date;
+    while date <= through {
+        let day_start = synthetic_new_york_midnight_utc(date);
+        let next_date = date.succ_opt().unwrap();
+        let day_end = synthetic_new_york_midnight_utc(next_date);
+        let is_weekend = matches!(date.weekday(), Weekday::Sat | Weekday::Sun);
+        let session_id = format!("XNYS:{date}");
+        calendar.days.push(CalendarDay {
+            trade_date: date,
+            day_window: UtcWindow {
+                start: day_start,
+                end_exclusive: day_end,
+            },
+            state: if is_weekend {
+                CalendarDayState::Closed {
+                    reason: Some("synthetic_weekend_context".to_owned()),
+                }
+            } else {
+                CalendarDayState::Open {
+                    session_id: session_id.clone(),
+                }
+            },
+            verification_status: if is_weekend {
+                CalendarVerificationStatus::ModeledWeekend
+            } else {
+                CalendarVerificationStatus::Provisional
+            },
+        });
+
+        if !is_weekend {
+            for (phase, suffix, start_hours, start_minutes, end_hours, end_minutes) in [
+                (SessionPhase::Pre, "pre", 4, 0, 9, 30),
+                (SessionPhase::Regular, "regular", 9, 30, 16, 0),
+                (SessionPhase::After, "after", 16, 0, 20, 0),
+            ] {
+                let start =
+                    day_start + Duration::hours(start_hours) + Duration::minutes(start_minutes);
+                let end = day_start + Duration::hours(end_hours) + Duration::minutes(end_minutes);
+                calendar.instances.push(SessionInstance {
+                    session_id: session_id.clone(),
+                    session_instance_id: format!("{session_id}:{suffix}"),
+                    trade_date: date,
+                    phase,
+                    window: UtcWindow {
+                        start,
+                        end_exclusive: end,
+                    },
+                });
+            }
+        }
+        date = next_date;
+    }
+    calendar.coverage_end_exclusive = date;
+    calendar
+}
+
+fn synthetic_new_york_midnight_utc(date: NaiveDate) -> DateTime<Utc> {
+    let spring_transition = nth_weekday_of_month(date.year(), 3, Weekday::Sun, 2);
+    let autumn_transition = nth_weekday_of_month(date.year(), 11, Weekday::Sun, 1);
+    let daylight_time = date > spring_transition && date <= autumn_transition;
+    let utc_offset_hours = if daylight_time { 4 } else { 5 };
+    date.and_hms_opt(0, 0, 0).unwrap().and_utc() + Duration::hours(utc_offset_hours)
+}
+
+fn nth_weekday_of_month(year: i32, month: u32, weekday: Weekday, ordinal: u32) -> NaiveDate {
+    let first = NaiveDate::from_ymd_opt(year, month, 1).unwrap();
+    let weekday_delta = (i64::from(weekday.num_days_from_sunday())
+        - i64::from(first.weekday().num_days_from_sunday()))
+    .rem_euclid(7);
+    first + Duration::days(weekday_delta + 7 * i64::from(ordinal - 1))
 }
 
 fn timestamp(value: &str) -> Result<ProtoTimestampV2, ProviderQueryError> {

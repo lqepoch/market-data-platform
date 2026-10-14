@@ -784,8 +784,19 @@ fn exhausted_cache_hit_advances_to_the_next_provider_run_without_provider_cursor
         &calendar,
     )
     .unwrap();
+    assert!(matches!(
+        provider_runtime.select_page_at(
+            &next_request,
+            &next_plan,
+            &rights_profile_sha256,
+            now_unix_seconds,
+        ),
+        Err(crate::market_query::providers::ProviderQueryError::ProviderCapabilityUnavailable)
+    ));
+    // This selector bypass is confined to a no-network mechanical cursor/cache fixture. The
+    // production selector above continues to fail closed without provider admission/configuration.
     let next_selection = provider_runtime
-        .select_page_at(
+        .select_page_at_synthetic_for_test(
             &next_request,
             &next_plan,
             &rights_profile_sha256,
