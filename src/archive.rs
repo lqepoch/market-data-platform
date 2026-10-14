@@ -190,15 +190,25 @@ struct ArchiveDatasetLock(File);
 
 impl ArchiveDatasetLock {
     fn acquire(path: &Path) -> Result<Self> {
-        let file = OpenOptions::new()
+        let file = Self::open_file(path)?;
+        file.try_lock_exclusive()
+            .map_err(|_| MarketDataError::LockHeld)?;
+        Ok(Self(file))
+    }
+
+    fn try_acquire(path: &Path) -> std::io::Result<Self> {
+        let file = Self::open_file(path)?;
+        file.try_lock_exclusive()?;
+        Ok(Self(file))
+    }
+
+    fn open_file(path: &Path) -> std::io::Result<File> {
+        OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
-            .open(path)?;
-        file.try_lock_exclusive()
-            .map_err(|_| MarketDataError::LockHeld)?;
-        Ok(Self(file))
+            .open(path)
     }
 }
 
@@ -750,19 +760,14 @@ impl ArchivePublisher {
             {
                 return Err(MarketDataError::InvalidInput);
             }
-            let lock_file = OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .truncate(false)
-                .open(&lock_path)?;
-            if let Err(error) = lock_file.try_lock_exclusive() {
-                if error.kind() == std::io::ErrorKind::WouldBlock {
+            let _dataset_lock = match ArchiveDatasetLock::try_acquire(&lock_path) {
+                Ok(lock) => lock,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     report.skipped_locked = report.skipped_locked.saturating_add(1);
                     continue;
                 }
-                return Err(MarketDataError::Io(error));
-            }
+                Err(error) => return Err(MarketDataError::Io(error)),
+            };
 
             let receipt_path = state_root.join(format!("{dataset_id}.receipt.json"));
             let manifest_path = state_root.join(format!("{dataset_id}.manifest.json"));
