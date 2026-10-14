@@ -193,6 +193,12 @@ mutation replaces a validated V1 head with V2 through the same commitpoint proto
 The V1 reader compatibility test uses frozen pre-V2 payload and mirror bytes with fixed transaction,
 payload, and mirror hashes; it does not generate expected values through the current writer.
 
+Data-version rollback uses the current V2-aware implementation and rechecks each retained version
+and its current admission evidence. This is separate from downgrading the service binary: pre-V2
+readers cannot decode V2 transaction heads. Before a rollout that must support binary downgrade,
+retain a separate prior cache root or snapshot; on downgrade disable the market-bars runtime or
+select that retained compatible root. Do not rewrite V2 heads into V1 or overwrite raw archives.
+
 Before persisting logical shards or installing a transaction head, the store reserves the new shard
 bytes plus bounded head/current/root/mirror temporary files and both transaction markers against
 the current tree total. On first use the reservation includes both the BASE head and the NEW-head
@@ -228,8 +234,11 @@ targets and forensic evidence are not removed implicitly.
 
 Parquet readback uses the existing bounded `parquet-worker` process. On non-Linux systems the cache
 store returns `Unsupported`; it does not fall back to inline decoding. Therefore the Linux-only
-publish/read/rollback/recovery integration test is `NOT_RUN` on macOS. The owning change has not run
-local Cargo build or test commands; the Linux GitHub Actions run is required for executable
-validation. The module is crate-private and becomes usable by the HTTP query path only when its
-owner wires the adapter and pins the frozen Core contract containing the trusted canonical BarsV1
-schema.
+publish/read/rollback/recovery integration test is `NOT_RUN` on macOS. Executable validation for
+this public repository runs in Linux GitHub Actions and must bind to the candidate head; local
+formatting or metadata checks are not build or integration evidence. The crate-private module is
+wired into the authenticated HTTP bars query path and pins the frozen Core BarsV1 schema. The bars
+provider runtime defaults to disabled, and production startup has no authority verifier/attestor
+loader: raw/provisional cache behavior does not establish Provider verification or release
+acceptance. Synthetic HTTP and persistence tests are distinct from actual market-feed, issuer,
+license, point-in-time and production-storage acceptance.
