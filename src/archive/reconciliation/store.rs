@@ -1725,7 +1725,7 @@ impl CacheVersionStoreV1 {
                             .is_some_and(|maximum| cursor.expires_at_unix_seconds <= maximum)
                         && receipt.coverage.truncated
                 });
-        if !matches!(receipt.receipt_version, 4 | 5 | 6)
+        if !matches!(receipt.receipt_version, 4..=6)
             || receipt.key != *key
             || receipt.key_fingerprint_sha256 != key_fingerprint
             || receipt.version_id != version_id
