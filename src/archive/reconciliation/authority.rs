@@ -493,7 +493,7 @@ pub(super) fn verify_stored_provider_admission_v1(
 }
 
 #[cfg(test)]
-pub(super) fn signed_payload_for_test(receipt: &ProviderAdmissionReceiptV1) -> Result<Vec<u8>> {
+pub(crate) fn signed_payload_for_test(receipt: &ProviderAdmissionReceiptV1) -> Result<Vec<u8>> {
     signed_payload(receipt)
 }
 
