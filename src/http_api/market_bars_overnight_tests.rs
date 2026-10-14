@@ -740,7 +740,9 @@ async fn revoking_overlay_invalidates_an_existing_signed_plan_cursor() {
 
 fn cash_calendar() -> LoadedMarketCalendar {
     LoadedMarketCalendar::synthetic_cash_snapshot_for_tests(
-        two_day_cash_snapshot(),
+        super::authority_tests::authority_calendar_with_current_as_of_context(
+            two_day_cash_snapshot(),
+        ),
         CASH_INPUT_SHA256,
     )
 }
@@ -776,7 +778,9 @@ fn signed_calendar(
     expires_at: u64,
     revoked_at: Option<u64>,
 ) -> (LoadedMarketCalendar, Arc<SyntheticOverlayVerifier>, Vec<u8>) {
-    let cash = two_day_cash_snapshot();
+    let cash = super::authority_tests::authority_calendar_with_current_as_of_context(
+        two_day_cash_snapshot(),
+    );
     let trade_date = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
     let fixture = signed_overlay_for_tests(
         &cash,
@@ -809,7 +813,9 @@ fn signed_calendar(
 
 fn bad_signature_calendar() -> (LoadedMarketCalendar, Vec<u8>) {
     let now = current_unix_seconds();
-    let cash = two_day_cash_snapshot();
+    let cash = super::authority_tests::authority_calendar_with_current_as_of_context(
+        two_day_cash_snapshot(),
+    );
     let fixture = signed_overlay_for_tests(
         &cash,
         CASH_INPUT_SHA256,
@@ -915,7 +921,20 @@ async fn send_bars(
         .header("authorization", format!("Bearer {token}"))
         .body(Body::empty())
         .unwrap();
-    app.clone().oneshot(request).await.unwrap()
+    let response = app.clone().oneshot(request).await.unwrap();
+    if !response.status().is_success() {
+        let (parts, body) = response.into_parts();
+        let bytes = to_bytes(body, 64 * 1024)
+            .await
+            .expect("bounded overnight HTTP error response body is readable");
+        eprintln!(
+            "synthetic overnight market-bars response {}: {}",
+            parts.status,
+            String::from_utf8_lossy(&bytes)
+        );
+        return axum::response::Response::from_parts(parts, Body::from(bytes));
+    }
+    response
 }
 
 async fn send_sessions(

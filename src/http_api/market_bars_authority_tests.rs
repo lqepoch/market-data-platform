@@ -443,7 +443,7 @@ async fn harness_with_cache_limits(
     let state = Arc::new(ServiceState {
         auth_configured: true,
         market_calendar: Some(LoadedMarketCalendar::synthetic_cash_snapshot_for_tests(
-            authority_calendar_with_current_as_of_context(),
+            authority_calendar_with_current_as_of_context(one_day_calendar()),
             "d".repeat(64),
         )),
         market_bars: Some(Arc::clone(&runtime)),
@@ -1104,13 +1104,14 @@ pub(super) fn one_day_calendar() -> TrustedCalendarSnapshot {
     }
 }
 
-/// Extend the explicitly synthetic Jan 5 fixture through the real test wall clock so the HTTP
-/// planner can rank that historical request against today's phase without changing production
-/// clock handling. Weekends remain closed; post-Jan-5 weekdays are provisional context only.
-fn authority_calendar_with_current_as_of_context() -> TrustedCalendarSnapshot {
+/// Extend an explicitly synthetic cash fixture through the real test wall clock so the HTTP
+/// planner can rank its historical request against today's phase without changing production
+/// clock handling. Weekends remain closed; added weekdays are provisional context only.
+pub(super) fn authority_calendar_with_current_as_of_context(
+    mut calendar: TrustedCalendarSnapshot,
+) -> TrustedCalendarSnapshot {
     const MAX_CONTEXT_DAYS: i64 = 1_024;
 
-    let mut calendar = one_day_calendar();
     let through = Utc::now().date_naive();
     let first_context_date = calendar.coverage_end_exclusive;
     let context_days = through.signed_duration_since(first_context_date).num_days() + 1;
