@@ -118,7 +118,7 @@
     },
     {
       "path": "docs/policies/mdp-cache-reconciliation-v1.md",
-      "sha256": "b408144e49728d0b745705f4822cbb160f63b0df648b11ee98b8744f7cf5b8da"
+      "sha256": "19b26b0038b467c3a1ea18dce1970cdb12c2507e219655db268bd6892cd7d718"
     },
     {
       "path": "supply-chain/git-source-pins.json",
@@ -2357,7 +2357,15 @@
       },
       {
         "path": "src/archive/reconciliation.rs",
-        "sha256": "909fd9a6e7b687872324c797851a5a40f4a706c90e7b152f25c3c47fb6e0c889"
+        "sha256": "39eadc284a851bf198c70885d2a4662560e6ec2e836101c220cabe320e794eef"
+      },
+      {
+        "path": "src/archive/reconciliation/authority.rs",
+        "sha256": "c0bf41355c4d9166587406ee8833d9d91abf0a7dc0ffe73e321ff7b0ee04badf"
+      },
+      {
+        "path": "src/archive/reconciliation/authority_types.rs",
+        "sha256": "f1ffea05be24758c22110a4009d9a2e928362e145d436b50593b3e5f9da1d45c"
       },
       {
         "path": "src/archive/reconciliation/store.rs",
@@ -2365,7 +2373,7 @@
       },
       {
         "path": "src/archive/reconciliation/tests.rs",
-        "sha256": "3b83b87beda4cc799220b7ea81aa0924424934f65c9f2344e53a70de454924b2"
+        "sha256": "78f0a5cff9e3051b33cbe81d53aaaa18fa032e4cd7141f168d5deab45ae456dd"
       },
       {
         "path": "src/archive/tests.rs",
@@ -2401,11 +2409,11 @@
       },
       {
         "path": "src/http_api/market_bars.rs",
-        "sha256": "2e10715371048fd8010fcd5bc5a7404141356244d52c05160ddaee831d7e1c30"
+        "sha256": "31586c20ee8226a3a2eabc3be1294210813b7a438054fdbbcc6044a93f291d07"
       },
       {
         "path": "src/http_api/market_bars/query.rs",
-        "sha256": "f7f1a65aa1ac138b7dbd3f896998a3d1b2e69e6ce7cfccb07e5886abc38874e1"
+        "sha256": "fdb20c53f0eabfb1e6036cc5dbf8e59dd17e6e287dae3a00c033fb4744b9d062"
       },
       {
         "path": "src/http_api/market_bars/response.rs",
@@ -2413,7 +2421,7 @@
       },
       {
         "path": "src/http_api/market_bars_tests.rs",
-        "sha256": "5752217d54cf43775fd766bb6b37a8691344b89a158f493b209b0cadbc66e99e"
+        "sha256": "d0ec90237f3903f3d48e3ccded69ce28e310403909993b2621f27fc45110c8ad"
       },
       {
         "path": "src/http_api/supervisor.rs",
@@ -2449,11 +2457,15 @@
       },
       {
         "path": "src/market_query/planning_tests.rs",
-        "sha256": "3adf8a66fdcf03654f58631638f2f51141ec5e62b5898b6cc7b92645c876a8e0"
+        "sha256": "cc82774c2db7cd06358858829d80e32d81db3dc803b3f7d96697bc05d9ee15c2"
       },
       {
         "path": "src/market_query/providers.rs",
-        "sha256": "f23bcf8108f56f93e982e59c27434f2afb09594fe95031bdc4b5e36ba2e63412"
+        "sha256": "a1970bf3ce650bb217416627314e4425130cf6a07ce059a480868c83039d80fe"
+      },
+      {
+        "path": "src/market_query/providers/admission.rs",
+        "sha256": "dcc3ea21e9654fb1e1b1205d3da032e6ee1325edb81bf08cc01bc83f2ff1655c"
       },
       {
         "path": "src/market_query/providers/alpaca.rs",
@@ -2461,7 +2473,7 @@
       },
       {
         "path": "src/market_query/providers/cursor.rs",
-        "sha256": "45db3cb6e197b7db0cd9cb4dc96a1e3bd697be2cc493699a8496f516ff570057"
+        "sha256": "64d7564c8321ea9bc942685d3850529f89f4bbeeb592aafa3b3da45bd0f63639"
       },
       {
         "path": "src/market_query/providers/error.rs",
@@ -2616,7 +2628,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "e76a2f718ad0102d8c696e3be691665e5382a4a1262e50700330bbf9ea108c78"
+    "sha256": "bd523514d45d4e3540d347c67f3647ac4e31a2d7e0892fc97212a4589b8b9f17"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
