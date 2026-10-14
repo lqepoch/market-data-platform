@@ -36,6 +36,8 @@ struct CursorEnvelope {
     expires_at_unix_seconds: u64,
     group_index: usize,
     timeline_position: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    admission_set_sha256: Option<String>,
     provider_cursor: Option<ProviderCursor>,
 }
 
@@ -69,6 +71,9 @@ pub struct ProviderPageSelection {
     cache_key: String,
     cache_identity: ProviderCacheIdentity,
     cache_policy: ProviderCachePolicy,
+    admission_set_sha256: Option<String>,
+    futu_admissions: Vec<crate::archive::reconciliation::VerifiedProviderAdmissionV1>,
+    rights_profile_sha256: Option<String>,
 }
 
 impl fmt::Debug for ProviderPageSelection {
@@ -79,6 +84,7 @@ impl fmt::Debug for ProviderPageSelection {
             .field("timeline_position", &self.timeline_position)
             .field("run_window", &self.run.group.fetch_window)
             .field("has_provider_cursor", &self.provider_cursor.is_some())
+            .field("futu_admission_count", &self.futu_admissions.len())
             .field("cache_key", &self.cache_key)
             .finish()
     }
@@ -125,6 +131,32 @@ impl ProviderPageSelection {
     #[must_use]
     pub const fn cache_policy(&self) -> ProviderCachePolicy {
         self.cache_policy
+    }
+
+    pub(super) fn validate_futu_admission(
+        &self,
+        plan: &MarketBarsPlan,
+        now_unix_seconds: u64,
+    ) -> Result<(), ProviderQueryError> {
+        if self.run.group.source != PlannedSource::Futu {
+            return Ok(());
+        }
+        let rights_profile_sha256 = self
+            .rights_profile_sha256
+            .as_deref()
+            .ok_or(ProviderQueryError::ProviderCapabilityUnavailable)?;
+        let validated = super::admission::validate_plan_admissions(
+            &plan.request,
+            plan,
+            rights_profile_sha256,
+            &self.futu_admissions,
+            now_unix_seconds,
+        )?;
+        if validated.binding_sha256 != self.admission_set_sha256 || !validated.covers_run(&self.run)
+        {
+            return Err(ProviderQueryError::ProviderCapabilityUnavailable);
+        }
+        Ok(())
     }
 
     /// Build the next temporal run's cursor after a cache hit or an exhausted provider page.
@@ -253,6 +285,7 @@ impl ProviderPageSelection {
             expires_at_unix_seconds: self.expires_at_unix_seconds,
             group_index,
             timeline_position,
+            admission_set_sha256: self.admission_set_sha256.clone(),
             provider_cursor,
         }
     }
@@ -304,6 +337,24 @@ pub fn select_page_at(
     plan: &MarketBarsPlan,
     now_unix_seconds: u64,
 ) -> Result<ProviderPageSelection, ProviderQueryError> {
+    select_page_inner(request, plan, None, now_unix_seconds)
+}
+
+pub(super) fn select_page_with_admissions(
+    request: &BarsRequestV1,
+    plan: &MarketBarsPlan,
+    admissions: super::admission::ValidatedFutuAdmissions,
+    now_unix_seconds: u64,
+) -> Result<ProviderPageSelection, ProviderQueryError> {
+    select_page_inner(request, plan, Some(admissions), now_unix_seconds)
+}
+
+fn select_page_inner(
+    request: &BarsRequestV1,
+    plan: &MarketBarsPlan,
+    admissions: Option<super::admission::ValidatedFutuAdmissions>,
+    now_unix_seconds: u64,
+) -> Result<ProviderPageSelection, ProviderQueryError> {
     request
         .validate()
         .map_err(|_| ProviderQueryError::CursorQueryMismatch)?;
@@ -312,6 +363,9 @@ pub fn select_page_at(
     }
     let request_sha256 = request_digest(request)?;
     let plan_sha256 = plan_digest(plan)?;
+    let admission_set_sha256 = admissions
+        .as_ref()
+        .and_then(|admissions| admissions.binding_sha256.clone());
     let (
         timeline_position,
         expected_group_index,
@@ -324,6 +378,9 @@ pub fn select_page_at(
             return Err(ProviderQueryError::CursorQueryMismatch);
         }
         if envelope.plan_sha256 != plan_sha256 || envelope.as_of_utc != plan.as_of.as_str() {
+            return Err(ProviderQueryError::CursorPlanChanged);
+        }
+        if envelope.admission_set_sha256 != admission_set_sha256 {
             return Err(ProviderQueryError::CursorPlanChanged);
         }
         if now_unix_seconds >= envelope.expires_at_unix_seconds {
@@ -413,7 +470,17 @@ pub fn select_page_at(
             slices,
             provider_cursor.as_ref(),
         ),
+        admission_set_sha256.as_deref(),
     ))?;
+    let (futu_admissions, rights_profile_sha256) = admissions.map_or_else(
+        || (Vec::new(), None),
+        |admissions| {
+            (
+                admissions.admissions,
+                Some(admissions.rights_profile_sha256),
+            )
+        },
+    );
     Ok(ProviderPageSelection {
         request_sha256,
         plan_sha256,
@@ -427,6 +494,9 @@ pub fn select_page_at(
         cache_key,
         cache_identity,
         cache_policy,
+        admission_set_sha256,
+        futu_admissions,
+        rights_profile_sha256,
     })
 }
 

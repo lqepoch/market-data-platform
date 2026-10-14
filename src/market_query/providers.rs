@@ -8,6 +8,7 @@
 //! provider-native research observation path because its adjustment semantics cannot satisfy the
 //! strict Core Bars V1 adjustment contract.
 
+mod admission;
 mod alpaca;
 mod cursor;
 mod error;
@@ -26,6 +27,7 @@ use crate::{
     market_query::planning::MarketBarsPlan,
     session_router::{
         AlpacaFeed, DataInterval, PlannedSource, Provider, SessionPhase, SourceCapability,
+        TrustedCalendarSnapshot,
     },
 };
 
@@ -42,6 +44,7 @@ pub struct MarketBarsProviderRuntime {
     alpaca: Option<AlpacaRestReadClient>,
     futu: futu::FutuGateway,
     yfinance: yfinance::YFinanceBridge,
+    futu_admissions: Vec<crate::archive::reconciliation::VerifiedProviderAdmissionV1>,
 }
 
 impl fmt::Debug for MarketBarsProviderRuntime {
@@ -51,6 +54,7 @@ impl fmt::Debug for MarketBarsProviderRuntime {
             .field("alpaca_configured", &self.alpaca.is_some())
             .field("futu_gateway", &self.futu)
             .field("yfinance_bridge", &self.yfinance)
+            .field("futu_admission_count", &self.futu_admissions.len())
             .finish()
     }
 }
@@ -65,11 +69,26 @@ impl MarketBarsProviderRuntime {
         let futu_port = parse_port("MDP_FUTU_GATEWAY_PORT", 8_080)?;
         let futu = futu::FutuGateway::new(futu_port)?;
         let yfinance = yfinance::YFinanceBridge::from_environment()?;
-        Ok(Self {
+        let runtime = Self {
             alpaca,
             futu,
             yfinance,
-        })
+            futu_admissions: Vec::new(),
+        };
+        Ok(runtime.with_verified_provider_admissions(Vec::new()))
+    }
+
+    /// Attach receipts already verified by the independent A04 trust boundary.
+    ///
+    /// This internal injection point does not parse receipts, trust environment flags, or create
+    /// admissions. Production stays Futu-closed until an independently managed issuer/verifier
+    /// and runtime-fact source are available.
+    pub(crate) fn with_verified_provider_admissions(
+        mut self,
+        admissions: Vec<crate::archive::reconciliation::VerifiedProviderAdmissionV1>,
+    ) -> Self {
+        self.futu_admissions = admissions;
+        self
     }
 
     /// Return planner capabilities that this process can attempt using configured credentials.
@@ -81,6 +100,28 @@ impl MarketBarsProviderRuntime {
     #[must_use]
     pub fn source_capabilities(&self) -> Vec<SourceCapability> {
         alpaca_source_capabilities(self.alpaca.is_some())
+    }
+
+    /// Return request-scoped capabilities after matching opaque admissions to the exact query,
+    /// trusted calendar version, and verified principal rights-profile digest.
+    #[must_use]
+    pub fn source_capabilities_for_request(
+        &self,
+        request: &BarsRequestV1,
+        as_of: &ProtoTimestampV2,
+        calendar: &TrustedCalendarSnapshot,
+        rights_profile_sha256: &str,
+        now_unix_seconds: u64,
+    ) -> Vec<SourceCapability> {
+        admission::source_capabilities_for_request(
+            request,
+            as_of,
+            calendar,
+            rights_profile_sha256,
+            now_unix_seconds,
+            self.source_capabilities(),
+            &self.futu_admissions,
+        )
     }
 
     /// Read the pinned snapshot time from the opaque cursor, or return the caller's current time
@@ -100,6 +141,24 @@ impl MarketBarsProviderRuntime {
         plan: &MarketBarsPlan,
     ) -> Result<ProviderPageSelection, ProviderQueryError> {
         cursor::select_page(request, plan)
+    }
+
+    /// Select a provider run and attach only the opaque admissions validated for its exact plan.
+    pub fn select_page_for_request(
+        &self,
+        request: &BarsRequestV1,
+        plan: &MarketBarsPlan,
+        rights_profile_sha256: &str,
+        now_unix_seconds: u64,
+    ) -> Result<ProviderPageSelection, ProviderQueryError> {
+        let admissions = admission::validate_plan_admissions(
+            request,
+            plan,
+            rights_profile_sha256,
+            &self.futu_admissions,
+            now_unix_seconds,
+        )?;
+        cursor::select_page_with_admissions(request, plan, admissions, now_unix_seconds)
     }
 
     /// Fetch one provider page and retain source-observation evidence for the cache writer.
@@ -122,7 +181,10 @@ impl MarketBarsProviderRuntime {
                     .ok_or(ProviderQueryError::MissingCredentials)?;
                 alpaca::fetch_page(client, plan, group, selection, &context).await
             }
-            PlannedSource::Futu => self.futu.fetch_page(plan, group, selection, &context).await,
+            PlannedSource::Futu => {
+                selection.validate_futu_admission(plan, admission::now_unix_seconds()?)?;
+                self.futu.fetch_page(plan, group, selection, &context).await
+            }
             PlannedSource::YFinanceDailyResearch => {
                 Err(ProviderQueryError::AdjustmentSemanticsUnverified)
             }
