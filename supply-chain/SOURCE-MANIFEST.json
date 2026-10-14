@@ -2397,11 +2397,15 @@
       },
       {
         "path": "src/archive/reconciliation/tests.rs",
-        "sha256": "1232867deb9b449311f2e49424ba4cf9976b8c5de9520e13d6b2bd8d94b49308"
+        "sha256": "ad48adcfbdb2d704d3e0c0ef29ac3f4f14c5712fef4f897109fc3bfafa6fcf23"
       },
       {
         "path": "src/archive/reconciliation/transaction_tests.rs",
         "sha256": "49a365982d3c26fb5315314c47476c3c996dfa8d3b7dde8d2e3758f5ce759b09"
+      },
+      {
+        "path": "src/archive/reconciliation/version_store_tests.rs",
+        "sha256": "d435aab6dede6fd2cdafd72e0279bca8db7716f7323818a9f39c34a0e2033b3e"
       },
       {
         "path": "src/archive/tests.rs",
@@ -2676,7 +2680,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "27e5be8c7987586a26cb7e982254e94ebbb0764f6d995365d38b79685b167b69"
+    "sha256": "c81b5ffa5eb3574a7bf5412125eed6397e3da4dbe534dd5a0ef051101a170bbb"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
