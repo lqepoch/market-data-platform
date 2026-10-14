@@ -6,11 +6,11 @@ use super::logical_shards::{
     prepare_logical_root, read_logical_current_from_envelope, write_logical_root,
 };
 use super::transaction_format::{
-    CachePointerTransactionEnvelopeV1, CachePointerTransactionMirrorV1, CachePointerTransactionV1,
+    CachePointerTransactionEnvelope, CachePointerTransactionMirror, CachePointerTransactionPayload,
     MAX_MIRROR_BYTES, MAX_TRANSACTION_BYTES, MIRROR_FILE, TRANSACTION_FILE, TRANSACTION_MODE_MAGIC,
     current_hash, current_manifest_bytes, ensure_transaction_mode, make_mirror, path_exists,
     read_current_payload, read_current_payload_hash, read_mirror, read_physical_logical_root,
-    root_envelope_hash, transaction_hash, transaction_id, transaction_mode_exists,
+    root_envelope_hash, transaction_hash, transaction_id_from_payload, transaction_mode_exists,
     validate_transaction, write_mirror,
 };
 use super::{
@@ -143,18 +143,9 @@ impl CacheVersionStoreV1 {
             .as_ref()
             .map(|head| head.payload_sha256.clone());
         let initial_base_bytes = if previous_head.is_none() {
-            let nonce = fresh_temp_component()?;
-            let transaction_id = transaction_id(
-                &logical_identity_fingerprint,
-                &source_key_fingerprint,
-                previous_source_current.as_ref(),
-                previous_logical_root.as_ref(),
-                now_unix_seconds,
-                &nonce,
-            )?;
-            let payload = CachePointerTransactionV1 {
-                format_version: 1,
-                transaction_id,
+            let mut payload = CachePointerTransactionPayload {
+                format_version: 2,
+                transaction_id: String::new(),
                 logical_identity_fingerprint_sha256: logical_identity_fingerprint.clone(),
                 source_key: key.clone(),
                 source_key_fingerprint_sha256: source_key_fingerprint.clone(),
@@ -163,11 +154,12 @@ impl CacheVersionStoreV1 {
                 previous_logical_root: previous_logical_root.clone(),
                 logical_root: previous_logical_root.clone(),
                 committed_at_unix_seconds: now_unix_seconds,
-                transaction_nonce: nonce,
+                legacy_operation_suffix: None,
                 previous_transaction_sha256: None,
                 recovery_replaced_damaged_source_manifest,
                 initial_base: true,
             };
+            payload.transaction_id = transaction_id_from_payload(&payload)?;
             let (base, bytes) =
                 encode_transaction(payload, &identity, &logical_identity_fingerprint)?;
             previous_transaction_sha256 = Some(base.payload_sha256);
@@ -176,18 +168,9 @@ impl CacheVersionStoreV1 {
             None
         };
 
-        let nonce = fresh_temp_component()?;
-        let transaction_id = transaction_id(
-            &logical_identity_fingerprint,
-            &source_key_fingerprint,
-            source_current,
-            logical_root.as_ref(),
-            now_unix_seconds,
-            &nonce,
-        )?;
-        let payload = CachePointerTransactionV1 {
-            format_version: 1,
-            transaction_id,
+        let mut payload = CachePointerTransactionPayload {
+            format_version: 2,
+            transaction_id: String::new(),
             logical_identity_fingerprint_sha256: logical_identity_fingerprint.clone(),
             source_key: key.clone(),
             source_key_fingerprint_sha256: source_key_fingerprint.clone(),
@@ -196,11 +179,12 @@ impl CacheVersionStoreV1 {
             previous_logical_root,
             logical_root,
             committed_at_unix_seconds: now_unix_seconds,
-            transaction_nonce: nonce,
+            legacy_operation_suffix: None,
             previous_transaction_sha256,
             recovery_replaced_damaged_source_manifest,
             initial_base: false,
         };
+        payload.transaction_id = transaction_id_from_payload(&payload)?;
         let (envelope, transaction_bytes) =
             encode_transaction(payload, &identity, &logical_identity_fingerprint)?;
         self.check_transaction_budget(
@@ -333,7 +317,7 @@ impl CacheVersionStoreV1 {
         &self,
         identity: &CacheLogicalIdentityV1,
         identity_fingerprint: &str,
-    ) -> Result<Option<CachePointerTransactionEnvelopeV1>> {
+    ) -> Result<Option<CachePointerTransactionEnvelope>> {
         identity.validate()?;
         if identity.fingerprint()? != identity_fingerprint {
             return Err(CacheReconciliationError::UnknownOutcome);
@@ -347,7 +331,7 @@ impl CacheVersionStoreV1 {
             }
             return Ok(None);
         };
-        let envelope: CachePointerTransactionEnvelopeV1 =
+        let envelope: CachePointerTransactionEnvelope =
             serde_json::from_slice(&bytes).map_err(|_| CacheReconciliationError::UnknownOutcome)?;
         let expected_hash = transaction_hash(&envelope.payload)
             .map_err(|_| CacheReconciliationError::UnknownOutcome)?;
@@ -379,7 +363,7 @@ impl CacheVersionStoreV1 {
 
     fn materialize_pointer_transaction(
         &self,
-        envelope: &CachePointerTransactionEnvelopeV1,
+        envelope: &CachePointerTransactionEnvelope,
     ) -> Result<()> {
         let payload = &envelope.payload;
         let identity = CacheLogicalIdentityV1::from_key(&payload.source_key)?;
@@ -453,7 +437,7 @@ impl CacheVersionStoreV1 {
 
     fn ensure_transaction_materialized(
         &self,
-        envelope: &CachePointerTransactionEnvelopeV1,
+        envelope: &CachePointerTransactionEnvelope,
     ) -> Result<()> {
         if self.transaction_mirrors_are_sealed(envelope)? {
             return Ok(());
@@ -465,7 +449,7 @@ impl CacheVersionStoreV1 {
 
     fn transaction_mirrors_are_sealed(
         &self,
-        envelope: &CachePointerTransactionEnvelopeV1,
+        envelope: &CachePointerTransactionEnvelope,
     ) -> Result<bool> {
         let payload = &envelope.payload;
         let identity = CacheLogicalIdentityV1::from_key(&payload.source_key)?;
@@ -530,7 +514,7 @@ impl CacheVersionStoreV1 {
         &self,
         key_fingerprint: &str,
         identity_fingerprint: &str,
-    ) -> Result<CachePointerTransactionMirrorV1> {
+    ) -> Result<CachePointerTransactionMirror> {
         let key_dir = self.key_dir(key_fingerprint)?;
         let mirror = read_mirror(&key_dir)?;
         if !mirror.sealed
@@ -606,7 +590,7 @@ impl CacheVersionStoreV1 {
     fn check_transaction_budget(
         &self,
         next: &[u8],
-        envelope: &CachePointerTransactionEnvelopeV1,
+        envelope: &CachePointerTransactionEnvelope,
         prepared_logical: Option<&PreparedLogicalRootV2>,
         initial_base: Option<&[u8]>,
     ) -> Result<()> {
@@ -637,12 +621,12 @@ impl CacheVersionStoreV1 {
 
     fn check_materialization_budget(
         &self,
-        envelope: &CachePointerTransactionEnvelopeV1,
+        envelope: &CachePointerTransactionEnvelope,
     ) -> Result<()> {
         self.check_additional_budget(self.materialization_reserve(envelope)?)
     }
 
-    fn materialization_reserve(&self, envelope: &CachePointerTransactionEnvelopeV1) -> Result<u64> {
+    fn materialization_reserve(&self, envelope: &CachePointerTransactionEnvelope) -> Result<u64> {
         let source_current_bytes = envelope
             .payload
             .source_current
@@ -716,12 +700,15 @@ impl CacheVersionStoreV1 {
 }
 
 fn encode_transaction(
-    payload: CachePointerTransactionV1,
+    payload: CachePointerTransactionPayload,
     identity: &CacheLogicalIdentityV1,
     identity_fingerprint: &str,
-) -> Result<(CachePointerTransactionEnvelopeV1, Vec<u8>)> {
+) -> Result<(CachePointerTransactionEnvelope, Vec<u8>)> {
+    if payload.format_version != 2 || payload.legacy_operation_suffix.is_some() {
+        return Err(CacheReconciliationError::InvalidInput);
+    }
     validate_transaction(&payload, identity, identity_fingerprint)?;
-    let envelope = CachePointerTransactionEnvelopeV1 {
+    let envelope = CachePointerTransactionEnvelope {
         payload_sha256: transaction_hash(&payload)?,
         payload,
     };

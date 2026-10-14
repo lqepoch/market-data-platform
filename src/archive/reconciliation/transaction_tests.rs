@@ -102,6 +102,12 @@ fn synthetic_first_transaction_after_marker_reads_base_and_is_retryable() {
     let transaction_path = logical_dir.join("transaction.json");
     assert!(transaction_path.exists());
     let transaction_bytes = fs::read(&transaction_path).unwrap();
+    let persisted_head: serde_json::Value = serde_json::from_slice(&transaction_bytes).unwrap();
+    assert_eq!(
+        persisted_head["payload"]["format_version"].as_u64(),
+        Some(2)
+    );
+    assert!(persisted_head["payload"].get("transaction_nonce").is_none());
     let marker_path = logical_dir.join(".transaction-mode");
     let marker_bytes = fs::read(&marker_path).unwrap();
     let reopened = CacheVersionStoreV1::new(cache_root, CacheLimitsV1::default()).unwrap();
