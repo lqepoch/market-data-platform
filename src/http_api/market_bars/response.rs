@@ -253,23 +253,7 @@ pub(super) fn response_for_provider_failure(
         return response_without_provider(request, plan, cache_status);
     };
     let group = selection.provider_group();
-    let reason = match error {
-        crate::market_query::providers::ProviderQueryError::UnsupportedAdjustment
-        | crate::market_query::providers::ProviderQueryError::AdjustmentSemanticsUnverified => {
-            CoverageGapReasonV1::UnsupportedResolution
-        }
-        crate::market_query::providers::ProviderQueryError::Unauthorized
-        | crate::market_query::providers::ProviderQueryError::Forbidden => {
-            CoverageGapReasonV1::EntitlementLimited
-        }
-        crate::market_query::providers::ProviderQueryError::MalformedResponse
-        | crate::market_query::providers::ProviderQueryError::ResponseTooLarge
-        | crate::market_query::providers::ProviderQueryError::PartialPageLimit
-        | crate::market_query::providers::ProviderQueryError::InvalidCorePage => {
-            CoverageGapReasonV1::ValidationConflict
-        }
-        _ => CoverageGapReasonV1::ProviderUnavailable,
-    };
+    let reason = provider_failure_gap_reason(&error);
     let mut gaps = plan.gaps.clone();
     for slice in &group.slices_recent_to_old {
         gaps.push(BarCoverageGapV1 {
@@ -289,6 +273,27 @@ pub(super) fn response_for_provider_failure(
         response.coverage_status = BarsCoverageStatusV1::Partial;
     }
     Ok(response)
+}
+
+pub(super) fn provider_failure_gap_reason(
+    error: &crate::market_query::providers::ProviderQueryError,
+) -> CoverageGapReasonV1 {
+    use crate::market_query::providers::ProviderQueryError as ProviderError;
+    match error {
+        // Core V1 has no adjustment-specific gap enum. Unknown is the honest coverage reason;
+        // these failures must not be described as unsupported resolution.
+        ProviderError::UnsupportedAdjustment | ProviderError::AdjustmentSemanticsUnverified => {
+            CoverageGapReasonV1::Unknown
+        }
+        ProviderError::Unauthorized | ProviderError::Forbidden => {
+            CoverageGapReasonV1::EntitlementLimited
+        }
+        ProviderError::MalformedResponse
+        | ProviderError::ResponseTooLarge
+        | ProviderError::PartialPageLimit
+        | ProviderError::InvalidCorePage => CoverageGapReasonV1::ValidationConflict,
+        _ => CoverageGapReasonV1::ProviderUnavailable,
+    }
 }
 
 fn response_without_provider_with_gaps(

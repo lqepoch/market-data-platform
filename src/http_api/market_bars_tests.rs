@@ -198,6 +198,30 @@ fn cache_rights_profile_hash_partitions_operator_profiles_and_verified_principal
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     );
+
+    let unprofiled_terminal_hash = hash_cache_rights_profile("", terminal.principal_scope_sha256());
+    let unprofiled_research_hash = hash_cache_rights_profile("", research.principal_scope_sha256());
+    assert_ne!(unprofiled_terminal_hash, unprofiled_research_hash);
+    assert_ne!(unprofiled_terminal_hash, terminal.principal_scope_sha256());
+}
+
+#[test]
+fn unknown_adjustment_semantics_are_not_mislabeled_as_resolution_gaps() {
+    use crate::market_query::providers::ProviderQueryError;
+
+    for error in [
+        ProviderQueryError::UnsupportedAdjustment,
+        ProviderQueryError::AdjustmentSemanticsUnverified,
+    ] {
+        assert_eq!(
+            super::response::provider_failure_gap_reason(&error),
+            CoverageGapReasonV1::Unknown
+        );
+        assert_ne!(
+            super::response::provider_failure_gap_reason(&error),
+            CoverageGapReasonV1::UnsupportedResolution
+        );
+    }
 }
 
 #[test]
