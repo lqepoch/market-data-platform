@@ -4,11 +4,11 @@ use market_contracts::EntitlementState;
 use sha2::Digest;
 
 use super::authority::{
-    AdmissionVerifyErrorV1, ProviderAdmissionClaimsV1, ProviderAdmissionDatasetBindingV1,
-    ProviderAdmissionEvidenceV1, ProviderAdmissionReceiptV1, ProviderPhaseSliceV1,
-    ReconciliationPolicyV1, TrustedProviderAdmissionVerifierV1,
-    UnavailableProviderAdmissionVerifierV1, signed_payload_for_test, verify_provider_admission_v1,
+    ProviderAdmissionClaimsV1, ProviderAdmissionDatasetBindingV1, ProviderAdmissionEvidenceV1,
+    ProviderAdmissionReceiptV1, ProviderPhaseSliceV1, ReconciliationPolicyV1,
+    TrustedProviderAdmissionVerifierV1, signed_payload_for_test, verify_provider_admission_v1,
 };
+use super::authority_types::{AdmissionVerifyErrorV1, UnavailableProviderAdmissionVerifierV1};
 use super::logical_index::*;
 use super::*;
 

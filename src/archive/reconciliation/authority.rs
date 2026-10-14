@@ -15,10 +15,9 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 pub(crate) use super::authority_types::{
-    AdmissionVerifyErrorV1, ProviderAdmissionClaimsV1, ProviderAdmissionDatasetBindingV1,
-    ProviderAdmissionEvidenceV1, ProviderAdmissionReceiptV1, ProviderPhaseSliceV1,
-    ReconciliationPolicyV1, TrustedProviderAdmissionVerifierV1,
-    UnavailableProviderAdmissionVerifierV1,
+    ProviderAdmissionClaimsV1, ProviderAdmissionDatasetBindingV1, ProviderAdmissionEvidenceV1,
+    ProviderAdmissionReceiptV1, ProviderPhaseSliceV1, ReconciliationPolicyV1,
+    TrustedProviderAdmissionVerifierV1,
 };
 use super::{
     CacheKeyV1, CacheQuerySourceScopeV1, CacheReconciliationError, Result,

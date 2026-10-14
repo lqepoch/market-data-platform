@@ -24,7 +24,6 @@ pub(crate) mod authority;
 mod authority_types;
 pub(crate) mod logical_index;
 mod store;
-use authority::ProviderAdmissionDatasetBindingV1;
 #[allow(unused_imports)] // The frozen HTTP adapter consumes these crate-private store APIs.
 pub(crate) use store::{
     CacheAuthorityV1, CacheBarsResponsesInputV1, CacheCurrentOperationV1, CacheCurrentV1,
