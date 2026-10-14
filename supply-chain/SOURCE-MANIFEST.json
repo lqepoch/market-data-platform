@@ -1,7 +1,7 @@
 {
   "artifacts": {
-    "supply-chain/NOTICE.txt": "07c1e61cf9f3207113fe8fdeffb7675abd86d507aba02c5d105e8174330fe21b",
-    "supply-chain/market-data-platform.cdx.json": "993c58b5be9a26c2941a1f98d2f45e2c9a3cdb5893f6a5faa92fcd5d9c270176"
+    "supply-chain/NOTICE.txt": "47f8b86f8b8ef85f255d1b69cea80f43e9f780491fc77c6b7bacd050509c05ef",
+    "supply-chain/market-data-platform.cdx.json": "4f867a6dee78c5e6268c877385ac9703ea9cc58a59ee813b541c0f07e5210d8b"
   },
   "component": {
     "license": "MIT",
@@ -34,11 +34,11 @@
   "inputs": [
     {
       "path": "Cargo.toml",
-      "sha256": "7dd6fcf9d59e975817622f6156928245409131505d285329ef2419936a50f115"
+      "sha256": "0d21b45959e26a6ddb73ce6eedb71cddf56decd7f9ba7811fe138b7cf4133eb1"
     },
     {
       "path": "Cargo.lock",
-      "sha256": "4acaa76cd86394fe11205d5406f83a4373efe375af05dcee1413566410b61702"
+      "sha256": "a739df93f7801c022c1fd8a1559fb0bff8f63cb611f532d5fe671ce70996897f"
     },
     {
       "path": "Dockerfile",
@@ -102,7 +102,7 @@
     },
     {
       "path": "docs/SUPPLY_CHAIN.md",
-      "sha256": "31086184a441a0991ab9a2f326d575fafaa9176b356ab1675e982b0b717fc4fb"
+      "sha256": "2613740c2bf434969c41a74a1c62dc3c23f55db7bd7699e31a85ce5113db33d6"
     },
     {
       "path": "docs/openapi-v1.yaml",
@@ -1396,11 +1396,11 @@
       "version": "1.1.5"
     },
     {
-      "checksum": "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634",
+      "checksum": "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf",
       "license": "Apache-2.0 OR ISC OR MIT",
       "name": "rustls",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "version": "0.23.45"
+      "version": "0.23.46"
     },
     {
       "checksum": "dab5152771c58876a2146916e53e35057e1a4dfa2b9df0f0305b07f611fdea4d",
@@ -2493,7 +2493,7 @@
       },
       {
         "path": "src/market_calendar/overnight_overlay_test_support.rs",
-        "sha256": "f0520f8cfb8540e34621fc0a1e07b84371e7f3101f041b593879432e7b2ea981"
+        "sha256": "19a5305aa25c0dbda19bd6c236e1a334ac790a606ef2e4827c8826d540b4131a"
       },
       {
         "path": "src/market_calendar/overnight_overlay_tests.rs",
@@ -2525,7 +2525,7 @@
       },
       {
         "path": "src/market_query/providers/cursor.rs",
-        "sha256": "e71ea942ca4b10257a0cd4cf62d818a491ddfc2342b09ce28927978bcde9d378"
+        "sha256": "95b86a9d798ba4d2284354601298fbf6f2c5acb11a07f423ccc5484f2fce106d"
       },
       {
         "path": "src/market_query/providers/error.rs",
@@ -2680,7 +2680,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "2958a5908b1911cc60d53ebd07d2223c37a922f184a4fb4730f85b869ae5870b"
+    "sha256": "2fadb26873768699ae029c46701644ebfd5408969ecd46b9a852274d5c0dc2bc"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
