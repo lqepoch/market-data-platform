@@ -583,7 +583,7 @@ mod tests {
         let result = client
             .market_bars(
                 |_| Ok::<u8, MarketDataError>(1),
-                move |_| async move {
+                move |_, _| async move {
                     provider_called_in_job.store(true, std::sync::atomic::Ordering::SeqCst);
                     Ok::<u8, &'static str>(1)
                 },
@@ -656,7 +656,7 @@ mod tests {
                         crate::error::StorageFailure::Cancelled,
                     ))
                 },
-                move |_, _| async move {
+                move |_: Arc<()>, _| async move {
                     provider_called_in_job.store(true, std::sync::atomic::Ordering::SeqCst);
                     Ok::<u8, &'static str>(1)
                 },
