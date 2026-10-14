@@ -100,6 +100,13 @@ impl LoadedMarketCalendar {
     /// injected verifier must use an independently reviewed issuer/key policy for the
     /// `market-calendar:overnight` role; reusing A04's generic signature primitive does not grant
     /// provider-rights issuers calendar-authority by itself.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Reserved for a reviewed trusted calendar issuer/loader; CLI startup remains cash-only until an independently reviewed issuer loader exists"
+        )
+    )]
     pub(crate) fn with_signed_overnight_overlay(
         mut self,
         artifact_bytes: &[u8],

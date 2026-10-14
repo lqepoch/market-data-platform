@@ -26,9 +26,11 @@ the verified research channel. No order operation is added.
   The calendar's own verification status remains independent of its content hash.
   Startup currently loads cash sessions only. There is no environment, HTTP, or
   file-based switch that can install overnight authority; a reviewed in-process
-  owner must supply a signed overlay and independent verifier. Without that
-  integration, the session endpoint reports `no_overlay` for instrument-scoped
-  requests and bars planning leaves OVER uncovered.
+  owner must supply a signed overlay and independent verifier. Until that issuer-loader
+  integration exists, OVER selection remains `BLOCKED_IMPLEMENTATION`: only the controlled
+  in-process hook exists, and the CLI cannot configure overnight calendar routing through these
+  settings. The session endpoint reports `no_overlay` for instrument-scoped requests and bars
+  planning leaves OVER uncovered.
 - Optional server-only `ALPACA_KEY` and `ALPACA_SECRET` must be supplied together.
   Configured historical SIP/BOATS calls are attempts, not evidence of Plus, an
   accepted credential, actual response feed or comprehensive historical coverage.
