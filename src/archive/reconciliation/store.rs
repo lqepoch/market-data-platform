@@ -703,13 +703,8 @@ impl CacheVersionStoreV1 {
             canonical_response,
             page_evidence,
         } = input;
-        let CachePublishContextV1 {
-            now_unix_seconds,
-            policy,
-            authority_basis,
-            admission,
-            phase_slices,
-        } = context;
+        let authority_basis = context.authority_basis;
+        let admission = context.admission;
         if (authority_basis == CacheAuthorityBasisV1::ProviderAdmissionVerified)
             != admission.is_some()
         {
@@ -834,7 +829,7 @@ impl CacheVersionStoreV1 {
                 return Err(CacheReconciliationError::AdmissionMismatch);
             }
         }
-        let coverage = snapshot.coverage;
+        let coverage = snapshot.coverage.clone();
         let (_, expected_canonical_rows) = coverage_row_counts(&coverage)?;
 
         let key_dir = self.key_dir(&key_fingerprint)?;
@@ -1043,7 +1038,7 @@ impl CacheVersionStoreV1 {
             &policy.same_feed,
             &policy.cross_provider,
         )?;
-        logical_conflict_sessions = batch_comparison.conflict_sessions;
+        logical_conflict_sessions = batch_comparison.conflict_sessions.clone();
         let cross_provider_conflict = !batch_comparison.cross_provider_conflict_sessions.is_empty();
         logical_comparisons.extend(batch_comparison.comparisons.values().cloned());
         let cross_provider_comparison = batch_comparison
