@@ -449,7 +449,7 @@ paths:
       security: [{mdpDelegation: []}]
       responses:
         '501':
-          description: UNSUPPORTED_PROVIDER_CAPABILITY; EqoBoard RSS adapters are not yet proxied
+          description: UNSUPPORTED_PROVIDER_CAPABILITY; EqoBoard RSS adapters are not yet proxied. NewsItemV1 is a reserved contract, not a populated response.
         '401':
           description: Missing or invalid market delegation
 components:
@@ -472,6 +472,28 @@ components:
         other and from Gateway keys. Each BFF signer receives only its matching MDP key; the MDP
         verifier receives both.
   schemas:
+    NewsItemV1:
+      description: >-
+        Reserved independent read-only news contract. The current /v1/news endpoint returns 501.
+        Publication and retrieval clocks describe news and never substitute for market event time.
+        Source ownership, content license and summary permissions require separate admission.
+      type: object
+      additionalProperties: false
+      required: [title, source, url, published_at, fetched_at, symbols, language, revision_id, dedup_id]
+      properties:
+        title: {type: string, maxLength: 2048}
+        source: {type: string, maxLength: 256}
+        url: {type: string, format: uri, maxLength: 4096}
+        published_at: {type: string, format: date-time}
+        fetched_at: {type: string, format: date-time}
+        symbols:
+          type: array
+          maxItems: 100
+          items: {type: string, maxLength: 32}
+        language: {type: string, maxLength: 32}
+        summary: {type: string, maxLength: 8192}
+        revision_id: {type: string, maxLength: 256}
+        dedup_id: {type: string, maxLength: 256}
     ErrorResponse:
       type: object
       required: [error]

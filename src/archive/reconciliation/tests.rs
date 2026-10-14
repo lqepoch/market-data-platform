@@ -3,8 +3,7 @@ use std::collections::BTreeMap;
 use market_contracts::EntitlementState;
 
 use super::authority::{
-    ProviderAdmissionEvidenceV1, ProviderPhaseSliceV1,
-    UnavailableProviderAdmissionVerifierV1,
+    ProviderAdmissionEvidenceV1, ProviderPhaseSliceV1, UnavailableProviderAdmissionVerifierV1,
 };
 use super::*;
 

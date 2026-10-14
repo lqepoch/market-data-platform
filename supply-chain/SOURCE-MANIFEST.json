@@ -106,7 +106,7 @@
     },
     {
       "path": "docs/openapi-v1.yaml",
-      "sha256": "4f308159674a92849100b6de7e2e1d8e13c1e40dde4ee3b78e895d3e57855aee"
+      "sha256": "aea6b1dc5821fa4d30dd6567f9c708841a20b074e18f3e4e7fdd1a01841b598c"
     },
     {
       "path": "docs/MARKET_QUERY_RUNTIME.md",
@@ -2357,7 +2357,7 @@
       },
       {
         "path": "src/archive/reconciliation.rs",
-        "sha256": "39eadc284a851bf198c70885d2a4662560e6ec2e836101c220cabe320e794eef"
+        "sha256": "c940b7fa2fd5191b3ed099231b1b80cc288b84a154274788a7e82d1345d7a3fb"
       },
       {
         "path": "src/archive/reconciliation/authority.rs",
@@ -2373,7 +2373,7 @@
       },
       {
         "path": "src/archive/reconciliation/tests.rs",
-        "sha256": "78f0a5cff9e3051b33cbe81d53aaaa18fa032e4cd7141f168d5deab45ae456dd"
+        "sha256": "7543121a8a0d68ec7db3db72abb94550b98ccc42e7804bc59728635741355d20"
       },
       {
         "path": "src/archive/tests.rs",
@@ -2453,19 +2453,19 @@
       },
       {
         "path": "src/market_query/planning.rs",
-        "sha256": "89661d2ddc1bbd1b117bd231fbd2bb9220435d590decbef8012678766e0bca05"
+        "sha256": "f3a0381c22cba8921873dd8b383ffec1fafe50df54be6feafa36f50e0172c11a"
       },
       {
         "path": "src/market_query/planning_tests.rs",
-        "sha256": "cc82774c2db7cd06358858829d80e32d81db3dc803b3f7d96697bc05d9ee15c2"
+        "sha256": "b1be36983ce0dabb269861ab06612f15da20453916a34e053dddea48603ce0b9"
       },
       {
         "path": "src/market_query/providers.rs",
-        "sha256": "a1970bf3ce650bb217416627314e4425130cf6a07ce059a480868c83039d80fe"
+        "sha256": "828f13d9645fbf751483cd935710af30cb8631702d4a7865c4ce720dc4fed279"
       },
       {
         "path": "src/market_query/providers/admission.rs",
-        "sha256": "dcc3ea21e9654fb1e1b1205d3da032e6ee1325edb81bf08cc01bc83f2ff1655c"
+        "sha256": "2b8565890d9c1591da9fa8941871b381572f66afb155675e598ba48cd179c16e"
       },
       {
         "path": "src/market_query/providers/alpaca.rs",
@@ -2473,7 +2473,7 @@
       },
       {
         "path": "src/market_query/providers/cursor.rs",
-        "sha256": "64d7564c8321ea9bc942685d3850529f89f4bbeeb592aafa3b3da45bd0f63639"
+        "sha256": "adfa6623d55c8b0b3e5f51f34cfc385109b056e66c4122bb82e3efffe0f27dc1"
       },
       {
         "path": "src/market_query/providers/error.rs",
@@ -2628,7 +2628,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "bd523514d45d4e3540d347c67f3647ac4e31a2d7e0892fc97212a4589b8b9f17"
+    "sha256": "1e4fe982ca79863c7dc468c6a2a101079f79732dfcd8fe3bc5179bb7c7c0ab59"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
