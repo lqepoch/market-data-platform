@@ -42,6 +42,7 @@ const QUERY_DEADLINE: Duration = Duration::from_secs(120);
 #[derive(Clone)]
 struct ServiceState {
     auth_configured: bool,
+    market_calendar: Option<crate::market_calendar::LoadedMarketCalendar>,
     query_client: QueryClient,
     reader: Arc<RemoteArchiveReader>,
     #[cfg(target_os = "linux")]
@@ -189,6 +190,7 @@ pub async fn serve_with_pair_read_config(
     );
     let state = Arc::new(ServiceState {
         auth_configured: auth.is_some(),
+        market_calendar: crate::market_calendar::LoadedMarketCalendar::from_environment()?,
         query_client,
         reader,
         #[cfg(target_os = "linux")]
@@ -276,6 +278,8 @@ async fn readiness(State(state): State<Arc<ServiceState>>) -> Response {
     let response = serde_json::json!({
         "status": if state.auth_configured { "ready" } else { "not_ready" },
         "market_ready": false,
+        "market_calendar_configured": state.market_calendar.is_some(),
+        "market_calendar_version": state.market_calendar.as_ref().map(|calendar| calendar.input_sha256.as_str()),
         "source_entitlement": "unverified",
     });
     let status = if state.auth_configured {

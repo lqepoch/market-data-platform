@@ -23,36 +23,37 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Install pinned Rust toolchain
-        run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
+        run: rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
 
       - name: Install pinned supply-chain tools
         run: |
-          cargo +1.98.1 install cargo-deny --version 0.20.2 --locked
-          cargo +1.98.1 install cargo-cyclonedx --version 0.5.9 --locked
+          cargo +1.99.0 install cargo-deny --version 0.20.2 --locked
+          cargo +1.99.0 install cargo-cyclonedx --version 0.5.9 --locked
 
       - name: Fetch locked public dependencies
-        run: cargo +1.98.1 fetch --locked
+        run: cargo +1.99.0 fetch --locked
 
       - name: Check formatting
-        run: cargo +1.98.1 fmt --all -- --check
+        run: cargo +1.99.0 fmt --all -- --check
 
       - name: Run Clippy
-        run: CARGO_BUILD_JOBS=2 cargo +1.98.1 clippy --offline --all-targets -- -D warnings
+        run: CARGO_BUILD_JOBS=2 cargo +1.99.0 clippy --offline --all-targets -- -D warnings
 
       - name: Lint opt-in offline fixture path
-        run: CARGO_BUILD_JOBS=2 cargo +1.98.1 clippy --offline --all-targets --features offline-capture-synthetic -- -D warnings
+        run: CARGO_BUILD_JOBS=2 cargo +1.99.0 clippy --offline --all-targets --features offline-capture-synthetic -- -D warnings
 
       - name: Run Rust tests
-        run: CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline
+        run: CARGO_BUILD_JOBS=2 cargo +1.99.0 test --offline
 
       - name: Run offline fixture CLI integration
-        run: CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline --features offline-capture-synthetic --test offline_capture_cli
+        run: CARGO_BUILD_JOBS=2 cargo +1.99.0 test --offline --features offline-capture-synthetic --test offline_capture_cli
 
       - name: Check dependency policy
-        run: cargo +1.98.1 deny --all-features check all
+        run: cargo +1.99.0 deny --all-features check all
 
       - name: Test supply-chain verifier
         run: python3 -m unittest discover -s tests -p 'test_supply_chain.py'

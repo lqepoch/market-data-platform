@@ -110,9 +110,9 @@ The nine-repository map is a [governance candidate in Draft PR #20](https://gith
   kill and reap its owned process group on timeout or parent exit (including descendants holding
   inherited pipes), and consume the shared background-worker permit. Fail closed on platforms where
   process-group termination is unsupported.
-- Run `cargo +1.98.1 fmt --all -- --check`, `CARGO_BUILD_JOBS=2 cargo +1.98.1 clippy --offline
-  --all-targets -- -D warnings`, and `CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline` for Rust
-  changes. Also run `CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline --features
+- Run `cargo +1.99.0 fmt --all -- --check`, `CARGO_BUILD_JOBS=2 cargo +1.99.0 clippy --offline
+  --all-targets -- -D warnings`, and `CARGO_BUILD_JOBS=2 cargo +1.99.0 test --offline` for Rust
+  changes. Also run `CARGO_BUILD_JOBS=2 cargo +1.99.0 test --offline --features
   offline-capture-synthetic --lib` for the feature-gated Pair HTTP route tests. Keep shared-schema
   golden tests and the synthetic CLI replay passing.
 - `scripts/container_smoke.sh` is an offline LocalTest-only container smoke. It requires an already
@@ -126,7 +126,7 @@ The nine-repository map is a [governance candidate in Draft PR #20](https://gith
   behavior, or validation boundary changes.
 - Supply-chain changes must keep `deny.toml`, `supply-chain/git-source-pins.json`, the committed
   CycloneDX SBOM, license inventory, and `SOURCE-MANIFEST.json` synchronized. Run
-  `cargo +1.98.1 deny --all-features check all`, `python3 -m unittest discover -s tests -p
+  `cargo +1.99.0 deny --all-features check all`, `python3 -m unittest discover -s tests -p
   'test_supply_chain.py'`, and `python3 scripts/supply_chain.py --check`; unknown licenses,
   advisories, sources, or git revisions fail closed.
 

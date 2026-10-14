@@ -26,7 +26,7 @@ diff in the same change.
 
 ## Generate and verify
 
-Use Rust 1.98.1 and cargo-deny 0.20.2. Install the SBOM generator as an isolated operator tool with
+Use Rust 1.99.0 and cargo-deny 0.20.2. Install the SBOM generator as an isolated operator tool with
 the pinned version and its published lockfile:
 
 ```sh
@@ -51,7 +51,7 @@ input require the same regeneration, even when the change is documentation-only.
 Run the following after changing code, dependencies, source pins, or supply-chain policy:
 
 ```sh
-cargo +1.98.1 deny --all-features check all
+cargo +1.99.0 deny --all-features check all
 python3 -m unittest discover -s tests -p 'test_supply_chain.py'
 python3 scripts/supply_chain.py --write
 python3 scripts/supply_chain.py --check

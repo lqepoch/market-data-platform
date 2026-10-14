@@ -69,30 +69,30 @@ and local documentation.
 
 ## Local commands
 
-Use Rust 1.98.1 from `rust-toolchain.toml`.
+Use Rust 1.99.0 from `rust-toolchain.toml`.
 The shared contracts and read-only Alpaca port/stream crates are pinned in `Cargo.toml` and
 `Cargo.lock` to one compatible dependency graph: `trading-core` revision
-`b2679e757576f8da7850cd4b5ea2958bc9a2354c` and merged `broker-connectors` revision
-`873337e3fafe64344dfb9ac7719fad54f157a9c0`. The broker revision pins its `domain` and
+`f793be47ab90ebff9f530c8b08f41db5e774e4e5` and frozen `broker-connectors` candidate
+`99e1d36f864d1e89e8cfba95651d29920e2f4c5a`. The broker revision pins its `domain` and
 `market-contracts` dependencies to that same `trading-core` commit.
 
 ```sh
-cargo +1.98.1 run --offline -- synthetic --output /tmp/mdp-demo
-cargo +1.98.1 run --offline --features offline-capture-synthetic -- capture-synthetic \
+cargo +1.99.0 run --offline -- synthetic --output /tmp/mdp-demo
+cargo +1.99.0 run --offline --features offline-capture-synthetic -- capture-synthetic \
   --output /tmp/mdp-alpaca-offline-fixture
 # Replace the placeholder with the exact chunk-<sha256>.receipt.json basename in archive-state/capture-pair-v2.
-cargo +1.98.1 run --offline -- verify-capture-pair-v2 \
+cargo +1.99.0 run --offline -- verify-capture-pair-v2 \
   --local-test-root /tmp/mdp-alpaca-offline-fixture/local-test-archive \
   --state-dir /tmp/mdp-alpaca-offline-fixture/archive-state \
   --staging-dir /tmp/mdp-alpaca-offline-fixture/staging \
   --receipt 'chunk-<sha256>.receipt.json'
-cargo +1.98.1 run --offline -- verify \
+cargo +1.99.0 run --offline -- verify \
   --parquet /tmp/mdp-demo/staging/synthetic-2026-10-08-four-bars-parquet-v3-events-v1.parquet \
   --schema market-events-v1
-cargo +1.98.1 run --offline -- query-bars \
+cargo +1.99.0 run --offline -- query-bars \
   --parquet /tmp/mdp-demo/staging/synthetic-2026-10-08-four-bars-parquet-v3-bars-1m-v1.parquet \
   --symbol QQQ --export-jsonl /tmp/mdp-bars.jsonl
-cargo +1.98.1 run --offline -- cleanup-staging \
+cargo +1.99.0 run --offline -- cleanup-staging \
   --state-dir /tmp/mdp-demo/state --staging-dir /tmp/mdp-demo/staging
 ```
 
@@ -142,20 +142,20 @@ returns `LockHeld`, and the lock remains after all per-run files are removed.
 For the cross-repository adapter fixture, use a separate immutable dataset identity:
 
 ```sh
-cargo +1.98.1 run --offline -- synthetic --full-session \
+cargo +1.99.0 run --offline -- synthetic --full-session \
   --output /tmp/mdp-full-four-minute-session-parquet-v3
-cargo +1.98.1 run --offline -- verify \
+cargo +1.99.0 run --offline -- verify \
   --parquet /tmp/mdp-full-four-minute-session-parquet-v3/staging/synthetic-2026-10-08-full-four-minute-session-parquet-v3-bars-1m-v1.parquet \
   --schema us-equity-trade-bar1m-v1
-cargo +1.98.1 run --offline -- synthetic --regular-session \
+cargo +1.99.0 run --offline -- synthetic --regular-session \
   --output /tmp/mdp-full-390-minute-session-parquet-v2
-cargo +1.98.1 run --offline -- verify \
+cargo +1.99.0 run --offline -- verify \
   --parquet /tmp/mdp-full-390-minute-session-parquet-v2/staging/synthetic-2026-10-08-full-390-minute-session-parquet-v2-bars-1m-v1.parquet \
   --schema us-equity-trade-bar1m-v1
-cargo +1.98.1 run --offline -- synthetic --regular-session \
+cargo +1.99.0 run --offline -- synthetic --regular-session \
   --session-date 2026-10-07 \
   --output /tmp/mdp-full-390-minute-session-parquet-v2-20261007
-cargo +1.98.1 run --offline -- verify \
+cargo +1.99.0 run --offline -- verify \
   --parquet /tmp/mdp-full-390-minute-session-parquet-v2-20261007/staging/synthetic-2026-10-07-full-390-minute-session-parquet-v2-bars-1m-v1.parquet \
   --schema us-equity-trade-bar1m-v1
 ```
@@ -187,7 +187,7 @@ local-test store. The JSONL schema is the flattened Rust/Serde projection from `
 uint64 values such as `generation` and `sequence` are canonical decimal strings.
 
 ```sh
-cargo +1.98.1 run --offline -- replay-jsonl \
+cargo +1.99.0 run --offline -- replay-jsonl \
   --input ./input.jsonl \
   --session-config ./session.json \
   --output ./run-output \
@@ -318,7 +318,7 @@ than the window end and no earlier than any event receive timestamp.
   SIP/OPRA production load, rclone transfer, Drive quota, or broker queue capacity.
 
 ```sh
-CARGO_BUILD_JOBS=2 cargo +1.98.1 test --release --offline --locked \
+CARGO_BUILD_JOBS=2 cargo +1.99.0 test --release --offline --locked \
   --features benchmark-snappy \
   parquet_store::tests::benchmark_100k_synthetic_trade_events -- --ignored --nocapture
 ```
@@ -450,9 +450,9 @@ before enabling external writes. References: [Drive API limits](https://develope
 ## Validation
 
 ```sh
-cargo +1.98.1 fmt --all -- --check
-CARGO_BUILD_JOBS=2 cargo +1.98.1 clippy --offline --all-targets -- -D warnings
-CARGO_BUILD_JOBS=2 cargo +1.98.1 test --offline
+cargo +1.99.0 fmt --all -- --check
+CARGO_BUILD_JOBS=2 cargo +1.99.0 clippy --offline --all-targets -- -D warnings
+CARGO_BUILD_JOBS=2 cargo +1.99.0 test --offline
 ```
 
 Dependency policy, the generated CycloneDX SBOM, license inventory, exact git source pins, and

@@ -30,7 +30,7 @@ pub(crate) struct BackgroundWorkerPermit;
 impl BackgroundWorkerPermit {
     pub(crate) fn acquire() -> Result<Self> {
         ACTIVE_BACKGROUND_WORKERS
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |active| {
                 (active < MAX_BACKGROUND_WORKERS).then_some(active + 1)
             })
             .map_err(|_| MarketDataError::WriterLimit)?;
