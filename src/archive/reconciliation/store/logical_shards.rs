@@ -160,11 +160,11 @@ pub(super) fn read_logical_current_from_envelope(
         return Err(CacheReconciliationError::UnknownOutcome);
     }
     let current = CacheLogicalCurrentV1 {
-        identity: envelope.payload.identity,
+        identity: envelope.payload.identity.clone(),
         generation: envelope.payload.generation,
         sessions,
         session_months,
-        shards: envelope.payload.shards,
+        shards: envelope.payload.shards.clone(),
         updated_at_unix_seconds: envelope.payload.updated_at_unix_seconds,
     };
     current.validate()?;
