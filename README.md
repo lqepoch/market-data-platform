@@ -523,3 +523,9 @@ cursors are authenticated and principal-bound; their dedicated signing-key lifec
 documented with the runtime configuration. An explicitly configured Futu Gateway port enables
 only provisional historical attempts for planner NEW/BUFFER slices; it does not claim realtime
 transport, entitlement, feed, or cache authority.
+
+The separate `GET /v1/research/yfinance/daily` endpoint is default-off and returns validated
+Yahoo bridge observations for research display without converting them to Bars V1 or asserting
+raw prices, calendar completeness, PIT availability, or execution authority. Its bounds, research
+principal requirement, newest-first cursor and rollback settings are documented in the same runtime
+guide.
