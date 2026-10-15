@@ -1128,8 +1128,7 @@ fn publish_cache_observation(
     // publisher revalidates the opaque witness chain and grants only its short same-process lease.
     if selected_alpaca_feed(selection.provider_group().source).is_some()
         && scope.entitlement == EntitlementState::Unknown
-    {
-        if !alpaca_query_access_publication_is_eligible(
+        && alpaca_query_access_publication_is_eligible(
             selection,
             prepared.cache_identity.as_ref(),
             scope,
@@ -1137,10 +1136,8 @@ fn publish_cache_observation(
             &cache_page,
             &evidence,
             &phase_slices,
-        ) || cancellation.is_cancelled()
-        {
-            return;
-        }
+        )
+    {
         match cache.publish_bars_responses_with_alpaca_query_access_cancellable(
             input(),
             now_unix_seconds,
