@@ -2461,7 +2461,7 @@
       },
       {
         "path": "src/http_api/market_bars/query.rs",
-        "sha256": "d696eadbb2968beefa8abfbf04f20d79ffea610d1022394b75b09e1dd4d35657"
+        "sha256": "c1dfd5d8fab589a5b2bcbdc9b615339a7ff81f4cdecc4ac71aae559ceb153eb5"
       },
       {
         "path": "src/http_api/market_bars/response.rs",
@@ -2712,7 +2712,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "520121b87ecfc4797f74303fc9982aafa5ba41cbaf9fa045eb20ef9b54d91d0b"
+    "sha256": "1a9f9f46432848bd4f630ab09e0ca69354c1da0c50a7c3e699b4118f01f4a7d6"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
