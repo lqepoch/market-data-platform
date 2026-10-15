@@ -205,15 +205,22 @@ pub(super) async fn fetch_page(
         fetched_at,
         continuation_cursor,
     )?;
-    ProviderPageFetch::new(
+    let page = ProviderPageFetch::new(
         response,
         Some(witness.typed_response_sha256().to_owned()),
         Some(response_observed_at),
         Some(1),
         Some(!has_provider_cursor),
         provider_cursor_cache_input,
-    )
-    .and_then(|page| page.with_alpaca_query_access(&witness, incoming_cursor_sha256.as_deref()))
+    )?;
+    if result.bars().is_empty() {
+        // A successful empty observation has no row-level feed fact and Broker witnesses require
+        // a non-empty decoded page. Preserve the observation for the caller, which bypasses cache
+        // publication for empty Alpaca pages.
+        Ok(page)
+    } else {
+        page.with_alpaca_query_access(&witness, incoming_cursor_sha256.as_deref())
+    }
 }
 
 fn validate_query_access_witness(

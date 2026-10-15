@@ -289,20 +289,25 @@ pub(super) async fn run_market_bars_query(
                         .ok_or(crate::MarketDataError::Provider(
                             crate::error::ProviderFailure::InvalidResponse,
                         ))?;
+                let page_cache_status = provider_page_cache_status(
+                    selection.provider_group().source,
+                    page.response.rows.len(),
+                    prepared.cache_status,
+                );
                 let raw_page = page.response.clone();
                 let cache_page = response_for_cache_page(
                     &finalize_request,
                     &prepared.plan,
                     selection,
                     raw_page.clone(),
-                    prepared.cache_status,
+                    page_cache_status,
                 )?;
                 let response = response_from_page(
                     &finalize_request,
                     &prepared.plan,
                     Some(selection),
                     page.response,
-                    prepared.cache_status,
+                    page_cache_status,
                 )?;
                 publish_cache_observation(
                     &finalize_runtime,
@@ -889,6 +894,104 @@ fn entitlement_state(value: BarsEntitlementStatusV1) -> EntitlementState {
     }
 }
 
+fn provider_page_cache_status(
+    source: crate::session_router::PlannedSource,
+    row_count: usize,
+    current: BarsCacheStatusV1,
+) -> BarsCacheStatusV1 {
+    if row_count == 0
+        && selected_alpaca_feed(source).is_some()
+        && current != BarsCacheStatusV1::Unavailable
+    {
+        BarsCacheStatusV1::Bypass
+    } else {
+        current
+    }
+}
+
+fn selected_alpaca_feed(source: crate::session_router::PlannedSource) -> Option<&'static str> {
+    match source {
+        crate::session_router::PlannedSource::Alpaca {
+            feed: crate::session_router::AlpacaFeed::Sip,
+        } => Some("sip"),
+        crate::session_router::PlannedSource::Alpaca {
+            feed: crate::session_router::AlpacaFeed::Boats,
+        } => Some("boats"),
+        crate::session_router::PlannedSource::Futu
+        | crate::session_router::PlannedSource::YFinanceDailyResearch => None,
+    }
+}
+
+fn alpaca_query_access_publication_is_eligible(
+    selection: &crate::market_query::providers::ProviderPageSelection,
+    identity: Option<&crate::market_query::providers::ProviderCacheIdentity>,
+    scope: &crate::archive::reconciliation::CacheQuerySourceScopeV1,
+    raw: &BarsResponseV1,
+    canonical: &BarsResponseV1,
+    evidence: &crate::archive::reconciliation::ProviderPageEvidenceV1,
+    phase_slices: &[crate::archive::reconciliation::authority::ProviderPhaseSliceV1],
+) -> bool {
+    let Some(expected_feed) = selected_alpaca_feed(selection.provider_group().source) else {
+        return false;
+    };
+    let Some(identity) = identity else {
+        return false;
+    };
+    let page_count = evidence.alpaca_query_access_pages.len();
+    let provenance_matches = |response: &BarsResponseV1| {
+        !response.source_provenance.is_empty()
+            && response.source_provenance.iter().all(|provenance| {
+                provenance.provider == "alpaca"
+                    && provenance.feed == expected_feed
+                    && provenance.entitlement_status == BarsEntitlementStatusV1::Unknown
+                    && provenance.numeric_encoding
+                        == market_contracts::NumericEncodingV1::DecimalToken
+            })
+    };
+
+    group_contains_only_old_verified_slices(selection.provider_group())
+        && !phase_slices.is_empty()
+        && (1..=crate::archive::reconciliation::alpaca_query_access::MAX_ALPACA_QUERY_ACCESS_PAGES)
+            .contains(&page_count)
+        && u32::try_from(page_count).ok() == evidence.pages_seen
+        && evidence.response_observed_at_utc.is_some()
+        && evidence
+            .source_observation_sha256
+            .as_deref()
+            .is_some_and(|digest| {
+                digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+        && evidence.truncated == raw.truncated
+        && evidence.truncated == canonical.truncated
+        && identity.provider == "alpaca"
+        && identity.feed == expected_feed
+        && identity.requested_feed.as_deref() == Some(expected_feed)
+        && identity.entitlement_status == BarsEntitlementStatusV1::Unknown
+        && identity.numeric_encoding == market_contracts::NumericEncodingV1::DecimalToken
+        && identity.effective_resolution == selection.provider_group().resolution
+        && identity.session_instance_ids == scope.session_instance_ids
+        && identity.market_calendar_version.as_deref() == scope.market_calendar_version.as_deref()
+        && identity.source_scope_id == scope.source_scope_id
+        && scope.provider == "alpaca"
+        && scope.feed == expected_feed
+        && scope.entitlement == EntitlementState::Unknown
+        && scope.numeric_encoding == market_contracts::NumericEncodingV1::DecimalToken
+        && scope.effective_resolution == selection.provider_group().resolution
+        && raw.provider == "alpaca"
+        && raw.feed == expected_feed
+        && raw.entitlement_status == BarsEntitlementStatusV1::Unknown
+        && canonical.provider == "alpaca"
+        && canonical.feed == expected_feed
+        && canonical.entitlement_status == BarsEntitlementStatusV1::Unknown
+        && !raw.rows.is_empty()
+        && !canonical.rows.is_empty()
+        && provenance_matches(raw)
+        && provenance_matches(canonical)
+}
+
 fn publish_cache_observation(
     runtime: &MarketBarsRuntime,
     prepared: &PreparedMarketBars,
@@ -910,6 +1013,10 @@ fn publish_cache_observation(
     let Some(selection) = prepared.selection.as_ref() else {
         return;
     };
+    if selected_alpaca_feed(selection.provider_group().source).is_some() && raw_page.rows.is_empty()
+    {
+        return;
+    }
     let phase_slices = provider_phase_slices(selection).unwrap_or_default();
     let fallback_policy =
         crate::archive::reconciliation::authority::ReconciliationPolicyV1::legacy_same_feed(
@@ -1014,6 +1121,43 @@ fn publish_cache_observation(
                 }
             }
         }
+    }
+
+    // This local query-access basis is independent of the signed admission path above. It records
+    // only a real, non-empty SDK page for the selected feed; entitlement remains Unknown. The A04
+    // publisher revalidates the opaque witness chain and grants only its short same-process lease.
+    if selected_alpaca_feed(selection.provider_group().source).is_some()
+        && scope.entitlement == EntitlementState::Unknown
+    {
+        if !alpaca_query_access_publication_is_eligible(
+            selection,
+            prepared.cache_identity.as_ref(),
+            scope,
+            &raw_page,
+            &cache_page,
+            &evidence,
+            &phase_slices,
+        ) || cancellation.is_cancelled()
+        {
+            return;
+        }
+        match cache.publish_bars_responses_with_alpaca_query_access_cancellable(
+            input(),
+            now_unix_seconds,
+            policy,
+            cancellation,
+        ) {
+            Ok(result) => consume_cache_invalidation(
+                runtime,
+                &result,
+                &scope.rights_profile_sha256,
+                now_unix_seconds,
+            ),
+            Err(_) => {
+                tracing::warn!("market-bars Alpaca query-access cache publication was unavailable")
+            }
+        }
+        return;
     }
 
     // Keep SDK-normalized provider rows in the raw Parquet view and the trusted-calendar mapping
@@ -1264,7 +1408,7 @@ mod authority_eligibility_tests {
 
     use super::{
         group_contains_only_old_verified_slices, logical_cache_mode_allows_alpaca,
-        logical_cache_source_matches,
+        logical_cache_source_matches, provider_page_cache_status,
     };
 
     fn slice(rank: SessionRank) -> PlannedSlice {
@@ -1387,5 +1531,44 @@ mod authority_eligibility_tests {
             "unknown",
             EntitlementState::Unknown,
         ));
+        assert!(!logical_cache_source_matches(
+            "boats",
+            "alpaca",
+            "boats",
+            EntitlementState::Unknown,
+        ));
+    }
+
+    #[test]
+    fn empty_alpaca_pages_bypass_cache_without_changing_other_routes() {
+        use market_contracts::BarsCacheStatusV1;
+
+        let sip = PlannedSource::Alpaca {
+            feed: AlpacaFeed::Sip,
+        };
+        let boats = PlannedSource::Alpaca {
+            feed: AlpacaFeed::Boats,
+        };
+
+        assert_eq!(
+            provider_page_cache_status(sip, 0, BarsCacheStatusV1::Miss),
+            BarsCacheStatusV1::Bypass
+        );
+        assert_eq!(
+            provider_page_cache_status(boats, 0, BarsCacheStatusV1::Miss),
+            BarsCacheStatusV1::Bypass
+        );
+        assert_eq!(
+            provider_page_cache_status(sip, 1, BarsCacheStatusV1::Miss),
+            BarsCacheStatusV1::Miss
+        );
+        assert_eq!(
+            provider_page_cache_status(sip, 0, BarsCacheStatusV1::Unavailable),
+            BarsCacheStatusV1::Unavailable
+        );
+        assert_eq!(
+            provider_page_cache_status(PlannedSource::Futu, 0, BarsCacheStatusV1::Miss),
+            BarsCacheStatusV1::Miss
+        );
     }
 }

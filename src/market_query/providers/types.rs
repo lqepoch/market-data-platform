@@ -102,6 +102,7 @@ impl ProviderPageFetch {
         let evidence = AlpacaStockBarsQueryWitnessV1::from_broker_witness(
             witness,
             expected_request_cursor_sha256,
+            &self.response.rows,
         )
         .map_err(|_| ProviderQueryError::MalformedResponse)?;
         self.evidence.alpaca_query_access_pages.push(evidence);

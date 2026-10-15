@@ -749,7 +749,7 @@ fn cache_identity(
             };
             (
                 "alpaca",
-                "unknown",
+                feed_label,
                 format!("alpaca-rest-stock-bars-{feed_label}-request-v1"),
                 Some(feed_label.to_owned()),
                 NumericEncodingV1::DecimalToken,
@@ -1184,6 +1184,21 @@ mod tests {
         (request, plan)
     }
 
+    fn alpaca_cache_identity(
+        plan: &MarketBarsPlan,
+        feed: AlpacaFeed,
+    ) -> super::super::types::ProviderCacheIdentity {
+        let source = PlannedSource::Alpaca { feed };
+        let mut group = plan.provider_groups[0].clone();
+        group.source = source;
+        for slice in &mut group.slices_recent_to_old {
+            slice.source = Some(source);
+        }
+        super::cache_identity(plan, &group)
+            .expect("valid selected Alpaca cache identity")
+            .0
+    }
+
     fn mutate_envelope(token: &str, update: impl FnOnce(&mut Value)) -> String {
         let encoded = token.strip_prefix(super::CURSOR_PREFIX).expect("v2 cursor");
         let (body_hex, tag_hex) = encoded.split_once('.').expect("body and tag");
@@ -1225,6 +1240,29 @@ mod tests {
         next_request.cursor = Some(next_cursor);
         let next_page = select_page(&next_request, &first_plan).expect("continued page selection");
         assert_ne!(first.cache_key(), next_page.cache_key());
+    }
+
+    #[test]
+    fn alpaca_cache_identity_uses_the_selected_feed_partition() {
+        let (_, plan) = fixture("2026-10-14T19:00:00Z");
+        let sip = alpaca_cache_identity(&plan, AlpacaFeed::Sip);
+        let boats = alpaca_cache_identity(&plan, AlpacaFeed::Boats);
+
+        assert_eq!(sip.provider, "alpaca");
+        assert_eq!(sip.feed, "sip");
+        assert_eq!(sip.requested_feed.as_deref(), Some("sip"));
+        assert_eq!(
+            sip.entitlement_status,
+            market_contracts::BarsEntitlementStatusV1::Unknown
+        );
+        assert_eq!(boats.provider, "alpaca");
+        assert_eq!(boats.feed, "boats");
+        assert_eq!(boats.requested_feed.as_deref(), Some("boats"));
+        assert_eq!(
+            boats.entitlement_status,
+            market_contracts::BarsEntitlementStatusV1::Unknown
+        );
+        assert_ne!(sip.source_scope_id, boats.source_scope_id);
     }
 
     #[test]
