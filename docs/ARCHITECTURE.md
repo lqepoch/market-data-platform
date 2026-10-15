@@ -303,6 +303,15 @@ hand-maintained OpenAPI description is `docs/openapi-v1.yaml`, and schema golden
 authority. LocalTest service instances accept only `diagnostic` on the bars route and preserve
 `synthetic/synthetic/unknown` provenance.
 
+The separate opt-in `GET /v1/market/bars` route uses a server-owned provider attempt policy over the
+pinned calendar. An explicit `MDP_FUTU_GATEWAY_PORT` permits only provisional historical Futu
+attempts for NEW/BUFFER slices; the adapter is a bounded history endpoint and advertises
+`realtime=false`. The request's provider mode cannot widen this policy. Attempts retain unknown
+entitlement and actual feed, and A04 admission plus conflict checks remain required before trusted
+cache promotion. Missing Futu configuration remains a capability gap; provider authentication,
+permission, and transport failures keep their existing error behavior. Calendar instances and
+archive authority are independent of this attempt policy.
+
 On Linux only, an operator may mount
 `GET /v2/local-test/capture-pairs/{receipt_sha256}/verify` by supplying all three explicit startup
 roots: `--local-test-root`, `--pair-state-dir`, and `--pair-staging-dir`. This route validates one

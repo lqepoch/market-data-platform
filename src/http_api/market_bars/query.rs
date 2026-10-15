@@ -98,35 +98,25 @@ pub(super) async fn run_market_bars_query(
             &prepare_request.symbol,
             requested_window,
         );
-        // Request-scoped admissions are considered only when an operator profile is configured
-        // and bound to this verified principal. Without one, use the runtime's closed generic
-        // capabilities, which advertise configured Alpaca attempts but no Futu admission.
+        // Route attempts are selected from the server-owned policy and exact trusted calendar,
+        // independently of the optional cache profile. An A04 admission can still affect cache
+        // authority later, but absence of one does not prevent a configured provisional attempt.
         #[cfg(test)]
         let capabilities = if let Some(source) = prepare_runtime.synthetic_page_source.as_ref() {
             source.source_capabilities()
-        } else if cache_profile.is_some() {
+        } else {
             prepare_runtime.provider.source_capabilities_for_request(
                 &prepare_request,
                 &as_of,
                 calendar_selection.snapshot.as_ref(),
-                &rights_profile_sha256,
-                now_unix_seconds,
             )
-        } else {
-            prepare_runtime.provider.source_capabilities()
         };
         #[cfg(not(test))]
-        let capabilities = if cache_profile.is_some() {
-            prepare_runtime.provider.source_capabilities_for_request(
-                &prepare_request,
-                &as_of,
-                calendar_selection.snapshot.as_ref(),
-                &rights_profile_sha256,
-                now_unix_seconds,
-            )
-        } else {
-            prepare_runtime.provider.source_capabilities()
-        };
+        let capabilities = prepare_runtime.provider.source_capabilities_for_request(
+            &prepare_request,
+            &as_of,
+            calendar_selection.snapshot.as_ref(),
+        );
         let capabilities = filter_overnight_capabilities(capabilities, &calendar_selection);
         let plan = crate::market_query::planning::plan_market_bars(
             &prepare_request,

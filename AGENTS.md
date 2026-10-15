@@ -53,8 +53,10 @@ The nine-repository map is a [governance candidate in Draft PR #20](https://gith
   version receipts, verify both through the existing bounded Linux worker, and atomically update
   the local current manifest only after readback. Incomplete, truncated, gapped, unexhausted, Futu,
   or binary-float input remains provisional; historical bars may omit stream sequence evidence,
-  while any absent page/exhaustion fact prevents a complete cache claim. Production authority stays
-  closed until a trusted provider-admission proof is wired; same-feed Alpaca conflict rejects
+  while any absent page/exhaustion fact prevents a complete cache claim. A server-owned provider
+  route policy may permit a configured adapter attempt, but never grants feed rights, realtime
+  status, completeness, or cache/archive authority. Production authority stays closed until a trusted
+  provider-admission proof is wired; same-feed Alpaca conflict rejects
   replacement and preserves the old verified current version. Rollback and recovery require an
   explicitly selected verified version. Do not wire this store to remote archive writers or existing QQQ Drive / Stock
   S3OSS writers. Non-Linux must return `Unsupported` without inline Parquet decode. See

@@ -35,9 +35,17 @@ the verified research channel. No order operation is added.
   Configured historical SIP/BOATS calls are attempts, not evidence of Plus, an
   accepted credential, actual response feed or comprehensive historical coverage.
   Derived `overnight` is not treated as raw BOATS.
-- `MDP_FUTU_GATEWAY_PORT` defaults to 8080. The adapter uses only the fixed
-  `http://127.0.0.1:<port>/api/v1/stocks/bars` path. Futu capability remains
-  ineligible until independently verified provider admission is available.
+- Set `MDP_FUTU_GATEWAY_PORT` to a nonzero port to configure the Futu history adapter; when absent,
+  no Futu attempt capability is advertised. The adapter uses only the fixed
+  `http://127.0.0.1:<port>/api/v1/stocks/bars` history path. A configured adapter can be attempted
+  provisionally only for planner NEW/BUFFER slices and supported history intervals. Its capabilities
+  are `historical=true,realtime=false`; this endpoint is not a live stream and does not prove actual
+  feed, entitlement, or coverage. A `futu_only` request cannot use its mode to open OLD slices beyond
+  the backend policy. Provider authentication, permission, unsupported-resolution, and transport
+  errors keep their specific error/gap behavior. Missing port configuration leaves a precise
+  provider-capability gap. To roll back Futu attempts, unset this variable and restart the MDP
+  process. A04 admission remains separate and is still required for trusted cache
+  promotion; a policy-approved fetch without complete A04 evidence stays provisional.
 - `MDP_YFINANCE_BRIDGE_ENABLED` defaults false; the fixed loopback bridge port
   `MDP_YFINANCE_BRIDGE_PORT` defaults to 8765. The caller-only
   `PUBLIC_MDP_YFINANCE_BRIDGE_BEARER_TOKEN` must match the Stock service's
@@ -62,8 +70,10 @@ the verified research channel. No order operation is added.
 
 Default `auto` plans US stock/ETF intervals using calendar instances in order.
 The current started valid session is NEW, its previous valid session is BUFFER,
-and older completed sessions are OLD. Futu is the preferred NEW/BUFFER source only
-when its capability has verified admission; otherwise return a precise gap.
+and older completed sessions are OLD. Futu is the preferred NEW/BUFFER source when its history
+adapter is explicitly configured; the attempt is provisional and marked historical, never realtime.
+Without the adapter configuration, return a precise capability gap. A request mode cannot widen
+this server-owned source policy.
 OLD SIP and BOATS are distinct historical routes. Weekends, holidays, early closes
 and daylight saving come from the pinned calendar, not elapsed-hour heuristics.
 The supplied XNYS cash calendar alone does not establish a supported overnight
@@ -121,9 +131,9 @@ unsupported uses 422, and authentication, quotas, timeouts and expired cursors k
 specific statuses. Unknown actual feed and entitlement remain unknown. Returned
 source segments and rows cannot be replaced by a single source label.
 
-Cache configuration does not make provisional input authoritative. Production
-provider admission and material conflict checks are required for trusted historical
-promotion; the initial runtime has no trusted provider issuer. Synthetic test
+Cache configuration does not make provisional input authoritative. Provider route policy only
+allows an attempt; production provider admission and material conflict checks are still required for
+trusted historical promotion. Synthetic test
 admission is excluded from production. Existing archive publication gates remain
 closed. See `policies/mdp-cache-reconciliation-v1.md` for lineage and rollback.
 
