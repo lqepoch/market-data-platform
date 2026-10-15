@@ -3,10 +3,11 @@
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, SecondsFormat, Utc};
+use exact_decimal::ExactDecimal;
 use market_contracts::{
     BarCoverageGapV1, BarCoverageSegmentV1, BarRowV1, BarsCacheStatusV1, BarsCoverageStatusV1,
     BarsEntitlementStatusV1, BarsRequestV1, BarsResponseV1, BarsValidationStateV1,
-    CoverageGapReasonV1, ProtoTimestampV2,
+    CoverageGapReasonV1, DecimalString, ProtoTimestampV2,
 };
 
 use super::current_timestamp;
@@ -124,13 +125,23 @@ fn same_bar_observation(left: &BarRowV1, right: &BarRowV1) -> bool {
         && left.bar_end_exclusive_utc == right.bar_end_exclusive_utc
         && left.received_at_utc == right.received_at_utc
         && left.available_at_utc == right.available_at_utc
-        && left.open == right.open
-        && left.high == right.high
-        && left.low == right.low
-        && left.close == right.close
-        && left.volume == right.volume
+        && same_decimal_value(&left.open, &right.open)
+        && same_decimal_value(&left.high, &right.high)
+        && same_decimal_value(&left.low, &right.low)
+        && same_decimal_value(&left.close, &right.close)
+        && same_decimal_value(&left.volume, &right.volume)
         && left.provenance_id == right.provenance_id
         && left.session_instance_id == right.session_instance_id
+}
+
+fn same_decimal_value(left: &DecimalString, right: &DecimalString) -> bool {
+    match (
+        ExactDecimal::parse_json_number(left.as_str()),
+        ExactDecimal::parse_json_number(right.as_str()),
+    ) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }
 
 /// Build the cache's single-provider-run response without unrelated planner gaps or an
@@ -851,6 +862,49 @@ mod tests {
             response.segments[0].coverage_status,
             BarsCoverageStatusV1::Unknown
         );
+    }
+
+    #[test]
+    fn exact_decimal_normalization_keeps_cache_verification_but_minimal_value_change_rejects_it() {
+        let (mut response, mut canonical_row) = synthetic_unknown_entitlement_response();
+        let verified_at = timestamp("2026-01-05T14:31:01Z");
+        canonical_row.open = DecimalString::new("10").expect("normalized open fixture");
+        canonical_row.high = DecimalString::new("11").expect("normalized high fixture");
+        canonical_row.low = DecimalString::new("9").expect("normalized low fixture");
+        canonical_row.close = DecimalString::new("10.5").expect("normalized close fixture");
+        response.rows[0].volume =
+            DecimalString::new("9007199254740993.00").expect("large exact volume fixture");
+        canonical_row.volume =
+            DecimalString::new("9007199254740993").expect("normalized large volume fixture");
+        canonical_row.validation_state = BarsValidationStateV1::Validated;
+
+        assert!(attach_verified_at_from_cache(
+            &mut response,
+            &verified_at,
+            "alpaca",
+            "sip",
+            std::slice::from_ref(&canonical_row),
+        ));
+        assert_eq!(response.verified_at, Some(verified_at.clone()));
+        assert_eq!(
+            response.entitlement_status,
+            BarsEntitlementStatusV1::Unknown
+        );
+        assert_eq!(response.coverage_status, BarsCoverageStatusV1::Partial);
+
+        let (mut changed_response, mut changed_canonical) =
+            synthetic_unknown_entitlement_response();
+        changed_canonical.validation_state = BarsValidationStateV1::Validated;
+        changed_response.rows[0].close =
+            DecimalString::new("10.51").expect("minimal decimal difference fixture");
+        assert!(!attach_verified_at_from_cache(
+            &mut changed_response,
+            &verified_at,
+            "alpaca",
+            "sip",
+            std::slice::from_ref(&changed_canonical),
+        ));
+        assert_eq!(changed_response.verified_at, None);
     }
 
     #[test]
