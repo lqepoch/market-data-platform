@@ -41,13 +41,6 @@ struct VerifiedCachePageEvidence {
     canonical_rows: Vec<market_contracts::BarRowV1>,
 }
 
-#[derive(Clone, Copy, Debug)]
-enum VerifiedCacheReadPhase {
-    ExactCacheRead,
-    LogicalCacheRead,
-    PublishedReadback,
-}
-
 enum ProviderFetchOutcome {
     NoProviderGroup,
     CacheHit(CachedMarketBarsPage),
@@ -478,11 +471,7 @@ fn cache_preflight(
     };
     let exact_result = match read_result {
         Ok(read) => {
-            let verification = verified_cache_page_evidence(
-                &read,
-                now_unix_seconds,
-                VerifiedCacheReadPhase::ExactCacheRead,
-            );
+            let verification = verified_cache_page_evidence(&read, now_unix_seconds);
             let continuation = match (
                 read.bars_evidence.truncated,
                 read.provider_cursor_receipt.as_ref(),
@@ -847,11 +836,7 @@ fn logical_authoritative_cache_page(
     cached_page.truncated = false;
     cached_page.validate().ok()?;
     request.validate_response(&cached_page).ok()?;
-    let mut verification = verified_cache_page_evidence(
-        &read.snapshot,
-        now_unix_seconds,
-        VerifiedCacheReadPhase::LogicalCacheRead,
-    );
+    let mut verification = verified_cache_page_evidence(&read.snapshot, now_unix_seconds);
     if let Some(verification) = verification.as_mut() {
         verification.canonical_rows.clone_from(&cached_page.rows);
     }
@@ -870,7 +855,6 @@ fn parse_utc_timestamp(value: &str) -> Option<DateTime<Utc>> {
 fn verified_cache_page_evidence(
     read: &crate::archive::reconciliation::CacheReadResultV1,
     now_unix_seconds: u64,
-    phase: VerifiedCacheReadPhase,
 ) -> Option<VerifiedCachePageEvidence> {
     use market_contracts::{BarsCoverageStatusV1, BarsValidationStateV1};
 
@@ -878,41 +862,28 @@ fn verified_cache_page_evidence(
         read.current.authority,
         read.created_at_unix_seconds,
         now_unix_seconds,
-    );
-    let coverage_complete = read.coverage.is_complete_for_key(&read.key);
-    let canonical_rows_validated = !read.bars_rows.is_empty()
-        && read
-            .bars_rows
-            .iter()
-            .all(|row| row.validation_state == BarsValidationStateV1::Validated);
-    let canonical_summary_complete = read.bars_evidence.coverage_status
-        == BarsCoverageStatusV1::Complete
-        && !read.bars_evidence.truncated
-        && read.bars_evidence.gaps.is_empty()
-        && !read.bars_evidence.segments.is_empty()
-        && read
+    )?;
+    if !read.coverage.is_complete_for_key(&read.key)
+        || read.bars_evidence.coverage_status != BarsCoverageStatusV1::Complete
+        || read.bars_evidence.truncated
+        || !read.bars_evidence.gaps.is_empty()
+        || read.bars_evidence.segments.is_empty()
+        || read
             .bars_evidence
             .segments
             .iter()
-            .all(|segment| segment.coverage_status == BarsCoverageStatusV1::Complete);
-    if verified_at.is_none()
-        || !coverage_complete
-        || !canonical_summary_complete
-        || !canonical_rows_validated
+            .any(|segment| segment.coverage_status != BarsCoverageStatusV1::Complete)
+        || read.bars_rows.is_empty()
+        || read
+            .bars_rows
+            .iter()
+            .any(|row| row.validation_state != BarsValidationStateV1::Validated)
     {
-        #[cfg(test)]
-        eprintln!(
-            "synthetic market-bars verified_at diagnostic: phase={phase:?} authority={:?} has_verified_receipt={} coverage_complete={coverage_complete} canonical_summary_complete={canonical_summary_complete} canonical_rows_validated={canonical_rows_validated} canonical_row_count={}",
-            read.current.authority,
-            verified_at.is_some(),
-            read.bars_rows.len(),
-        );
-        #[cfg(not(test))]
-        let _ = phase;
         return None;
     }
+
     Some(VerifiedCachePageEvidence {
-        verified_at: verified_at?,
+        verified_at,
         canonical_rows: read.bars_rows.clone(),
     })
 }
@@ -1348,11 +1319,7 @@ fn authoritative_page_after_publish(
     if cancellation.is_cancelled() || &read.current != published_current {
         return None;
     }
-    verified_cache_page_evidence(
-        &read,
-        unix_seconds_now(),
-        VerifiedCacheReadPhase::PublishedReadback,
-    )
+    verified_cache_page_evidence(&read, unix_seconds_now())
 }
 
 fn provider_phase_slices(
