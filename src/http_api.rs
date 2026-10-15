@@ -29,6 +29,7 @@ mod auth;
 mod market;
 mod market_bars;
 mod supervisor;
+mod yfinance_research;
 
 pub use auth::AuthConfig;
 use auth::require_market_read;
@@ -45,6 +46,7 @@ struct ServiceState {
     auth_configured: bool,
     market_calendar: Option<crate::market_calendar::LoadedMarketCalendar>,
     market_bars: Option<Arc<market_bars::MarketBarsRuntime>>,
+    yfinance_research: Option<Arc<crate::market_query::providers::YFinanceResearchRuntime>>,
     query_client: QueryClient,
     reader: Arc<RemoteArchiveReader>,
     #[cfg(target_os = "linux")]
@@ -194,6 +196,9 @@ pub async fn serve_with_pair_read_config(
         auth_configured: auth.is_some(),
         market_calendar: crate::market_calendar::LoadedMarketCalendar::from_environment()?,
         market_bars: market_bars::MarketBarsRuntime::from_environment()?,
+        yfinance_research:
+            crate::market_query::providers::YFinanceResearchRuntime::from_environment()?
+                .map(Arc::new),
         query_client,
         reader,
         #[cfg(target_os = "linux")]
@@ -228,7 +233,11 @@ fn app_router(state: Arc<ServiceState>, auth: Option<AuthConfig>) -> Router {
         .route("/v1/datasets/{dataset_id}/bars", get(get_bars))
         .merge(market::routes())
         .route("/v1/market/bars", get(market_bars::get_market_bars))
-        .route("/v1/market/sessions", get(market_bars::get_market_sessions));
+        .route("/v1/market/sessions", get(market_bars::get_market_sessions))
+        .route(
+            "/v1/research/yfinance/daily",
+            get(yfinance_research::get_daily_observations),
+        );
     #[cfg(target_os = "linux")]
     let protected_routes = if state.pair_query_available {
         protected_routes.route(

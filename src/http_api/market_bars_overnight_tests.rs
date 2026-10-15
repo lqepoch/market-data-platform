@@ -238,6 +238,7 @@ async fn harness(calendar: LoadedMarketCalendar, capabilities: Vec<SourceCapabil
         auth_configured: true,
         market_calendar: Some(calendar),
         market_bars: Some(runtime),
+        yfinance_research: None,
         query_client,
         reader,
         pair_query_available: false,

@@ -615,6 +615,7 @@ pub(super) fn provider_query_error_to_market_data(
         }
         ProviderError::InvalidConfiguration => crate::MarketDataError::InvalidInput,
         ProviderError::MalformedResponse
+        | ProviderError::EmptyResearchObservation
         | ProviderError::ResponseTooLarge
         | ProviderError::PartialPageLimit
         | ProviderError::InvalidCorePage => {
