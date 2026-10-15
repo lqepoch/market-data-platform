@@ -274,7 +274,12 @@ fn runtime_summary_reports_attemptability_without_claiming_provider_authority() 
         historical: true,
         realtime: false,
     }];
-    let summary = super::runtime_summary(&capabilities, true, true);
+    assert!(
+        capabilities
+            .iter()
+            .all(|capability| capability.provider != crate::session_router::Provider::Futu)
+    );
+    let summary = super::runtime_summary(&capabilities, false, true, true);
 
     assert!(summary.runtime_enabled);
     assert!(summary.alpaca_historical_attemptable);
@@ -291,7 +296,13 @@ fn runtime_summary_reports_attemptability_without_claiming_provider_authority() 
         cfg!(target_os = "linux")
     );
 
-    let unavailable = super::runtime_summary(&[], false, false);
+    // Futu's configured history attempt is separate from generic planner capabilities.
+    let configured_futu = super::runtime_summary(&capabilities, true, true, true);
+    assert!(configured_futu.futu_historical_attemptable);
+    assert!(configured_futu.alpaca_historical_attemptable);
+    assert!(!configured_futu.yfinance_core_bars_attemptable);
+
+    let unavailable = super::runtime_summary(&[], false, false, false);
     assert!(!unavailable.alpaca_historical_attemptable);
     assert!(!unavailable.futu_historical_attemptable);
     assert!(!unavailable.yfinance_core_bars_attemptable);

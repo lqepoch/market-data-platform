@@ -520,4 +520,6 @@ boundaries, dedicated cache configuration and rollback are documented in
 archive API and its publication gates remain separate. Public build verification
 runs on GitHub Actions; no local Docker fallback is required. Market-bars continuation
 cursors are authenticated and principal-bound; their dedicated signing-key lifecycle is
-documented with the runtime configuration.
+documented with the runtime configuration. An explicitly configured Futu Gateway port enables
+only provisional historical attempts for planner NEW/BUFFER slices; it does not claim realtime
+transport, entitlement, feed, or cache authority.

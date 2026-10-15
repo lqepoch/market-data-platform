@@ -9,7 +9,6 @@ use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 use crate::{
-    archive::reconciliation::authority::VerifiedProviderAdmissionV1,
     archive::reconciliation::{
         CacheKeyV1, ProviderCursorCacheInputV1, ProviderCursorKindV1,
         ValidatedProviderCursorReceiptV1,
@@ -65,7 +64,7 @@ impl CursorSigner {
     }
 
     #[cfg(test)]
-    fn for_test() -> Self {
+    pub(super) fn for_test() -> Self {
         Self::for_test_with_key(b"fixed-test-only-market-bars-cursor-signing-key")
     }
 
@@ -132,7 +131,6 @@ pub struct ProviderPageSelection {
     cache_identity: ProviderCacheIdentity,
     cache_policy: ProviderCachePolicy,
     admission_set_sha256: Option<String>,
-    futu_admissions: Vec<VerifiedProviderAdmissionV1>,
     rights_profile_sha256: Option<String>,
     cursor_signer: CursorSigner,
 }
@@ -145,7 +143,6 @@ impl fmt::Debug for ProviderPageSelection {
             .field("timeline_position", &self.timeline_position)
             .field("run_window", &self.run.group.fetch_window)
             .field("has_provider_cursor", &self.provider_cursor.is_some())
-            .field("futu_admission_count", &self.futu_admissions.len())
             .field("cache_key", &self.cache_key)
             .finish()
     }
@@ -192,32 +189,6 @@ impl ProviderPageSelection {
     #[must_use]
     pub const fn cache_policy(&self) -> ProviderCachePolicy {
         self.cache_policy
-    }
-
-    pub(super) fn validate_futu_admission(
-        &self,
-        plan: &MarketBarsPlan,
-        now_unix_seconds: u64,
-    ) -> Result<(), ProviderQueryError> {
-        if self.run.group.source != PlannedSource::Futu {
-            return Ok(());
-        }
-        let rights_profile_sha256 = self
-            .rights_profile_sha256
-            .as_deref()
-            .ok_or(ProviderQueryError::ProviderCapabilityUnavailable)?;
-        let validated = super::admission::validate_plan_admissions(
-            &plan.request,
-            plan,
-            rights_profile_sha256,
-            &self.futu_admissions,
-            now_unix_seconds,
-        )?;
-        if validated.binding_sha256 != self.admission_set_sha256 || !validated.covers_run(&self.run)
-        {
-            return Err(ProviderQueryError::ProviderCapabilityUnavailable);
-        }
-        Ok(())
     }
 
     /// Build the next temporal run's cursor after a cache hit or an exhausted provider page.
@@ -336,6 +307,19 @@ impl ProviderPageSelection {
             &self.cursor_signer,
         )
         .map_err(|_| ProviderQueryError::InvalidCursor)
+    }
+
+    /// Produce a bounded provider-page continuation for selection-only tests; this cannot fetch or
+    /// attest a provider page and is not available in production builds.
+    #[cfg(test)]
+    pub(crate) fn futu_page_cursor_for_test(
+        &self,
+        cursor: &str,
+    ) -> Result<String, ProviderQueryError> {
+        if !valid_futu_cursor(cursor) {
+            return Err(ProviderQueryError::InvalidCursor);
+        }
+        self.cursor_for_provider_page(ProviderCursor::Futu(cursor.to_owned()))
     }
 
     fn envelope(
@@ -585,7 +569,6 @@ fn select_page_inner(
         admission_set_sha256.as_deref(),
         rights_profile_sha256.as_deref(),
     ))?;
-    let futu_admissions = admissions.map_or_else(Vec::new, |admissions| admissions.admissions);
     Ok(ProviderPageSelection {
         request_sha256,
         plan_sha256,
@@ -601,7 +584,6 @@ fn select_page_inner(
         cache_policy,
         admission_set_sha256,
         rights_profile_sha256,
-        futu_admissions,
         cursor_signer: signer.clone(),
     })
 }

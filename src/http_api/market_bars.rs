@@ -218,6 +218,8 @@ pub(super) struct MarketBarsCacheInvalidationEvent {
 pub(super) struct MarketBarsRuntimeSummary {
     pub(super) runtime_enabled: bool,
     pub(super) alpaca_historical_attemptable: bool,
+    /// Explicit Futu Gateway configuration only; this does not prove a live connection, rights,
+    /// entitlement, source/feed facts, or provider coverage.
     pub(super) futu_historical_attemptable: bool,
     pub(super) yfinance_core_bars_attemptable: bool,
     pub(super) cache_configured: bool,
@@ -384,6 +386,7 @@ impl MarketBarsRuntime {
     pub(super) fn summary(&self) -> MarketBarsRuntimeSummary {
         runtime_summary(
             &self.provider.source_capabilities(),
+            self.provider.futu_history_attempt_configured(),
             self.cache.is_some(),
             self.cache_scope_id.is_some(),
         )
@@ -392,6 +395,7 @@ impl MarketBarsRuntime {
 
 fn runtime_summary(
     capabilities: &[crate::session_router::SourceCapability],
+    futu_history_attempt_configured: bool,
     cache_configured: bool,
     operator_scope_configured: bool,
 ) -> MarketBarsRuntimeSummary {
@@ -406,7 +410,9 @@ fn runtime_summary(
         alpaca_historical_attemptable: historical_attemptable(
             crate::session_router::Provider::Alpaca,
         ),
-        futu_historical_attemptable: historical_attemptable(crate::session_router::Provider::Futu),
+        // Futu remains absent from generic planner capabilities. This separate flag reports only
+        // that the server has an explicit bounded history-attempt adapter configuration.
+        futu_historical_attemptable: futu_history_attempt_configured,
         yfinance_core_bars_attemptable: historical_attemptable(
             crate::session_router::Provider::YFinance,
         ),

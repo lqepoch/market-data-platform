@@ -111,6 +111,10 @@ callers that need to validate an already parsed snapshot before planning.
 - `auto` routes the active/newest and immediately previous ordered phase instances to Futu and
   older phases to Alpaca SIP. Alpaca BOATS is selected only for an explicitly supplied OVER
   instance; XNYS supplies none. `alpaca_only` and `futu_only` do not fall back to the other source.
+  The runtime advertises Futu history attempts only when `MDP_FUTU_GATEWAY_PORT` is explicitly
+  configured and only for NEW/BUFFER slices. Futu's bars endpoint is historical, not a realtime
+  stream; it never advertises `realtime=true`. A request mode cannot broaden that backend policy,
+  so unsupported Futu OLD slices remain capability gaps.
 - `research` supports labeled YFinance daily only. Intraday research requests fail unless the
   caller explicitly allows a whole-request daily downgrade.
 - A provider route is usable only when a matching provider/feed/phase/interval capability permits
@@ -120,8 +124,10 @@ callers that need to validate an already parsed snapshot before planning.
   produces `missing_calendar_phase`, never a synthetic live session.
 
 The planner's capability list is a routing input, not evidence that MDP has working credentials,
-provider permissions, or source coverage. Futu and Alpaca provider capability claims remain
-`BLOCKED_EXTERNAL` until separately proven. BOATS overnight coverage is also `BLOCKED_EXTERNAL`.
+provider permissions, or source coverage. A configured Futu history route is a provisional attempt
+capability only; provider login, actual permissions, realtime access, and coverage remain
+`BLOCKED_EXTERNAL` until separately proven. Alpaca rights/coverage also remain `BLOCKED_EXTERNAL`.
+BOATS overnight schedule and coverage remain `BLOCKED_EXTERNAL`; XNYS does not supply OVER.
 
 ## Local checks
 

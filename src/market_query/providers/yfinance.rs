@@ -132,6 +132,11 @@ impl YFinanceBridge {
         })
     }
 
+    #[cfg(test)]
+    pub(super) fn disabled_for_test() -> Result<Self, ProviderConfigError> {
+        Self::new(false, 8_765, None)
+    }
+
     pub(super) async fn fetch_research_observations(
         &self,
         request: &BarsRequestV1,

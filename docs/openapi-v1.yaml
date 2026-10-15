@@ -255,6 +255,11 @@ paths:
         Requires the opt-in runtime and a pinned calendar. The interval is [start,end) in UTC.
         Research mode requires the verified research channel. Unknown feed, entitlement and
         adjustment evidence cannot be promoted. Downgrade requires explicit caller permission.
+        Futu history attempts require an explicitly configured server-side Gateway port and are
+        provisional, historical-only, and limited to NEW/BUFFER slices; provider_mode cannot widen
+        this policy. A multi-day futu_only request can have a same-phase OLD slice suppress otherwise
+        eligible NEW/BUFFER slices of that phase; partial results are not promised, while auto routing
+        is unaffected. These attempts do not imply realtime access or trusted cache promotion.
         All fields are required except cursor; unknown and duplicate parameters are rejected.
       security: [{mdpDelegation: []}]
       parameters:
@@ -428,6 +433,12 @@ paths:
   /v1/providers/capabilities:
     get:
       summary: Discover provider ownership without asserting entitlement or coverage
+      description: >-
+        The runtime's `futu_historical_attemptable` flag reflects only explicit server-side
+        loopback history-adapter configuration. It is separate from generic planner capabilities
+        and does not prove reachability, provider permission, entitlement, actual feed, realtime
+        access, or historical coverage. Verification remains blocked until independent evidence
+        is supplied.
       security: [{mdpDelegation: []}]
       responses:
         '200':

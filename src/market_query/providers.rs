@@ -1,13 +1,12 @@
 //! Bounded read-only executors for planned market-bars provider groups.
 //!
-//! The runtime advertises only configured Alpaca adapter routes to the planner. Those
-//! `SourceCapability` values mean that this process can attempt the documented historical API
-//! call; they do not prove an account plan, feed entitlement, actual response feed, or historical
-//! completeness. Futu transport is implemented against the existing loopback Gateway route but is
-//! not planner-eligible until separately reviewed provider evidence is supplied. Yahoo remains a
-//! provider-native research observation path because its adjustment semantics cannot satisfy the
-//! strict Core Bars V1 adjustment contract. Outer pagination cursors use a runtime-owned HMAC key;
-//! the HTTP adapter supplies a rights-profile digest derived from its verified principal.
+//! The runtime advertises only configured adapter routes that its backend policy permits as
+//! attempts. These `SourceCapability` values do not prove an account plan, feed entitlement, actual
+//! response feed, realtime transport, or historical completeness. Futu is exposed only when its
+//! loopback history Gateway port is explicitly configured and only for permitted NEW/BUFFER
+//! slices; Yahoo remains provider-native research because its adjustment semantics cannot satisfy
+//! the strict Core Bars V1 contract. Outer pagination cursors use a runtime-owned HMAC key; the
+//! HTTP adapter supplies a rights-profile digest derived from its verified principal.
 
 mod admission;
 mod alpaca;
@@ -15,6 +14,7 @@ mod cursor;
 mod error;
 mod futu;
 mod projection;
+mod provider_policy;
 mod types;
 mod yfinance;
 
@@ -33,6 +33,8 @@ use crate::{
     },
 };
 
+use self::provider_policy::ProviderAttemptPolicy;
+
 pub use cursor::ProviderPageSelection;
 pub use error::{ProviderConfigError, ProviderQueryError};
 pub use types::{
@@ -44,9 +46,10 @@ pub use yfinance::YFinanceResearchObservationPage;
 /// provider-native Yahoo research bridge.
 pub struct MarketBarsProviderRuntime {
     alpaca: Option<AlpacaRestReadClient>,
-    futu: futu::FutuGateway,
+    futu: Option<futu::FutuGateway>,
     yfinance: yfinance::YFinanceBridge,
     futu_admissions: Vec<VerifiedProviderAdmissionV1>,
+    provider_attempt_policy: ProviderAttemptPolicy,
     cursor_signer: cursor::CursorSigner,
 }
 
@@ -55,7 +58,7 @@ impl fmt::Debug for MarketBarsProviderRuntime {
         formatter
             .debug_struct("MarketBarsProviderRuntime")
             .field("alpaca_configured", &self.alpaca.is_some())
-            .field("futu_gateway", &self.futu)
+            .field("futu_gateway_configured", &self.futu.is_some())
             .field("yfinance_bridge", &self.yfinance)
             .field("futu_admission_count", &self.futu_admissions.len())
             .finish()
@@ -72,14 +75,18 @@ impl MarketBarsProviderRuntime {
     pub fn from_environment() -> Result<Self, ProviderConfigError> {
         let cursor_signer = cursor::CursorSigner::from_environment()?;
         let alpaca = alpaca_client_from_environment()?;
-        let futu_port = parse_port("MDP_FUTU_GATEWAY_PORT", 8_080)?;
-        let futu = futu::FutuGateway::new(futu_port)?;
+        let futu = optional_port("MDP_FUTU_GATEWAY_PORT")?
+            .map(futu::FutuGateway::new)
+            .transpose()?;
+        let provider_attempt_policy =
+            ProviderAttemptPolicy::from_futu_gateway_configuration(futu.is_some());
         let yfinance = yfinance::YFinanceBridge::from_environment()?;
         let runtime = Self {
             alpaca,
             futu,
             yfinance,
             futu_admissions: Vec::new(),
+            provider_attempt_policy,
             cursor_signer,
         };
         Ok(runtime.with_verified_provider_admissions(Vec::new()))
@@ -88,8 +95,8 @@ impl MarketBarsProviderRuntime {
     /// Attach receipts already verified by the independent A04 trust boundary.
     ///
     /// This internal injection point does not parse receipts, trust environment flags, or create
-    /// admissions. Production stays Futu-closed until an independently managed issuer/verifier
-    /// and runtime-fact source are available.
+    /// admissions. These receipts affect verified cache authority only; the owner policy separately
+    /// controls whether a configured Futu history adapter may be attempted provisionally.
     pub(crate) fn with_verified_provider_admissions(
         mut self,
         admissions: Vec<VerifiedProviderAdmissionV1>,
@@ -109,25 +116,30 @@ impl MarketBarsProviderRuntime {
         alpaca_source_capabilities(self.alpaca.is_some())
     }
 
-    /// Return request-scoped capabilities after matching opaque admissions to the exact query,
-    /// trusted calendar version, and verified principal rights-profile digest.
+    /// Whether the explicit loopback Futu history path is configured for provisional attempts.
+    /// This does not describe reachability, provider rights, realtime access, or planner coverage.
+    pub(crate) const fn futu_history_attempt_configured(&self) -> bool {
+        self.provider_attempt_policy
+            .futu_history_attempts_configured()
+    }
+
+    /// Return request-scoped route-attempt capabilities for the exact query and trusted calendar.
+    /// The policy is server-owned and does not use request fields to grant provider authority.
+    /// Futu capabilities represent only bounded historical endpoint attempts; they never claim
+    /// realtime transport, actual response feed, entitlement, completeness, or archive authority.
     #[must_use]
     pub fn source_capabilities_for_request(
         &self,
         request: &BarsRequestV1,
         as_of: &ProtoTimestampV2,
         calendar: &TrustedCalendarSnapshot,
-        rights_profile_sha256: &str,
-        now_unix_seconds: u64,
     ) -> Vec<SourceCapability> {
-        admission::source_capabilities_for_request(
+        admission::source_capabilities_for_attempt(
             request,
             as_of,
             calendar,
-            rights_profile_sha256,
-            now_unix_seconds,
             self.source_capabilities(),
-            &self.futu_admissions,
+            self.provider_attempt_policy,
         )
     }
 
@@ -150,6 +162,9 @@ impl MarketBarsProviderRuntime {
 
     /// Select a provider run and bind its cursor to the verified principal rights profile.
     /// `rights_profile_sha256` must come from the authenticated HTTP adapter, not request input.
+    /// Valid A04 receipts bind cursor continuity, while the server-owned attempt policy permits
+    /// configured NEW/BUFFER Futu history attempts without receipts; neither path grants cache
+    /// promotion authority.
     pub fn select_page_at(
         &self,
         request: &BarsRequestV1,
@@ -157,12 +172,13 @@ impl MarketBarsProviderRuntime {
         rights_profile_sha256: &str,
         now_unix_seconds: u64,
     ) -> Result<ProviderPageSelection, ProviderQueryError> {
-        let admissions = admission::validate_plan_admissions(
+        let admissions = admission::validate_plan_admissions_for_attempt(
             request,
             plan,
             rights_profile_sha256,
             &self.futu_admissions,
             now_unix_seconds,
+            self.provider_attempt_policy,
         )?;
         cursor::select_page_with_admissions(
             request,
@@ -226,8 +242,14 @@ impl MarketBarsProviderRuntime {
                 alpaca::fetch_page(client, plan, group, selection, &context).await
             }
             PlannedSource::Futu => {
-                selection.validate_futu_admission(plan, admission::now_unix_seconds()?)?;
-                self.futu.fetch_page(plan, group, selection, &context).await
+                if !self.provider_attempt_policy.permits_futu_plan(plan) {
+                    return Err(ProviderQueryError::ProviderCapabilityUnavailable);
+                }
+                let futu = self
+                    .futu
+                    .as_ref()
+                    .ok_or(ProviderQueryError::ProviderCapabilityUnavailable)?;
+                futu.fetch_page(plan, group, selection, &context).await
             }
             PlannedSource::YFinanceDailyResearch => {
                 Err(ProviderQueryError::AdjustmentSemanticsUnverified)
@@ -257,6 +279,24 @@ impl MarketBarsProviderRuntime {
         self.yfinance
             .fetch_research_observations(request, &context)
             .await
+    }
+
+    /// Construct adapter clients for selection-only tests without making network requests.
+    #[cfg(test)]
+    pub(crate) fn configured_sources_for_selection_test() -> Self {
+        let credentials = AlpacaRestCredentials::new("synthetic-test-key", "synthetic-test-secret")
+            .expect("fixed test-only credentials satisfy the client configuration");
+        let alpaca = AlpacaRestReadClient::new(credentials, AlpacaRestLimits::default())
+            .expect("fixed test-only Alpaca client configuration");
+        Self {
+            alpaca: Some(alpaca),
+            futu: Some(futu::FutuGateway::new(1).expect("nonzero test-only loopback port")),
+            yfinance: yfinance::YFinanceBridge::disabled_for_test()
+                .expect("fixed disabled research bridge configuration"),
+            futu_admissions: Vec::new(),
+            provider_attempt_policy: ProviderAttemptPolicy::from_futu_gateway_configuration(true),
+            cursor_signer: cursor::CursorSigner::for_test(),
+        }
     }
 }
 
@@ -352,11 +392,31 @@ pub(super) fn parse_port(name: &str, default: u16) -> Result<u16, ProviderConfig
     }
 }
 
+fn optional_port(name: &str) -> Result<Option<u16>, ProviderConfigError> {
+    match env::var(name) {
+        Ok(value) => parse_optional_port_value(Some(&value)),
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(env::VarError::NotUnicode(_)) => Err(ProviderConfigError::InvalidValue),
+    }
+}
+
+fn parse_optional_port_value(value: Option<&str>) -> Result<Option<u16>, ProviderConfigError> {
+    value
+        .map(|value| {
+            value
+                .parse::<u16>()
+                .ok()
+                .filter(|port| *port > 0)
+                .ok_or(ProviderConfigError::InvalidValue)
+        })
+        .transpose()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::session_router::{AlpacaFeed, DataInterval, Provider, SessionPhase};
 
-    use super::alpaca_source_capabilities;
+    use super::{ProviderConfigError, alpaca_source_capabilities, parse_optional_port_value};
 
     #[test]
     fn advertises_only_configured_alpaca_code_paths_and_never_entitlement() {
@@ -380,5 +440,19 @@ mod tests {
             capability.feed == Some(AlpacaFeed::Boats)
                 && capability.phase != Some(SessionPhase::Over)
         }));
+    }
+
+    #[test]
+    fn futu_history_attempt_requires_an_explicit_valid_gateway_port() {
+        assert_eq!(parse_optional_port_value(None), Ok(None));
+        assert_eq!(parse_optional_port_value(Some("8080")), Ok(Some(8_080)));
+        assert_eq!(
+            parse_optional_port_value(Some("0")),
+            Err(ProviderConfigError::InvalidValue)
+        );
+        assert_eq!(
+            parse_optional_port_value(Some("not-a-port")),
+            Err(ProviderConfigError::InvalidValue)
+        );
     }
 }

@@ -1,12 +1,11 @@
 //! Local-only immutable publication for an exact raw-frame and normalized-event pair.
 
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::Read,
     path::Path,
 };
 
-use fs2::FileExt;
 use market_contracts::{DatasetManifestV1, NumericEncodingV1, RawFrameDispositionV1};
 use serde::{Deserialize, Serialize};
 
@@ -112,15 +111,7 @@ impl ArchivePublisher {
         validate_request(event_request, TransportKind::LocalTest, true)?;
 
         let pair_lock_path = self.state_path(capture_id, "capture-pair.lock")?;
-        let pair_lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(pair_lock_path)?;
-        pair_lock
-            .try_lock_exclusive()
-            .map_err(|_| MarketDataError::LockHeld)?;
+        let _pair_lock = super::ArchiveDatasetLock::acquire(&pair_lock_path)?;
 
         validate_existing_pair_receipt(self, capture_id)?;
         let raw_size = fs::metadata(&raw_request.parquet_path)?.len();

@@ -17,6 +17,7 @@ use crate::{
 };
 
 use super::error::ProviderQueryError;
+use super::provider_policy::ProviderAttemptPolicy;
 
 const FUTU_SOURCE_SCOPE_ID: &str = "futu-gateway-history-v1";
 
@@ -38,15 +39,6 @@ impl ValidatedFutuAdmissions {
         }
     }
 
-    pub(super) fn covers_run(&self, run: &crate::market_query::planning::ProviderRun) -> bool {
-        run.group.slices_recent_to_old.iter().all(|slice| {
-            slice
-                .session_instance_id
-                .as_ref()
-                .is_some_and(|id| self.covered_session_instance_ids.contains(id))
-        })
-    }
-
     fn covers_slices(&self, slices: &[&PlannedSlice]) -> bool {
         !slices.is_empty()
             && slices.iter().all(|slice| {
@@ -58,21 +50,16 @@ impl ValidatedFutuAdmissions {
     }
 }
 
-/// Keep generic routing closed. Futu capabilities are added only when opaque A04 receipts cover
-/// every Futu-routed phase in the exact request/calendar snapshot.
-pub(super) fn source_capabilities_for_request(
+/// Build provisional attempt capabilities from the configured adapter, owner policy, exact request,
+/// and trusted calendar. A04 receipts are validated separately and never create route permission.
+pub(super) fn source_capabilities_for_attempt(
     request: &BarsRequestV1,
     as_of: &ProtoTimestampV2,
     calendar: &TrustedCalendarSnapshot,
-    rights_profile_sha256: &str,
-    now_unix_seconds: u64,
     alpaca_capabilities: Vec<SourceCapability>,
-    admissions: &[VerifiedProviderAdmissionV1],
+    policy: ProviderAttemptPolicy,
 ) -> Vec<SourceCapability> {
-    if !request_supports_futu(request)
-        || admissions.is_empty()
-        || !valid_sha256(rights_profile_sha256)
-    {
+    if !request_supports_futu(request) || !policy.futu_history_attempts_configured() {
         return alpaca_capabilities;
     }
 
@@ -80,40 +67,27 @@ pub(super) fn source_capabilities_for_request(
     let Ok(plan) = plan_market_bars(request, as_of, &candidate_capabilities, calendar) else {
         return alpaca_capabilities;
     };
-    let validated = evaluate_admissions(
-        request,
-        &plan,
-        rights_profile_sha256,
-        admissions,
-        now_unix_seconds,
-    );
 
     let mut capabilities = alpaca_capabilities;
     for capability in candidate_capabilities {
-        let slices = plan
-            .slices_recent_to_old
-            .iter()
-            .filter(|slice| {
-                slice.source == Some(PlannedSource::Futu)
-                    && slice.phase == capability.phase
-                    && slice.interval == capability.interval
-            })
-            .collect::<Vec<_>>();
-        if validated.covers_slices(&slices) {
+        if policy.permits_futu_capability(
+            capability.phase,
+            capability.interval,
+            &plan.slices_recent_to_old,
+        ) {
             capabilities.push(capability);
         }
     }
     capabilities
 }
 
-/// Bind selected Futu slices to trusted, query-scoped receipts. An empty Futu slice set is valid
-/// for Alpaca-only/research plans and returns an empty admission set.
-pub(super) fn validate_plan_admissions(
+pub(super) fn validate_plan_admissions_for_attempt(
     request: &BarsRequestV1,
     plan: &MarketBarsPlan,
     rights_profile_sha256: &str,
     admissions: &[VerifiedProviderAdmissionV1],
     now_unix_seconds: u64,
+    policy: ProviderAttemptPolicy,
 ) -> Result<ValidatedFutuAdmissions, ProviderQueryError> {
     let validated = evaluate_admissions(
         request,
@@ -125,10 +99,15 @@ pub(super) fn validate_plan_admissions(
     let futu_slices = plan
         .slices_recent_to_old
         .iter()
-        .filter(|slice| slice.source == Some(PlannedSource::Futu))
+        .filter(|slice| slice.source == Some(PlannedSource::Futu) && slice.gap.is_none())
         .collect::<Vec<_>>();
     if futu_slices.is_empty() || validated.covers_slices(&futu_slices) {
         Ok(validated)
+    } else if policy.permits_futu_plan(plan) {
+        // The owner policy permits a bounded read attempt. Missing or incomplete A04 receipts
+        // must not be copied into the selection as authority evidence; the cache path remains
+        // provisional and the provider result retains unknown entitlement/provenance.
+        Ok(ValidatedFutuAdmissions::empty(rights_profile_sha256))
     } else {
         Err(ProviderQueryError::ProviderCapabilityUnavailable)
     }
@@ -152,7 +131,7 @@ fn evaluate_admissions(
     let futu_slices = plan
         .slices_recent_to_old
         .iter()
-        .filter(|slice| slice.source == Some(PlannedSource::Futu))
+        .filter(|slice| slice.source == Some(PlannedSource::Futu) && slice.gap.is_none())
         .collect::<Vec<_>>();
     if futu_slices.is_empty() {
         return validated;
@@ -440,10 +419,419 @@ fn valid_sha256(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-pub(super) fn now_unix_seconds() -> Result<u64, ProviderQueryError> {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .map(|duration| duration.as_secs())
-        .ok_or(ProviderQueryError::InvalidCursor)
+#[cfg(test)]
+mod tests {
+    use chrono::{NaiveDate, TimeZone, Utc};
+    use market_contracts::{
+        AdjustmentV1, AssetClassV1, BarResolutionV1, BarsProviderModeV1, BarsRequestV1,
+        ProtoTimestampV2, SessionScopeV1,
+    };
+
+    use crate::{
+        market_query::{
+            planning::{MarketBarsPlan, plan_market_bars},
+            providers::MarketBarsProviderRuntime,
+        },
+        session_router::{
+            AlpacaFeed, CalendarDay, CalendarDayState, CalendarSourceMetadata,
+            CalendarVerificationStatus, DataInterval, PlannedSlice, PlannedSource, Provider,
+            SessionInstance, SessionPhase, SessionRank, TrustedCalendarSnapshot, UtcWindow,
+        },
+    };
+
+    use super::{
+        ProviderAttemptPolicy, ProviderQueryError, futu_probe_capabilities,
+        validate_plan_admissions_for_attempt,
+    };
+
+    #[test]
+    fn futu_attempt_capabilities_describe_history_only() {
+        let capabilities = futu_probe_capabilities();
+        assert!(!capabilities.is_empty());
+        assert!(
+            capabilities
+                .iter()
+                .all(|capability| capability.historical && !capability.realtime)
+        );
+    }
+
+    #[test]
+    fn request_capabilities_keep_futu_attempts_on_new_buffer_and_require_configuration() {
+        let calendar = three_day_cash_calendar();
+        let policy = ProviderAttemptPolicy::from_futu_gateway_configuration(true);
+        let (auto_request, as_of) = request(BarsProviderModeV1::Auto);
+        let auto = super::source_capabilities_for_attempt(
+            &auto_request,
+            &as_of,
+            &calendar,
+            Vec::new(),
+            policy,
+        );
+        assert!(auto.iter().any(|capability| {
+            capability.provider == Provider::Futu
+                && capability.phase == Some(SessionPhase::Regular)
+                && capability.historical
+                && !capability.realtime
+        }));
+        assert!(auto.iter().any(|capability| {
+            capability.provider == Provider::Futu && capability.phase == Some(SessionPhase::Pre)
+        }));
+
+        let (futu_only_request, as_of) = request(BarsProviderModeV1::FutuOnly);
+        let futu_only = super::source_capabilities_for_attempt(
+            &futu_only_request,
+            &as_of,
+            &calendar,
+            Vec::new(),
+            policy,
+        );
+        assert!(
+            !futu_only
+                .iter()
+                .any(|capability| capability.provider == Provider::Futu)
+        );
+
+        let (mut current_only_request, as_of) = request(BarsProviderModeV1::FutuOnly);
+        current_only_request.start = ProtoTimestampV2::parse("2026-01-07T14:30:00Z").unwrap();
+        current_only_request.end = ProtoTimestampV2::parse("2026-01-07T15:30:00Z").unwrap();
+        current_only_request.session_scope = SessionScopeV1::Regular;
+        let current_only = super::source_capabilities_for_attempt(
+            &current_only_request,
+            &as_of,
+            &calendar,
+            Vec::new(),
+            policy,
+        );
+        assert!(current_only.iter().any(|capability| {
+            capability.provider == Provider::Futu && capability.phase == Some(SessionPhase::Regular)
+        }));
+
+        for provider_mode in [BarsProviderModeV1::AlpacaOnly, BarsProviderModeV1::Research] {
+            let (request, as_of) = request(provider_mode);
+            let capabilities = super::source_capabilities_for_attempt(
+                &request,
+                &as_of,
+                &calendar,
+                Vec::new(),
+                policy,
+            );
+            assert!(
+                !capabilities
+                    .iter()
+                    .any(|capability| capability.provider == Provider::Futu)
+            );
+        }
+
+        let (auto_request, as_of) = request(BarsProviderModeV1::Auto);
+        let unconfigured = super::source_capabilities_for_attempt(
+            &auto_request,
+            &as_of,
+            &calendar,
+            Vec::new(),
+            ProviderAttemptPolicy::from_futu_gateway_configuration(false),
+        );
+        assert!(
+            !unconfigured
+                .iter()
+                .any(|capability| capability.provider == Provider::Futu)
+        );
+    }
+
+    fn futu_plan(rank: SessionRank) -> (BarsRequestV1, MarketBarsPlan) {
+        let start = Utc.with_ymd_and_hms(2026, 1, 5, 14, 30, 0).unwrap();
+        let end = start + chrono::Duration::minutes(1);
+        let window = UtcWindow {
+            start,
+            end_exclusive: end,
+        };
+        let timestamp =
+            |value: chrono::DateTime<Utc>| ProtoTimestampV2::parse(&value.to_rfc3339()).unwrap();
+        let request = BarsRequestV1 {
+            symbol: "SPY".to_owned(),
+            asset_class: AssetClassV1::Etf,
+            start: timestamp(start),
+            end: timestamp(end),
+            resolution: BarResolutionV1::OneMinute,
+            session_scope: SessionScopeV1::Regular,
+            adjustment: AdjustmentV1::Unadjusted,
+            provider_mode: BarsProviderModeV1::Auto,
+            allow_daily_downgrade: false,
+            limit: 10,
+            cursor: None,
+        };
+        let slice = PlannedSlice {
+            symbol: "SPY".to_owned(),
+            trade_date: NaiveDate::from_ymd_opt(2026, 1, 5).unwrap(),
+            session_id: "XNYS:2026-01-05".to_owned(),
+            session_instance_id: Some("XNYS:2026-01-05:regular".to_owned()),
+            phase: Some(SessionPhase::Regular),
+            rank: Some(rank),
+            interval: DataInterval::Minute(1),
+            window,
+            calendar_verification_status: CalendarVerificationStatus::Verified,
+            source: Some(PlannedSource::Futu),
+            source_label: Some("Futu".to_owned()),
+            historical: true,
+            realtime: false,
+            provisional: false,
+            gap: None,
+        };
+        let plan = MarketBarsPlan {
+            request: request.clone(),
+            as_of: timestamp(end),
+            requested_window: window,
+            effective_resolution: BarResolutionV1::OneMinute,
+            calendar_source_id: "fixture-calendar".to_owned(),
+            calendar_version: "fixture-v1".to_owned(),
+            calendar_verification_status: Vec::new(),
+            slices_recent_to_old: vec![slice],
+            provider_groups: Vec::new(),
+            gaps: Vec::new(),
+            provisional: false,
+        };
+        (request, plan)
+    }
+
+    fn three_day_cash_calendar() -> TrustedCalendarSnapshot {
+        let mut days = Vec::new();
+        let mut instances = Vec::new();
+        for day in 5..=7 {
+            let trade_date = NaiveDate::from_ymd_opt(2026, 1, day).unwrap();
+            let day_start = Utc.with_ymd_and_hms(2026, 1, day, 5, 0, 0).unwrap();
+            let day_end = day_start + chrono::Duration::days(1);
+            let session_id = format!("XNYS:{trade_date}");
+            days.push(CalendarDay {
+                trade_date,
+                day_window: UtcWindow {
+                    start: day_start,
+                    end_exclusive: day_end,
+                },
+                state: CalendarDayState::Open {
+                    session_id: session_id.clone(),
+                },
+                verification_status: CalendarVerificationStatus::Verified,
+            });
+            let open = day_start + chrono::Duration::hours(9) + chrono::Duration::minutes(30);
+            let close = day_start + chrono::Duration::hours(16);
+            instances.extend([
+                SessionInstance {
+                    session_id: session_id.clone(),
+                    session_instance_id: format!("{session_id}:pre"),
+                    trade_date,
+                    phase: SessionPhase::Pre,
+                    window: UtcWindow {
+                        start: day_start + chrono::Duration::hours(4),
+                        end_exclusive: open,
+                    },
+                },
+                SessionInstance {
+                    session_id: session_id.clone(),
+                    session_instance_id: format!("{session_id}:regular"),
+                    trade_date,
+                    phase: SessionPhase::Regular,
+                    window: UtcWindow {
+                        start: open,
+                        end_exclusive: close,
+                    },
+                },
+                SessionInstance {
+                    session_id,
+                    session_instance_id: format!("XNYS:{trade_date}:after"),
+                    trade_date,
+                    phase: SessionPhase::After,
+                    window: UtcWindow {
+                        start: close,
+                        end_exclusive: day_start + chrono::Duration::hours(20),
+                    },
+                },
+            ]);
+        }
+        TrustedCalendarSnapshot {
+            source_id: "XNYS".to_owned(),
+            version: "nyse.v1".to_owned(),
+            source_metadata: CalendarSourceMetadata {
+                source_name: "NYSE Holidays & Trading Hours".to_owned(),
+                source_reference: "https://www.nyse.com/trade/hours-calendars".to_owned(),
+                generator_package: "pandas_market_calendars".to_owned(),
+                generator_version: "5.4.0".to_owned(),
+                valid_from: NaiveDate::from_ymd_opt(1990, 1, 1).unwrap(),
+                valid_to: NaiveDate::from_ymd_opt(2031, 12, 31).unwrap(),
+                official_verified_from: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+                official_verified_through: NaiveDate::from_ymd_opt(2028, 12, 31).unwrap(),
+                verification_status: "verified_through_official_fixture".to_owned(),
+                artifact_checksum: "a".repeat(64),
+                pinned_input_sha256: "b".repeat(64),
+                generated_at: "2026-09-04T00:00:00Z".to_owned(),
+                source_git_commit: "d".repeat(40),
+                compiler_config_sha256: "c".repeat(64),
+                next_review_at: NaiveDate::from_ymd_opt(2026, 12, 15).unwrap(),
+            },
+            coverage_start: NaiveDate::from_ymd_opt(2026, 1, 5).unwrap(),
+            coverage_end_exclusive: NaiveDate::from_ymd_opt(2026, 1, 8).unwrap(),
+            days,
+            instances,
+        }
+    }
+
+    fn request(provider_mode: BarsProviderModeV1) -> (BarsRequestV1, ProtoTimestampV2) {
+        let start = Utc.with_ymd_and_hms(2026, 1, 5, 9, 0, 0).unwrap();
+        let end = Utc.with_ymd_and_hms(2026, 1, 7, 21, 0, 0).unwrap();
+        let as_of = Utc.with_ymd_and_hms(2026, 1, 7, 15, 0, 0).unwrap();
+        let timestamp =
+            |value: chrono::DateTime<Utc>| ProtoTimestampV2::parse(&value.to_rfc3339()).unwrap();
+        (
+            BarsRequestV1 {
+                symbol: "SPY".to_owned(),
+                asset_class: AssetClassV1::Etf,
+                start: timestamp(start),
+                end: timestamp(end),
+                resolution: BarResolutionV1::OneMinute,
+                session_scope: SessionScopeV1::All,
+                adjustment: AdjustmentV1::Unadjusted,
+                provider_mode,
+                allow_daily_downgrade: false,
+                limit: 100,
+                cursor: None,
+            },
+            timestamp(as_of),
+        )
+    }
+
+    #[test]
+    fn owner_policy_allows_unadmitted_recent_futu_attempt_without_authority_receipt() {
+        let (request, plan) = futu_plan(SessionRank::New);
+        let profile = "a".repeat(64);
+        let admissions = validate_plan_admissions_for_attempt(
+            &request,
+            &plan,
+            &profile,
+            &[],
+            1,
+            ProviderAttemptPolicy::from_futu_gateway_configuration(true),
+        )
+        .expect("configured NEW route can be attempted provisionally");
+
+        assert!(admissions.admissions.is_empty());
+        assert!(admissions.binding_sha256.is_none());
+        assert!(admissions.covered_session_instance_ids.is_empty());
+    }
+
+    #[test]
+    fn owner_policy_cannot_open_old_futu_slices_or_missing_adapter_configuration() {
+        let (request, plan) = futu_plan(SessionRank::Old);
+        let profile = "a".repeat(64);
+        let configured = validate_plan_admissions_for_attempt(
+            &request,
+            &plan,
+            &profile,
+            &[],
+            1,
+            ProviderAttemptPolicy::from_futu_gateway_configuration(true),
+        );
+        let unconfigured = validate_plan_admissions_for_attempt(
+            &request,
+            &plan,
+            &profile,
+            &[],
+            1,
+            ProviderAttemptPolicy::from_futu_gateway_configuration(false),
+        );
+
+        assert!(matches!(
+            configured,
+            Err(ProviderQueryError::ProviderCapabilityUnavailable)
+        ));
+        assert!(matches!(
+            unconfigured,
+            Err(ProviderQueryError::ProviderCapabilityUnavailable)
+        ));
+    }
+
+    #[test]
+    fn production_page_selection_allows_unreceipted_futu_continuation_and_rejects_old_futu() {
+        let runtime = MarketBarsProviderRuntime::configured_sources_for_selection_test();
+        let calendar = three_day_cash_calendar();
+        let (request, as_of) = request(BarsProviderModeV1::Auto);
+        let capabilities = runtime.source_capabilities_for_request(&request, &as_of, &calendar);
+        let plan = plan_market_bars(&request, &as_of, &capabilities, &calendar)
+            .expect("trusted fixture produces a deterministic mixed-source plan");
+
+        assert!(plan.slices_recent_to_old.iter().any(|slice| {
+            slice.source == Some(PlannedSource::Futu)
+                && matches!(slice.rank, Some(SessionRank::New | SessionRank::Buffer))
+        }));
+        assert!(plan.slices_recent_to_old.iter().any(|slice| {
+            slice.source
+                == Some(PlannedSource::Alpaca {
+                    feed: AlpacaFeed::Sip,
+                })
+                && slice.rank == Some(SessionRank::Old)
+        }));
+
+        let rights_profile_sha256 = "a".repeat(64);
+        // The runtime has no A04 receipts. Selection uses the production admission + cursor path,
+        // but the test-only fake provider cursor below never performs network I/O or attests data.
+        let first = runtime
+            .select_page_at(&request, &plan, &rights_profile_sha256, 100)
+            .expect("configured NEW/BUFFER Futu history attempt is provisional and selectable");
+        assert_eq!(first.provider_group().source, PlannedSource::Futu);
+
+        let futu_page_cursor = first
+            .futu_page_cursor_for_test("0123456789abcdef0123456789abcdef")
+            .expect("bounded synthetic Futu continuation cursor");
+        let mut continued_request = request.clone();
+        continued_request.cursor = Some(futu_page_cursor);
+        let continued_capabilities =
+            runtime.source_capabilities_for_request(&continued_request, &as_of, &calendar);
+        let continued_plan = plan_market_bars(
+            &continued_request,
+            &as_of,
+            &continued_capabilities,
+            &calendar,
+        )
+        .expect("same pinned query replans identically with its opaque continuation");
+        let continued = runtime
+            .select_page_at(
+                &continued_request,
+                &continued_plan,
+                &rights_profile_sha256,
+                101,
+            )
+            .expect("no-receipt Futu continuation remains a provisional attempt");
+        assert_eq!(continued.provider_group().source, PlannedSource::Futu);
+        assert_eq!(continued.timeline_position(), first.timeline_position());
+
+        let next_run_cursor = first
+            .cursor_for_next_group()
+            .expect("valid outer cursor after the Futu temporal run")
+            .expect("older Alpaca run follows the Futu NEW/BUFFER run");
+        let mut older_request = request.clone();
+        older_request.cursor = Some(next_run_cursor);
+        let older_capabilities =
+            runtime.source_capabilities_for_request(&older_request, &as_of, &calendar);
+        let older_plan = plan_market_bars(&older_request, &as_of, &older_capabilities, &calendar)
+            .expect("same pinned query retains its older-source plan");
+        let older_selection = runtime
+            .select_page_at(&older_request, &older_plan, &rights_profile_sha256, 102)
+            .expect("outer cursor advances to the older configured Alpaca source");
+        assert_eq!(
+            older_selection.provider_group().source,
+            PlannedSource::Alpaca {
+                feed: AlpacaFeed::Sip
+            }
+        );
+        assert!(
+            older_selection
+                .provider_group()
+                .slices_recent_to_old
+                .iter()
+                .all(|slice| slice.rank == Some(SessionRank::Old))
+        );
+
+        let (old_request, old_plan) = futu_plan(SessionRank::Old);
+        assert!(matches!(
+            runtime.select_page_at(&old_request, &old_plan, &rights_profile_sha256, 102,),
+            Err(ProviderQueryError::ProviderCapabilityUnavailable)
+        ));
+    }
 }
