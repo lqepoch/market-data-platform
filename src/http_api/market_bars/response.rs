@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use market_contracts::{
-    BarCoverageGapV1, BarCoverageSegmentV1, BarsCacheStatusV1, BarsCoverageStatusV1,
+    BarCoverageGapV1, BarCoverageSegmentV1, BarRowV1, BarsCacheStatusV1, BarsCoverageStatusV1,
     BarsEntitlementStatusV1, BarsRequestV1, BarsResponseV1, BarsValidationStateV1,
     CoverageGapReasonV1, ProtoTimestampV2,
 };
@@ -36,6 +36,101 @@ pub(super) fn response_from_page(
         true,
         cache_status,
     )
+}
+
+/// Preserve local cache verification metadata only when the mapped response rows are an exact
+/// subset of the canonical rows from a successful complete authoritative cache read. Entitlement
+/// and coverage summaries stay as mapped; unknown entitlement may therefore keep coverage partial.
+pub(super) fn attach_verified_at_from_cache(
+    response: &mut BarsResponseV1,
+    verified_at: &ProtoTimestampV2,
+    expected_provider: &str,
+    expected_feed: &str,
+    verified_canonical_rows: &[BarRowV1],
+) -> bool {
+    if response.validate().is_err()
+        || response.verified_at.is_some()
+        || response.rows.is_empty()
+        || response.truncated
+        || response.continuation_cursor.is_some()
+        || !response.gaps.is_empty()
+        || response.segments.is_empty()
+        || response.market_calendar_version.is_none()
+        || !matches!(
+            response.coverage_status,
+            BarsCoverageStatusV1::Complete | BarsCoverageStatusV1::Partial
+        )
+        || matches!(
+            response.entitlement_status,
+            BarsEntitlementStatusV1::Unauthorized | BarsEntitlementStatusV1::Mixed
+        )
+        || response.provider != expected_provider
+        || response.feed != expected_feed
+        || response.source_provenance.is_empty()
+        || response.source_provenance.iter().any(|source| {
+            source.provider != expected_provider
+                || source.feed != expected_feed
+                || matches!(
+                    source.entitlement_status,
+                    BarsEntitlementStatusV1::Unauthorized | BarsEntitlementStatusV1::Mixed
+                )
+        })
+        || response.segments.iter().any(|segment| {
+            !matches!(
+                segment.coverage_status,
+                BarsCoverageStatusV1::Complete | BarsCoverageStatusV1::Unknown
+            ) || segment.provenance_id.is_none()
+        })
+        || response.rows.iter().any(|row| {
+            !matches!(
+                row.validation_state,
+                BarsValidationStateV1::Validated | BarsValidationStateV1::Provisional
+            )
+        })
+        || verified_canonical_rows.is_empty()
+        || verified_canonical_rows
+            .iter()
+            .any(|row| row.validation_state != BarsValidationStateV1::Validated)
+    {
+        return false;
+    }
+
+    let mut matched_rows = vec![false; verified_canonical_rows.len()];
+    for row in &response.rows {
+        let Some((index, _)) = verified_canonical_rows
+            .iter()
+            .enumerate()
+            .find(|(index, cached)| !matched_rows[*index] && same_bar_observation(row, cached))
+        else {
+            return false;
+        };
+        matched_rows[index] = true;
+    }
+
+    response.verified_at = Some(verified_at.clone());
+    if response.validate().is_err() {
+        response.verified_at = None;
+        return false;
+    }
+    true
+}
+
+fn same_bar_observation(left: &BarRowV1, right: &BarRowV1) -> bool {
+    left.symbol == right.symbol
+        && left.asset_class == right.asset_class
+        && left.resolution == right.resolution
+        && left.adjustment == right.adjustment
+        && left.bar_start_utc == right.bar_start_utc
+        && left.bar_end_exclusive_utc == right.bar_end_exclusive_utc
+        && left.received_at_utc == right.received_at_utc
+        && left.available_at_utc == right.available_at_utc
+        && left.open == right.open
+        && left.high == right.high
+        && left.low == right.low
+        && left.close == right.close
+        && left.volume == right.volume
+        && left.provenance_id == right.provenance_id
+        && left.session_instance_id == right.session_instance_id
 }
 
 /// Build the cache's single-provider-run response without unrelated planner gaps or an
@@ -643,11 +738,82 @@ pub(super) fn provider_error_is_http_fatal(
 
 #[cfg(test)]
 mod tests {
-    use market_contracts::CoverageGapReasonV1;
+    use market_contracts::{
+        AdjustmentV1, AssetClassV1, BarCoverageGapV1, BarCoverageSegmentV1, BarResolutionV1,
+        BarRowV1, BarSourceProvenanceV1, BarsCacheStatusV1, BarsCoverageStatusV1,
+        BarsEntitlementStatusV1, BarsResponseV1, BarsValidationStateV1, CoverageGapReasonV1,
+        DecimalString, NumericEncodingV1, ProtoTimestampV2,
+    };
 
     use crate::market_query::providers::ProviderQueryError;
 
-    use super::provider_failure_gap_reason;
+    use super::{attach_verified_at_from_cache, provider_failure_gap_reason};
+
+    fn timestamp(value: &str) -> ProtoTimestampV2 {
+        ProtoTimestampV2::parse(value).expect("synthetic timestamp fixture")
+    }
+
+    fn synthetic_unknown_entitlement_response() -> (BarsResponseV1, BarRowV1) {
+        // This fixture exercises response metadata gates only. It is not provider evidence.
+        let row = BarRowV1 {
+            symbol: "SPY".to_owned(),
+            asset_class: AssetClassV1::Etf,
+            resolution: BarResolutionV1::OneMinute,
+            adjustment: AdjustmentV1::Unadjusted,
+            bar_start_utc: timestamp("2026-01-05T14:30:00Z"),
+            bar_end_exclusive_utc: timestamp("2026-01-05T14:31:00Z"),
+            received_at_utc: timestamp("2026-01-05T14:31:00Z"),
+            available_at_utc: timestamp("2026-01-05T14:31:00Z"),
+            open: DecimalString::new("10.00").expect("valid decimal fixture"),
+            high: DecimalString::new("11.00").expect("valid decimal fixture"),
+            low: DecimalString::new("9.00").expect("valid decimal fixture"),
+            close: DecimalString::new("10.50").expect("valid decimal fixture"),
+            volume: DecimalString::new("100").expect("valid decimal fixture"),
+            provenance_id: "synthetic-alpaca-page".to_owned(),
+            session_instance_id: "XNYS:2026-01-05:regular".to_owned(),
+            validation_state: BarsValidationStateV1::Provisional,
+        };
+        let response = BarsResponseV1 {
+            schema_version: market_contracts::BARS_SCHEMA_VERSION_V1,
+            provider: "alpaca".to_owned(),
+            feed: "sip".to_owned(),
+            entitlement_status: BarsEntitlementStatusV1::Unknown,
+            requested_resolution: BarResolutionV1::OneMinute,
+            effective_resolution: BarResolutionV1::OneMinute,
+            adjustment: AdjustmentV1::Unadjusted,
+            rows: vec![row.clone()],
+            coverage_status: BarsCoverageStatusV1::Partial,
+            segments: vec![BarCoverageSegmentV1 {
+                start_utc: row.bar_start_utc.clone(),
+                end_exclusive_utc: row.bar_end_exclusive_utc.clone(),
+                coverage_status: BarsCoverageStatusV1::Unknown,
+                provenance_id: Some(row.provenance_id.clone()),
+                session_instance_id: row.session_instance_id.clone(),
+            }],
+            gaps: Vec::new(),
+            source_provenance: vec![BarSourceProvenanceV1 {
+                provenance_id: row.provenance_id.clone(),
+                provider: "alpaca".to_owned(),
+                feed: "sip".to_owned(),
+                source: "Alpaca SIP".to_owned(),
+                entitlement_status: BarsEntitlementStatusV1::Unknown,
+                numeric_encoding: NumericEncodingV1::DecimalToken,
+            }],
+            as_of: None,
+            fetched_at: timestamp("2026-01-05T14:31:00Z"),
+            verified_at: None,
+            cache_status: BarsCacheStatusV1::Hit,
+            market_calendar_version: Some("synthetic-calendar-v1".to_owned()),
+            continuation_cursor: None,
+            truncated: false,
+        };
+        response
+            .validate()
+            .expect("valid synthetic response fixture");
+        let mut verified_row = row.clone();
+        verified_row.validation_state = BarsValidationStateV1::Validated;
+        (response, verified_row)
+    }
 
     #[test]
     fn unknown_adjustment_semantics_are_not_reported_as_resolution_failures() {
@@ -660,5 +826,86 @@ mod tests {
                 CoverageGapReasonV1::Unknown
             );
         }
+    }
+
+    #[test]
+    fn authoritative_cache_timestamp_preserves_unknown_entitlement_and_partial_status() {
+        let (mut response, verified_row) = synthetic_unknown_entitlement_response();
+        let verified_at = timestamp("2026-01-05T14:31:01Z");
+
+        assert!(attach_verified_at_from_cache(
+            &mut response,
+            &verified_at,
+            "alpaca",
+            "sip",
+            &[verified_row],
+        ));
+
+        assert_eq!(response.verified_at, Some(verified_at));
+        assert_eq!(
+            response.entitlement_status,
+            BarsEntitlementStatusV1::Unknown
+        );
+        assert_eq!(response.coverage_status, BarsCoverageStatusV1::Partial);
+        assert_eq!(
+            response.segments[0].coverage_status,
+            BarsCoverageStatusV1::Unknown
+        );
+    }
+
+    #[test]
+    fn incomplete_or_mismatched_mapped_rows_do_not_receive_cache_verification_time() {
+        let verified_at = timestamp("2026-01-05T14:31:01Z");
+
+        let (mut response, verified_row) = synthetic_unknown_entitlement_response();
+        response.gaps.push(BarCoverageGapV1 {
+            start_utc: timestamp("2026-01-05T14:31:00Z"),
+            end_exclusive_utc: timestamp("2026-01-05T14:32:00Z"),
+            reason_code: CoverageGapReasonV1::SourceGap,
+        });
+        response.validate().expect("valid synthetic gap fixture");
+        assert!(!attach_verified_at_from_cache(
+            &mut response,
+            &verified_at,
+            "alpaca",
+            "sip",
+            &[verified_row.clone()],
+        ));
+        assert_eq!(response.verified_at, None);
+
+        let (mut response, verified_row) = synthetic_unknown_entitlement_response();
+        response.truncated = true;
+        response.continuation_cursor = Some("synthetic-next-page".to_owned());
+        response.validate().expect("valid synthetic cursor fixture");
+        assert!(!attach_verified_at_from_cache(
+            &mut response,
+            &verified_at,
+            "alpaca",
+            "sip",
+            &[verified_row.clone()],
+        ));
+        assert_eq!(response.verified_at, None);
+
+        let (mut response, verified_row) = synthetic_unknown_entitlement_response();
+        response.rows[0].close = DecimalString::new("10.75").expect("valid decimal fixture");
+        response.validate().expect("valid synthetic row mutation");
+        assert!(!attach_verified_at_from_cache(
+            &mut response,
+            &verified_at,
+            "alpaca",
+            "sip",
+            &[verified_row],
+        ));
+        assert_eq!(response.verified_at, None);
+
+        let (mut response, verified_row) = synthetic_unknown_entitlement_response();
+        assert!(!attach_verified_at_from_cache(
+            &mut response,
+            &verified_at,
+            "alpaca",
+            "boats",
+            &[verified_row],
+        ));
+        assert_eq!(response.verified_at, None);
     }
 }
