@@ -2461,11 +2461,11 @@
       },
       {
         "path": "src/http_api/market_bars/query.rs",
-        "sha256": "0d7ac3f7cc6b425e5c5bf7247d5a91ec2fb3ce961854f4aef393a76e7cb4f7cf"
+        "sha256": "c1dfd5d8fab589a5b2bcbdc9b615339a7ff81f4cdecc4ac71aae559ceb153eb5"
       },
       {
         "path": "src/http_api/market_bars/response.rs",
-        "sha256": "321be0c289ef315a5c77a61f8738875b3daaff8456b967fcf0dd44d6b8eee1bb"
+        "sha256": "06a8dc85029c087b3f07946a2c7c25f3b97afb706507f69aa76d8f070a703d58"
       },
       {
         "path": "src/http_api/market_bars_authority_tests.rs",
@@ -2545,7 +2545,7 @@
       },
       {
         "path": "src/market_query/providers/alpaca.rs",
-        "sha256": "65644ae8979cb0de74752123089424094a47484ea5204f256ef8d4baa0b53619"
+        "sha256": "1be8ea3b8bc71ff9cfa8f126c89bc772a6bf34cd2918b92dd00b5676c89847ae"
       },
       {
         "path": "src/market_query/providers/cursor.rs",
@@ -2712,7 +2712,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "2cf08852b57338f548b8b66051b98ae73ee5a3d6fb746343b9fb06cf85e1ca56"
+    "sha256": "e65cc7251e4324b8fe300215e20521b9e99d0f501fe5dbcfa85552346aafc391"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
