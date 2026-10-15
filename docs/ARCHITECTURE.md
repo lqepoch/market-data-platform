@@ -148,6 +148,8 @@ outcome, no pair receipt is written; restart reconciles each component through i
 immutable publication receipt and exact remote readback, then writes the pair receipt only after
 both components verify. Capture IDs are bound to the complete input intent, so reuse with changed
 frame bytes, sequence, or event rows fails with a conflict before another object is published.
+Each local pair publication holds its per-capture `capture-pair.lock` through validation and
+publication using the shared archive lock guard, which releases the lock when the operation exits.
 
 The existing V1/V2 producer-staging pair path decodes inline and is restricted to MDP-owned files in
 the configured staging directory. The additive V2/V3 capture-pair path reads its WAL through the

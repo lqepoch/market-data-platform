@@ -70,7 +70,7 @@
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "sha256": "13795a0e054ab4a6fca309b1b9a059f9398ac447ad8907a8907ec3bc90754fa3"
+      "sha256": "43e054950032db117a188bfb55f565e143d23788afa5e60069d1b98bd88a074b"
     },
     {
       "path": "docs/CHG-2026-001-MDP-HTTP-PROVENANCE.md",
@@ -2305,7 +2305,7 @@
       },
       {
         "path": "src/archive/capture_pair.rs",
-        "sha256": "ab75d4356773cc2e44a803220cd066d3078b42ff2977101de1840be98154dba0"
+        "sha256": "0dfc58ff5da0aad64a4f96e147fa9c444069636bbd162b13dd5cb4b909059dbb"
       },
       {
         "path": "src/archive/capture_pair_v2.rs",
@@ -2684,7 +2684,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "8ddb878b997f08597e5e9212189d9c118be506fe4bb87e7c712da506c8ed107e"
+    "sha256": "9724d9b99641d5d65f78e5f7a3c40bc13eb5ff6ae38dcf1a2724aea9c478353f"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
