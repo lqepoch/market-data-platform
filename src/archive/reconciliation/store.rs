@@ -3,7 +3,10 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -24,6 +27,7 @@ use super::authority::{
     ProviderAdmissionDatasetBindingV1, ProviderAdmissionReceiptV1, ProviderPhaseSliceV1,
     ReconciliationPolicyV1, VerifiedProviderAdmissionV1,
 };
+mod alpaca_query;
 mod logical;
 mod logical_shards;
 mod transaction;
@@ -56,6 +60,7 @@ const ROOT_OWNERSHIP_MARKER_FILE: &str = ".mdp-cache-owner";
 const ROOT_OWNERSHIP_MARKER: &[u8] = b"lqepoch.mdp.cache-root.v1\n";
 const MAX_TREE_ENTRIES: usize = 100_000;
 const RECEIPT_DOMAIN: &[u8] = b"lqepoch.mdp.cache-version-receipt.v7\0";
+const RECEIPT_DOMAIN_V8: &[u8] = b"lqepoch.mdp.cache-version-receipt.v8\0";
 const LEGACY_RECEIPT_DOMAIN_V6: &[u8] = b"lqepoch.mdp.cache-version-receipt.v6\0";
 const LEGACY_RECEIPT_DOMAIN_V5: &[u8] = b"lqepoch.mdp.cache-version-receipt.v5\0";
 const LEGACY_RECEIPT_DOMAIN_V4: &[u8] = b"lqepoch.mdp.cache-version-receipt.v4\0";
@@ -192,6 +197,9 @@ struct CachePublishContextV1<'a> {
     authority_basis: CacheAuthorityBasisV1,
     admission: Option<&'a VerifiedProviderAdmissionV1>,
     phase_slices: Option<&'a [ProviderPhaseSliceV1]>,
+    alpaca_query_access_receipts:
+        Option<&'a [super::alpaca_query_access::AlpacaQueryAccessReceiptV1]>,
+    alpaca_full_provider_chain: bool,
 }
 
 struct CacheSnapshotPublicationV1<'a> {
@@ -217,6 +225,7 @@ struct CacheVersionIdentityV1<'a> {
     coverage_evidence_sha: &'a str,
     reconciliation_policy_sha: &'a str,
     admission_receipt_sha: &'a str,
+    alpaca_query_access_receipt_sha: &'a str,
 }
 
 impl CacheSnapshotV1 {
@@ -374,7 +383,7 @@ pub(crate) fn provider_admission_dataset_binding_for_bars_responses(
     snapshot.admission_dataset_binding(policy)
 }
 
-fn downgrade_complete_coverage(response: &mut BarsResponseV1) {
+pub(super) fn downgrade_complete_coverage(response: &mut BarsResponseV1) {
     if response.coverage_status == market_contracts::BarsCoverageStatusV1::Complete {
         response.coverage_status = market_contracts::BarsCoverageStatusV1::Partial;
     }
@@ -387,6 +396,9 @@ fn downgrade_complete_coverage(response: &mut BarsResponseV1) {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// Whether a cache snapshot satisfies this store's source and coverage policy. `Authoritative`
+/// does not represent a market-data license or user entitlement; local Alpaca results retain
+/// entitlement `Unknown` and require their separate short-lived query-access lease when read.
 pub(crate) enum CacheAuthorityV1 {
     Authoritative,
     Provisional,
@@ -440,6 +452,7 @@ pub(crate) struct CachePublishResultV1 {
 #[derive(Clone, Debug)]
 pub(crate) struct CacheReadResultV1 {
     pub current: CacheCurrentV1,
+    authority_basis: CacheAuthorityBasisV1,
     pub conflict_rejected: bool,
     pub key: CacheKeyV1,
     pub coverage: CoverageEvidenceV1,
@@ -544,16 +557,23 @@ struct CacheVersionReceiptV1 {
     logical_session_months: BTreeMap<String, String>,
     #[serde(default)]
     logical_phase_slices: Vec<ProviderPhaseSliceV1>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    alpaca_query_access_receipts: Vec<super::alpaca_query_access::AlpacaQueryAccessReceiptV1>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    alpaca_full_provider_chain: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    alpaca_query_access_receipt_sha256: Option<String>,
 }
 
-/// Production publication lacks a trusted provider admission proof and therefore remains
-/// provisional. The synthetic basis exists only in tests to exercise authoritative rollback and
-/// conflict protection without presenting fixture evidence as provider authority.
+/// Publication basis kept separate from the public authority state. The local Alpaca basis is
+/// limited to exact SDK query evidence and complete calendar coverage; it never changes the
+/// entitlement field or opens remote archive publication. The synthetic basis exists only in tests.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum CacheAuthorityBasisV1 {
     ProviderAdmissionUnavailable,
     ProviderAdmissionVerified,
+    AlpacaQueryAccessObserved,
     #[cfg(test)]
     SyntheticVerified,
 }
@@ -594,6 +614,7 @@ struct RejectedCandidateV1<'a> {
 pub(crate) struct CacheVersionStoreV1 {
     root: PathBuf,
     limits: CacheLimitsV1,
+    alpaca_query_access_leases: Mutex<BTreeMap<(String, String), u64>>,
     #[cfg(test)]
     transaction_fault: AtomicU8,
 }
@@ -611,6 +632,7 @@ impl CacheVersionStoreV1 {
         Ok(Self {
             root,
             limits,
+            alpaca_query_access_leases: Mutex::new(BTreeMap::new()),
             #[cfg(test)]
             transaction_fault: AtomicU8::new(0),
         })
@@ -634,12 +656,15 @@ impl CacheVersionStoreV1 {
                 authority_basis: CacheAuthorityBasisV1::ProviderAdmissionUnavailable,
                 admission: None,
                 phase_slices: None,
+                alpaca_query_access_receipts: None,
+                alpaca_full_provider_chain: false,
             },
         )
     }
 
-    /// Publish provisional raw/canonical versions with an explicit, persisted same-feed and
-    /// cross-provider tolerance policy. This does not grant authority or alter the verifier gate.
+    /// Publish raw/canonical versions with an explicit, persisted same-feed and cross-provider
+    /// tolerance policy. Without the dedicated exact-query path or a verified admission, data
+    /// remains provisional and this method cannot change the verifier gate.
     pub(crate) fn publish_bars_responses_with_policy(
         &self,
         input: CacheBarsResponsesInputV1<'_>,
@@ -655,6 +680,8 @@ impl CacheVersionStoreV1 {
                 authority_basis: CacheAuthorityBasisV1::ProviderAdmissionUnavailable,
                 admission: None,
                 phase_slices: None,
+                alpaca_query_access_receipts: None,
+                alpaca_full_provider_chain: false,
             },
         )
     }
@@ -692,6 +719,8 @@ impl CacheVersionStoreV1 {
                 authority_basis: CacheAuthorityBasisV1::ProviderAdmissionVerified,
                 admission: Some(admission),
                 phase_slices: Some(phase_slices),
+                alpaca_query_access_receipts: None,
+                alpaca_full_provider_chain: false,
             },
         )
     }
@@ -733,6 +762,8 @@ impl CacheVersionStoreV1 {
                 authority_basis: CacheAuthorityBasisV1::SyntheticVerified,
                 admission: None,
                 phase_slices: None,
+                alpaca_query_access_receipts: None,
+                alpaca_full_provider_chain: false,
             },
         )
     }
@@ -756,6 +787,8 @@ impl CacheVersionStoreV1 {
             authority_basis,
             admission,
             phase_slices: context_phase_slices,
+            alpaca_query_access_receipts,
+            alpaca_full_provider_chain,
         } = context;
         let phase_slices = match (context_phase_slices, input_phase_slices.as_deref()) {
             (Some(signed), Some(supplied)) if signed != supplied => {
@@ -770,13 +803,31 @@ impl CacheVersionStoreV1 {
             authority_basis,
             admission,
             phase_slices,
+            alpaca_query_access_receipts,
+            alpaca_full_provider_chain,
         };
         let authority_basis = context.authority_basis;
         let admission = context.admission;
         if (authority_basis == CacheAuthorityBasisV1::ProviderAdmissionVerified)
             != admission.is_some()
+            || (authority_basis == CacheAuthorityBasisV1::AlpacaQueryAccessObserved)
+                != alpaca_query_access_receipts.is_some()
         {
             return Err(CacheReconciliationError::BlockedExternal);
+        }
+        if authority_basis == CacheAuthorityBasisV1::AlpacaQueryAccessObserved
+            && (source_scope.provider != "alpaca"
+                || !matches!(source_scope.feed.as_str(), "sip" | "boats")
+                || source_scope.entitlement != EntitlementState::Unknown
+                || source_scope.numeric_encoding != NumericEncodingV1::DecimalToken
+                || request.adjustment != market_contracts::AdjustmentV1::Unadjusted
+                || alpaca_query_access_receipts.is_none_or(|receipts| {
+                    receipts.is_empty()
+                        || receipts.len()
+                            > super::alpaca_query_access::MAX_ALPACA_QUERY_ACCESS_PAGES
+                }))
+        {
+            return Err(CacheReconciliationError::AdmissionMismatch);
         }
         ensure_worker_supported()?;
         let snapshot = CacheSnapshotV1::from_bars_responses(
@@ -815,8 +866,8 @@ impl CacheVersionStoreV1 {
     }
 
     /// Store a raw/canonical pair and exact normalized comparison rows. Incomplete coverage and
-    /// sources without a trusted provider-admission proof remain provisional immutable versions.
-    /// They never replace an existing authoritative current version.
+    /// sources without a query-specific or verified admission basis remain provisional immutable
+    /// versions. They never replace an existing authoritative current version.
     fn publish_snapshot(
         &self,
         publication: CacheSnapshotPublicationV1<'_>,
@@ -835,6 +886,8 @@ impl CacheVersionStoreV1 {
             authority_basis,
             admission,
             phase_slices,
+            alpaca_query_access_receipts,
+            alpaca_full_provider_chain,
         } = context;
         ensure_worker_supported()?;
         snapshot.key.validate()?;
@@ -880,7 +933,9 @@ impl CacheVersionStoreV1 {
         let policy_sha = policy.fingerprint()?;
         let key_fingerprint = snapshot.key.fingerprint()?;
         let dataset_binding = snapshot.admission_dataset_binding(policy)?;
-        let complete = snapshot.coverage.is_complete_for_key(&snapshot.key);
+        let complete = snapshot.coverage.is_complete_for_key(&snapshot.key)
+            && (authority_basis != CacheAuthorityBasisV1::AlpacaQueryAccessObserved
+                || alpaca_full_provider_chain);
         if authority_basis == CacheAuthorityBasisV1::ProviderAdmissionVerified {
             let admission = admission.ok_or(CacheReconciliationError::BlockedExternal)?;
             let phases = phase_slices.ok_or(CacheReconciliationError::BlockedExternal)?;
@@ -1001,6 +1056,10 @@ impl CacheVersionStoreV1 {
                 .ok_or(CacheReconciliationError::LimitExceeded)?,
             None => 1,
         };
+        let alpaca_query_access_receipt_sha = alpaca_query_access_receipts
+            .map(super::alpaca_query_access::alpaca_query_access_receipts_sha256)
+            .transpose()?
+            .unwrap_or_default();
         let version_id = version_id(CacheVersionIdentityV1 {
             key_fingerprint: &key_fingerprint,
             generation: next_generation,
@@ -1017,6 +1076,7 @@ impl CacheVersionStoreV1 {
             admission_receipt_sha: admission
                 .map(VerifiedProviderAdmissionV1::receipt_sha256)
                 .unwrap_or(""),
+            alpaca_query_access_receipt_sha: &alpaca_query_access_receipt_sha,
         });
         let expires_at = now_unix_seconds
             .checked_add(self.limits.ttl.as_secs())
@@ -1154,10 +1214,15 @@ impl CacheVersionStoreV1 {
                     version_id: &version_id,
                     coverage: &snapshot.coverage,
                     rows: &bars_rows,
-                    evidence_status: if candidate_authority == CacheAuthorityV1::Authoritative {
-                        CacheLogicalEvidenceStatusV1::AdmissionVerifiedAtPublication
-                    } else {
-                        CacheLogicalEvidenceStatusV1::ProvisionalObservation
+                    evidence_status: match (candidate_authority, authority_basis) {
+                        (
+                            CacheAuthorityV1::Authoritative,
+                            CacheAuthorityBasisV1::AlpacaQueryAccessObserved,
+                        ) => CacheLogicalEvidenceStatusV1::SourceProtocolQueryVerifiedAtPublication,
+                        (CacheAuthorityV1::Authoritative, _) => {
+                            CacheLogicalEvidenceStatusV1::AdmissionVerifiedAtPublication
+                        }
+                        _ => CacheLogicalEvidenceStatusV1::ProvisionalObservation,
                     },
                 },
                 &baseline_refs,
@@ -1304,7 +1369,11 @@ impl CacheVersionStoreV1 {
                     && candidate_authority == CacheAuthorityV1::Provisional
             );
         let receipt = CacheVersionReceiptV1 {
-            receipt_version: 7,
+            receipt_version: if alpaca_query_access_receipts.is_some() {
+                8
+            } else {
+                7
+            },
             key: snapshot.key.clone(),
             key_fingerprint_sha256: key_fingerprint.clone(),
             version_id: version_id.clone(),
@@ -1343,9 +1412,13 @@ impl CacheVersionStoreV1 {
             logical_index_status,
             logical_session_months: logical_session_months.clone().unwrap_or_default(),
             logical_phase_slices: logical_phase_slices.clone(),
+            alpaca_query_access_receipts: alpaca_query_access_receipts.unwrap_or_default().to_vec(),
+            alpaca_full_provider_chain,
+            alpaca_query_access_receipt_sha256: (!alpaca_query_access_receipt_sha.is_empty())
+                .then_some(alpaca_query_access_receipt_sha),
         };
         let receipt_bytes = encode_receipt(&receipt)?;
-        let receipt_sha256 = hash_domain(RECEIPT_DOMAIN, &receipt_bytes);
+        let receipt_sha256 = hash_domain(receipt_domain(receipt.receipt_version)?, &receipt_bytes);
         if receipt_bytes.len() as u64 > self.limits.max_metadata_bytes {
             return Err(CacheReconciliationError::LimitExceeded);
         }
@@ -1483,8 +1556,9 @@ impl CacheVersionStoreV1 {
         })
     }
 
-    /// Load provisional data. Production callers must use the verifier-taking method before an
-    /// authoritative version can be read; the unit-test synthetic-authority path is test-only.
+    /// Load provisional data or a local Alpaca version with a live same-process query lease.
+    /// Signed-admission authority requires the verifier-taking method; a persisted query witness
+    /// cannot authorize a cold-start or expired cache hit.
     pub(crate) fn load_current(
         &self,
         key: &CacheKeyV1,
@@ -1495,8 +1569,9 @@ impl CacheVersionStoreV1 {
         Ok(result)
     }
 
-    /// Load a source-authoritative version only after rechecking its retained signed receipt
-    /// against the caller's current trusted issuer/revocation verifier and exact cache key.
+    /// Load a signed-admission version only after rechecking its retained receipt against the
+    /// caller's current trusted issuer/revocation verifier and exact cache key. Local Alpaca query
+    /// versions still require their same-process exact-key lease.
     pub(crate) fn load_current_with_verifier(
         &self,
         key: &CacheKeyV1,
@@ -1530,6 +1605,14 @@ impl CacheVersionStoreV1 {
         now_unix_seconds: u64,
         verifier: Option<&dyn super::authority::TrustedProviderAdmissionVerifierV1>,
     ) -> Result<()> {
+        if result.authority_basis == CacheAuthorityBasisV1::AlpacaQueryAccessObserved {
+            self.require_alpaca_query_access_lease(
+                &result.current.key_fingerprint_sha256,
+                &result.current.version_id,
+                now_unix_seconds,
+            )?;
+            return Ok(());
+        }
         if result.current.authority != CacheAuthorityV1::Authoritative {
             return Ok(());
         }
@@ -1665,7 +1748,7 @@ impl CacheVersionStoreV1 {
                             .is_some_and(|maximum| cursor.expires_at_unix_seconds <= maximum)
                         && receipt.coverage.truncated
                 });
-        if !matches!(receipt.receipt_version, 4..=7)
+        if !matches!(receipt.receipt_version, 4..=8)
             || receipt.key != *key
             || receipt.key_fingerprint_sha256 != key_fingerprint
             || receipt.version_id != version_id
@@ -1756,7 +1839,10 @@ impl CacheVersionStoreV1 {
             || derive_response_authority(
                 receipt.authority_basis,
                 key,
-                receipt.coverage.is_complete_for_key(key),
+                receipt.coverage.is_complete_for_key(key)
+                    && (receipt.authority_basis
+                        != CacheAuthorityBasisV1::AlpacaQueryAccessObserved
+                        || receipt.alpaca_full_provider_chain),
                 &bars_rows,
             ) != receipt.authority
         {
@@ -1765,6 +1851,7 @@ impl CacheVersionStoreV1 {
         validate_stored_version_admission(&receipt, key, &raw_bars_rows, &bars_rows, &normalized)?;
         Ok(CacheReadResultV1 {
             current,
+            authority_basis: receipt.authority_basis,
             conflict_rejected: receipt.conflict_rejected,
             key: receipt.key,
             coverage: receipt.coverage,
@@ -1813,6 +1900,7 @@ impl CacheVersionStoreV1 {
             5 => LEGACY_RECEIPT_DOMAIN_V5,
             6 => LEGACY_RECEIPT_DOMAIN_V6,
             7 => RECEIPT_DOMAIN,
+            8 => RECEIPT_DOMAIN_V8,
             _ => return Err(CacheReconciliationError::UnknownOutcome),
         };
         Ok((receipt, hash_domain(domain, &receipt_bytes)))
@@ -1972,14 +2060,28 @@ pub(super) fn derive_response_authority(
         && rows
             .iter()
             .all(|row| row.validation_state == market_contracts::BarsValidationStateV1::Validated);
+    let locally_observed_data_is_verified = key.provider == "alpaca"
+        && matches!(key.feed.as_str(), "sip" | "boats")
+        && key.entitlement == EntitlementState::Unknown
+        && key.numeric_encoding == NumericEncodingV1::DecimalToken.as_str()
+        && complete
+        && !rows.is_empty()
+        && rows
+            .iter()
+            .all(|row| row.validation_state == market_contracts::BarsValidationStateV1::Validated);
     if basis == CacheAuthorityBasisV1::ProviderAdmissionVerified && data_is_verified {
+        return CacheAuthorityV1::Authoritative;
+    }
+    if basis == CacheAuthorityBasisV1::AlpacaQueryAccessObserved
+        && locally_observed_data_is_verified
+    {
         return CacheAuthorityV1::Authoritative;
     }
     #[cfg(test)]
     if basis == CacheAuthorityBasisV1::SyntheticVerified && data_is_verified {
         return CacheAuthorityV1::Authoritative;
     }
-    let _ = (basis, data_is_verified);
+    let _ = (basis, data_is_verified, locally_observed_data_is_verified);
     CacheAuthorityV1::Provisional
 }
 
@@ -2007,8 +2109,13 @@ fn bars_rows_sha256(rows: &[BarRowV1]) -> Result<String> {
 }
 
 fn logical_receipt_shape_is_valid(receipt: &CacheVersionReceiptV1) -> bool {
-    if receipt.receipt_version != 7 {
+    if !matches!(receipt.receipt_version, 7 | 8) {
         return true;
+    }
+    if (receipt.receipt_version == 8)
+        != (receipt.authority_basis == CacheAuthorityBasisV1::AlpacaQueryAccessObserved)
+    {
+        return false;
     }
     let overflow_status = matches!(
         receipt.logical_index_status,
@@ -2091,15 +2198,26 @@ fn validate_stored_version_admission(
     }
     match receipt.authority_basis {
         CacheAuthorityBasisV1::ProviderAdmissionUnavailable => {
-            if receipt.authority != CacheAuthorityV1::Provisional
+            if receipt.receipt_version != 7
+                || receipt.authority != CacheAuthorityV1::Provisional
                 || receipt.provider_admission_receipt.is_some()
                 || receipt.provider_admission_receipt_sha256.is_some()
+                || !receipt.alpaca_query_access_receipts.is_empty()
+                || receipt.alpaca_full_provider_chain
+                || receipt.alpaca_query_access_receipt_sha256.is_some()
             {
                 return Err(CacheReconciliationError::UnknownOutcome);
             }
         }
         CacheAuthorityBasisV1::ProviderAdmissionVerified => {
-            if receipt.authority != CacheAuthorityV1::Authoritative {
+            if receipt.receipt_version != 7 || receipt.authority != CacheAuthorityV1::Authoritative
+            {
+                return Err(CacheReconciliationError::UnknownOutcome);
+            }
+            if !receipt.alpaca_query_access_receipts.is_empty()
+                || receipt.alpaca_full_provider_chain
+                || receipt.alpaca_query_access_receipt_sha256.is_some()
+            {
                 return Err(CacheReconciliationError::UnknownOutcome);
             }
             let admission = receipt
@@ -2135,11 +2253,53 @@ fn validate_stored_version_admission(
                 return Err(CacheReconciliationError::UnknownOutcome);
             }
         }
+        CacheAuthorityBasisV1::AlpacaQueryAccessObserved => {
+            if receipt.receipt_version != 8
+                || receipt.provider_admission_receipt.is_some()
+                || receipt.provider_admission_receipt_sha256.is_some()
+                || receipt.authority
+                    != derive_response_authority(
+                        CacheAuthorityBasisV1::AlpacaQueryAccessObserved,
+                        key,
+                        receipt.coverage.is_complete_for_key(key)
+                            && receipt.alpaca_full_provider_chain,
+                        canonical_rows,
+                    )
+            {
+                return Err(CacheReconciliationError::UnknownOutcome);
+            }
+            let stored_sha = receipt
+                .alpaca_query_access_receipt_sha256
+                .as_deref()
+                .ok_or(CacheReconciliationError::UnknownOutcome)?;
+            if !valid_sha256(stored_sha)
+                || super::alpaca_query_access::alpaca_query_access_receipts_sha256(
+                    &receipt.alpaca_query_access_receipts,
+                )
+                .map_err(|_| CacheReconciliationError::UnknownOutcome)?
+                    != stored_sha
+            {
+                return Err(CacheReconciliationError::UnknownOutcome);
+            }
+            super::alpaca_query_access::stored::validate_stored_query_access_receipts(
+                key,
+                &receipt.coverage,
+                raw_rows,
+                canonical_rows,
+                &receipt.alpaca_query_access_receipts,
+                receipt.alpaca_full_provider_chain,
+                &receipt.logical_phase_slices,
+            )
+            .map_err(|_| CacheReconciliationError::UnknownOutcome)?;
+        }
         #[cfg(test)]
         CacheAuthorityBasisV1::SyntheticVerified => {
             if receipt.authority != CacheAuthorityV1::Authoritative
                 || receipt.provider_admission_receipt.is_some()
                 || receipt.provider_admission_receipt_sha256.is_some()
+                || !receipt.alpaca_query_access_receipts.is_empty()
+                || receipt.alpaca_full_provider_chain
+                || receipt.alpaca_query_access_receipt_sha256.is_some()
             {
                 return Err(CacheReconciliationError::UnknownOutcome);
             }
@@ -2321,6 +2481,7 @@ fn version_id(identity: CacheVersionIdentityV1<'_>) -> String {
         coverage_evidence_sha,
         reconciliation_policy_sha,
         admission_receipt_sha,
+        alpaca_query_access_receipt_sha,
     } = identity;
     let nonce = VERSION_NONCE.fetch_add(1, Ordering::Relaxed);
     let mut digest = Sha256::new();
@@ -2338,6 +2499,10 @@ fn version_id(identity: CacheVersionIdentityV1<'_>) -> String {
     digest.update(coverage_evidence_sha.as_bytes());
     digest.update(reconciliation_policy_sha.as_bytes());
     digest.update(admission_receipt_sha.as_bytes());
+    if !alpaca_query_access_receipt_sha.is_empty() {
+        digest.update(b"lqepoch.mdp.cache-version-id.alpaca-query-access.v1\0");
+        digest.update(alpaca_query_access_receipt_sha.as_bytes());
+    }
     digest.update(std::process::id().to_be_bytes());
     digest.update(nonce.to_be_bytes());
     hex_digest(digest.finalize().as_slice())
@@ -2345,6 +2510,18 @@ fn version_id(identity: CacheVersionIdentityV1<'_>) -> String {
 
 fn encode_receipt(receipt: &CacheVersionReceiptV1) -> Result<Vec<u8>> {
     Ok(serde_json::to_vec(receipt)?)
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
+fn receipt_domain(version: u32) -> Result<&'static [u8]> {
+    match version {
+        7 => Ok(RECEIPT_DOMAIN),
+        8 => Ok(RECEIPT_DOMAIN_V8),
+        _ => Err(CacheReconciliationError::InvalidInput),
+    }
 }
 
 fn hash_domain(domain: &[u8], payload: &[u8]) -> String {

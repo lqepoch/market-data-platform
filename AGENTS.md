@@ -55,9 +55,14 @@ The nine-repository map is a [governance candidate in Draft PR #20](https://gith
   or binary-float input remains provisional; historical bars may omit stream sequence evidence,
   while any absent page/exhaustion fact prevents a complete cache claim. A server-owned provider
   route policy may permit a configured adapter attempt, but never grants feed rights, realtime
-  status, completeness, or cache/archive authority. Production authority stays closed until a trusted
-  provider-admission proof is wired; same-feed Alpaca conflict rejects
-  replacement and preserves the old verified current version. Rollback and recovery require an
+  status, completeness, or cache/archive authority. The local historical-bars cache has a separate
+  Alpaca path that validates an opaque witness from a successful pinned-SDK page and promotes only
+  a full, exact calendar timeline; entitlement stays `Unknown`, and a same-process exact-key access
+  lease expires within 60 seconds. A witness or cache hash alone is not current access, license,
+  completeness, or remote-publication authority. Futu/unknown feeds, incomplete pages, and missing
+  coverage remain provisional. Remote archive publication stays closed until its separately trusted
+  provider-admission proof is wired; same-feed Alpaca conflict rejects replacement and preserves the
+  old verified current version. Rollback and recovery require an
   explicitly selected verified version. Do not wire this store to remote archive writers or existing QQQ Drive / Stock
   S3OSS writers. Non-Linux must return `Unsupported` without inline Parquet decode. See
   `docs/policies/mdp-cache-reconciliation-v1.md`; the HTTP owner must propagate returned

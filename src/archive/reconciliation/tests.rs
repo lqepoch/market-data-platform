@@ -2302,3 +2302,458 @@ fn logical_index_keeps_more_than_legacy_capacity_in_bounded_shards() {
     assert_eq!(reopened_logical.logical_current.sessions.len(), 2049);
     assert_eq!(reopened_logical.logical_current.shards.len(), 33);
 }
+
+fn synthetic_alpaca_complete_timeline_fixture(
+    missing_index: Option<usize>,
+) -> (
+    BarsRequestV1,
+    CacheQuerySourceScopeV1,
+    BarsResponseV1,
+    BarsResponseV1,
+    Vec<ProviderPhaseSliceV1>,
+) {
+    use chrono::{Duration, SecondsFormat, Utc};
+    use market_contracts::{
+        AdjustmentV1, AssetClassV1, BarCoverageSegmentV1, BarResolutionV1, BarSourceProvenanceV1,
+        BarsCacheStatusV1, BarsCoverageStatusV1, BarsEntitlementStatusV1, BarsProviderModeV1,
+        BarsRequestV1, BarsResponseV1, BarsValidationStateV1, NumericEncodingV1, ProtoTimestampV2,
+        SessionScopeV1,
+    };
+
+    let start = chrono::DateTime::parse_from_rfc3339("2026-10-08T13:30:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let end = start + Duration::hours(6) + Duration::minutes(30);
+    let format = |value: &chrono::DateTime<Utc>| value.to_rfc3339_opts(SecondsFormat::Nanos, true);
+    let session = "2026-10-08-regular";
+    let request = BarsRequestV1 {
+        symbol: "QQQ".to_owned(),
+        asset_class: AssetClassV1::Etf,
+        start: ProtoTimestampV2::parse(&format(&start)).unwrap(),
+        end: ProtoTimestampV2::parse(&format(&end)).unwrap(),
+        resolution: BarResolutionV1::OneMinute,
+        session_scope: SessionScopeV1::Regular,
+        adjustment: AdjustmentV1::Unadjusted,
+        provider_mode: BarsProviderModeV1::AlpacaOnly,
+        allow_daily_downgrade: false,
+        limit: 1_000,
+        cursor: None,
+    };
+    let source_scope = CacheQuerySourceScopeV1 {
+        provider: "alpaca".to_owned(),
+        feed: "sip".to_owned(),
+        source_scope_id: "alpaca-sip-v1".to_owned(),
+        entitlement_scope_sha256: "6".repeat(64),
+        rights_profile_sha256: "7".repeat(64),
+        entitlement: EntitlementState::Unknown,
+        numeric_encoding: NumericEncodingV1::DecimalToken,
+        effective_resolution: BarResolutionV1::OneMinute,
+        session_instance_ids: vec![session.to_owned()],
+        market_calendar_version: Some("XNYS-2026a".to_owned()),
+    };
+    let make_response = |row_session: &str| {
+        let mut rows = Vec::new();
+        for index in 0..390usize {
+            if missing_index == Some(index) {
+                continue;
+            }
+            let bar_start = start + Duration::minutes(index as i64);
+            let bar_end = bar_start + Duration::minutes(1);
+            let mut row = logical_bar_row(
+                row_session,
+                &format(&bar_start),
+                &format(&bar_end),
+                "10.25",
+                "alpaca-sdk-row",
+            );
+            row.validation_state = BarsValidationStateV1::Provisional;
+            rows.push(row);
+        }
+        let segments = rows
+            .iter()
+            .map(|row| BarCoverageSegmentV1 {
+                start_utc: row.bar_start_utc.clone(),
+                end_exclusive_utc: row.bar_end_exclusive_utc.clone(),
+                coverage_status: BarsCoverageStatusV1::Unknown,
+                provenance_id: Some(row.provenance_id.clone()),
+                session_instance_id: row.session_instance_id.clone(),
+            })
+            .collect();
+        BarsResponseV1 {
+            schema_version: market_contracts::BARS_SCHEMA_VERSION_V1,
+            provider: "alpaca".to_owned(),
+            feed: "sip".to_owned(),
+            entitlement_status: BarsEntitlementStatusV1::Unknown,
+            requested_resolution: BarResolutionV1::OneMinute,
+            effective_resolution: BarResolutionV1::OneMinute,
+            adjustment: AdjustmentV1::Unadjusted,
+            rows,
+            coverage_status: BarsCoverageStatusV1::Unknown,
+            segments,
+            gaps: Vec::new(),
+            source_provenance: vec![BarSourceProvenanceV1 {
+                provenance_id: "alpaca-sdk-row".to_owned(),
+                provider: "alpaca".to_owned(),
+                feed: "sip".to_owned(),
+                source: "successful Alpaca stock-bars SDK query".to_owned(),
+                entitlement_status: BarsEntitlementStatusV1::Unknown,
+                numeric_encoding: NumericEncodingV1::DecimalToken,
+            }],
+            as_of: None,
+            fetched_at: ProtoTimestampV2::parse("2026-10-08T20:00:02Z").unwrap(),
+            verified_at: None,
+            cache_status: BarsCacheStatusV1::Unknown,
+            market_calendar_version: None,
+            continuation_cursor: None,
+            truncated: false,
+        }
+    };
+    let phases = vec![ProviderPhaseSliceV1 {
+        phase: "regular".to_owned(),
+        session_instance_id: session.to_owned(),
+        start_utc: format(&start),
+        end_exclusive_utc: format(&end),
+    }];
+    (
+        request,
+        source_scope,
+        make_response("provider-local"),
+        make_response(session),
+        phases,
+    )
+}
+
+#[test]
+fn synthetic_alpaca_complete_rth_timeline_derives_coverage_without_entitlement_claim() {
+    let (request, scope, raw, mut canonical, phases) =
+        synthetic_alpaca_complete_timeline_fixture(None);
+    assert_eq!(raw.rows.len(), 390);
+    assert!(raw.validate().is_ok());
+    assert!(request.validate_response(&canonical).is_ok());
+    assert!(
+        super::alpaca_query_access::derive_complete_coverage_from_timeline(
+            &request,
+            &scope,
+            &raw,
+            &mut canonical,
+            Some(&phases),
+            true,
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        canonical.coverage_status,
+        market_contracts::BarsCoverageStatusV1::Complete
+    );
+    assert_eq!(
+        canonical.market_calendar_version.as_deref(),
+        Some("XNYS-2026a")
+    );
+    assert!(
+        canonical
+            .rows
+            .iter()
+            .all(|row| row.validation_state == market_contracts::BarsValidationStateV1::Validated)
+    );
+    assert_eq!(
+        canonical.entitlement_status,
+        market_contracts::BarsEntitlementStatusV1::Unknown
+    );
+}
+
+#[test]
+fn synthetic_alpaca_missing_minute_stays_provisional_after_sdk_chain_exhaustion() {
+    let (request, scope, raw, mut canonical, phases) =
+        synthetic_alpaca_complete_timeline_fixture(Some(117));
+    assert_eq!(raw.rows.len(), 389);
+    canonical.coverage_status = market_contracts::BarsCoverageStatusV1::Complete;
+    for segment in &mut canonical.segments {
+        segment.coverage_status = market_contracts::BarsCoverageStatusV1::Complete;
+    }
+    assert!(
+        !super::alpaca_query_access::derive_complete_coverage_from_timeline(
+            &request,
+            &scope,
+            &raw,
+            &mut canonical,
+            Some(&phases),
+            true,
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        canonical.coverage_status,
+        market_contracts::BarsCoverageStatusV1::Partial
+    );
+    assert!(
+        canonical
+            .segments
+            .iter()
+            .all(|segment| segment.coverage_status
+                == market_contracts::BarsCoverageStatusV1::Partial)
+    );
+    assert!(canonical
+        .rows
+        .iter()
+        .all(|row| row.validation_state == market_contracts::BarsValidationStateV1::Provisional));
+}
+
+#[test]
+fn synthetic_alpaca_timeline_without_trusted_phases_or_full_chain_stays_unknown() {
+    let (request, scope, raw, mut canonical, phases) =
+        synthetic_alpaca_complete_timeline_fixture(None);
+    assert!(
+        !super::alpaca_query_access::derive_complete_coverage_from_timeline(
+            &request,
+            &scope,
+            &raw,
+            &mut canonical,
+            None,
+            true,
+        )
+        .unwrap()
+    );
+    assert!(
+        !super::alpaca_query_access::derive_complete_coverage_from_timeline(
+            &request,
+            &scope,
+            &raw,
+            &mut canonical,
+            Some(&phases),
+            false,
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        canonical.coverage_status,
+        market_contracts::BarsCoverageStatusV1::Unknown
+    );
+}
+
+#[test]
+fn synthetic_alpaca_hourly_timeline_accepts_short_final_session_bar() {
+    use chrono::{Duration, SecondsFormat, Utc};
+    use market_contracts::{
+        AdjustmentV1, AssetClassV1, BarCoverageSegmentV1, BarResolutionV1, BarSourceProvenanceV1,
+        BarsCacheStatusV1, BarsCoverageStatusV1, BarsEntitlementStatusV1, BarsProviderModeV1,
+        BarsRequestV1, BarsResponseV1, BarsValidationStateV1, NumericEncodingV1, ProtoTimestampV2,
+        SessionScopeV1,
+    };
+
+    let start = chrono::DateTime::parse_from_rfc3339("2026-10-08T13:30:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let end = start + Duration::hours(6) + Duration::minutes(30);
+    let format = |value: &chrono::DateTime<Utc>| value.to_rfc3339_opts(SecondsFormat::Nanos, true);
+    let session = "2026-10-08-regular";
+    let request = BarsRequestV1 {
+        symbol: "QQQ".to_owned(),
+        asset_class: AssetClassV1::Etf,
+        start: ProtoTimestampV2::parse(&format(&start)).unwrap(),
+        end: ProtoTimestampV2::parse(&format(&end)).unwrap(),
+        resolution: BarResolutionV1::OneHour,
+        session_scope: SessionScopeV1::Regular,
+        adjustment: AdjustmentV1::Unadjusted,
+        provider_mode: BarsProviderModeV1::AlpacaOnly,
+        allow_daily_downgrade: false,
+        limit: 1_000,
+        cursor: None,
+    };
+    let source_scope = CacheQuerySourceScopeV1 {
+        provider: "alpaca".to_owned(),
+        feed: "sip".to_owned(),
+        source_scope_id: "alpaca-sip-v1".to_owned(),
+        entitlement_scope_sha256: "6".repeat(64),
+        rights_profile_sha256: "7".repeat(64),
+        entitlement: EntitlementState::Unknown,
+        numeric_encoding: NumericEncodingV1::DecimalToken,
+        effective_resolution: BarResolutionV1::OneHour,
+        session_instance_ids: vec![session.to_owned()],
+        market_calendar_version: Some("XNYS-2026a".to_owned()),
+    };
+    let make_response = |row_session: &str| {
+        let mut rows = Vec::new();
+        for index in 0..7 {
+            let bar_start = start + Duration::hours(index);
+            let step_end = bar_start + Duration::hours(1);
+            let bar_end = std::cmp::min(step_end, end);
+            let mut row = logical_bar_row(
+                row_session,
+                &format(&bar_start),
+                &format(&bar_end),
+                "10.25",
+                "alpaca-sdk-row",
+            );
+            row.resolution = BarResolutionV1::OneHour;
+            row.validation_state = BarsValidationStateV1::Provisional;
+            rows.push(row);
+        }
+        let segments = rows
+            .iter()
+            .map(|row| BarCoverageSegmentV1 {
+                start_utc: row.bar_start_utc.clone(),
+                end_exclusive_utc: row.bar_end_exclusive_utc.clone(),
+                coverage_status: BarsCoverageStatusV1::Unknown,
+                provenance_id: Some(row.provenance_id.clone()),
+                session_instance_id: row.session_instance_id.clone(),
+            })
+            .collect();
+        BarsResponseV1 {
+            schema_version: market_contracts::BARS_SCHEMA_VERSION_V1,
+            provider: "alpaca".to_owned(),
+            feed: "sip".to_owned(),
+            entitlement_status: BarsEntitlementStatusV1::Unknown,
+            requested_resolution: BarResolutionV1::OneHour,
+            effective_resolution: BarResolutionV1::OneHour,
+            adjustment: AdjustmentV1::Unadjusted,
+            rows,
+            coverage_status: BarsCoverageStatusV1::Unknown,
+            segments,
+            gaps: Vec::new(),
+            source_provenance: vec![BarSourceProvenanceV1 {
+                provenance_id: "alpaca-sdk-row".to_owned(),
+                provider: "alpaca".to_owned(),
+                feed: "sip".to_owned(),
+                source: "synthetic pinned-SDK query fixture".to_owned(),
+                entitlement_status: BarsEntitlementStatusV1::Unknown,
+                numeric_encoding: NumericEncodingV1::DecimalToken,
+            }],
+            as_of: None,
+            fetched_at: ProtoTimestampV2::parse("2026-10-08T20:00:02Z").unwrap(),
+            verified_at: None,
+            cache_status: BarsCacheStatusV1::Unknown,
+            market_calendar_version: None,
+            continuation_cursor: None,
+            truncated: false,
+        }
+    };
+    let phases = vec![ProviderPhaseSliceV1 {
+        phase: "regular".to_owned(),
+        session_instance_id: session.to_owned(),
+        start_utc: format(&start),
+        end_exclusive_utc: format(&end),
+    }];
+    let raw = make_response("provider-local");
+    let mut canonical = make_response(session);
+    assert_eq!(raw.rows.len(), 7);
+    assert!(raw.validate().is_ok());
+    assert!(request.validate_response(&canonical).is_ok());
+    assert!(
+        super::alpaca_query_access::derive_complete_coverage_from_timeline(
+            &request,
+            &source_scope,
+            &raw,
+            &mut canonical,
+            Some(&phases),
+            true,
+        )
+        .unwrap()
+    );
+    assert_eq!(canonical.coverage_status, BarsCoverageStatusV1::Complete);
+}
+
+#[test]
+fn synthetic_alpaca_page_chain_validates_duplicate_observation_times_and_cursor_links() {
+    let mut request = admission_test_request();
+    request.end = market_contracts::ProtoTimestampV2::parse("2026-10-08T13:32:00Z").unwrap();
+    let scope = CacheQuerySourceScopeV1 {
+        entitlement: EntitlementState::Unknown,
+        ..admission_test_scope()
+    };
+    let key = CacheKeyV1::from_request(&request, &scope).unwrap();
+    let key_fingerprint = key.fingerprint().unwrap();
+    let (start, end) = super::alpaca_query_access::key_request_bounds(&key).unwrap();
+    let observed = "2026-10-08T13:31:02Z";
+    let receipt = |request_cursor_sha256: Option<String>,
+                   next_page_cursor_sha256: Option<String>,
+                   response_sha: &str| {
+        super::alpaca_query_access::AlpacaQueryAccessReceiptV1 {
+            cache_key_fingerprint_sha256: key_fingerprint.clone(),
+            cache_request_cursor_sha256: None,
+            contract_id: "alpaca-stock-bars-single-symbol-v2/typed-observation-v1".to_owned(),
+            method: "GET".to_owned(),
+            origin: "https://data.alpaca.markets".to_owned(),
+            path_template: "/v2/stocks/{symbol}/bars".to_owned(),
+            success_class: "sdk_returned_decoded_response".to_owned(),
+            symbol: "QQQ".to_owned(),
+            requested_feed: "sip".to_owned(),
+            adjustment: "raw".to_owned(),
+            currency: "USD".to_owned(),
+            asof: "-".to_owned(),
+            timeframe: "1Min".to_owned(),
+            start_inclusive_utc: start.clone(),
+            end_inclusive_utc: end.clone(),
+            sort: "asc".to_owned(),
+            page_size: 1_000,
+            request_cursor_sha256,
+            typed_response_sha256: response_sha.to_owned(),
+            response_observed_at_utc: observed.to_owned(),
+            row_count: 1,
+            next_page_cursor_sha256,
+            source_observation_sha256: response_sha.to_owned(),
+        }
+    };
+    let receipts = vec![
+        receipt(None, Some("b".repeat(64)), &"a".repeat(64)),
+        receipt(Some("b".repeat(64)), None, &"c".repeat(64)),
+    ];
+    let chain_sha =
+        super::alpaca_query_access::alpaca_query_access_chain_observation_sha256(&receipts)
+            .unwrap();
+    let mut coverage = coverage(&key, true, 0, false);
+    coverage.covered_end_exclusive_utc = key.window_end_exclusive_utc.clone();
+    coverage.response_observed_at_utc = observed.to_owned();
+    coverage.pages_seen = Some(2);
+    coverage.sequence_gap_count = None;
+    coverage.segments[0].coverage_status = market_contracts::BarsCoverageStatusV1::Partial;
+    coverage.segments[0].covered_end_exclusive_utc = key.window_end_exclusive_utc.clone();
+    coverage.segments[0].source_observation_sha256 = chain_sha;
+    coverage.segments[0].raw_row_count = 2;
+    coverage.segments[0].canonical_row_count = 2;
+    let received_at = market_contracts::ProtoTimestampV2::parse(observed).unwrap();
+    let mut first = logical_bar_row(
+        "2026-10-08-regular",
+        "2026-10-08T13:30:00Z",
+        "2026-10-08T13:31:00Z",
+        "10.25",
+        "source-1",
+    );
+    first.received_at_utc = received_at.clone();
+    let mut second = logical_bar_row(
+        "2026-10-08-regular",
+        "2026-10-08T13:31:00Z",
+        "2026-10-08T13:32:00Z",
+        "10.25",
+        "source-1",
+    );
+    second.received_at_utc = received_at;
+    let rows = vec![first, second];
+
+    assert!(
+        super::alpaca_query_access::stored::validate_stored_query_access_receipts(
+            &key,
+            &coverage,
+            &rows,
+            &rows,
+            &receipts,
+            true,
+            &[],
+        )
+        .is_ok()
+    );
+
+    let mut broken_chain = receipts.clone();
+    broken_chain[1].request_cursor_sha256 = Some("d".repeat(64));
+    assert!(matches!(
+        super::alpaca_query_access::stored::validate_stored_query_access_receipts(
+            &key,
+            &coverage,
+            &rows,
+            &rows,
+            &broken_chain,
+            true,
+            &[],
+        ),
+        Err(CacheReconciliationError::UnknownOutcome)
+    ));
+}

@@ -81,9 +81,15 @@ and local documentation.
   month-assigned shards (64 sessions/256 KiB each, 1500 references/4 MiB maximum root, and a
   32 MiB/96,000-session referenced-data cap). Session months come only from validated calendar
   phase slices; missing phase mapping retains provisional artifacts without advancing the index.
+  A dedicated Alpaca cache finalizer can establish local source-protocol evidence from an opaque
+  witness attached to a successful pinned-SDK page, while entitlement stays `Unknown`. It derives
+  complete coverage only from an exhausted page chain and exact, gap-free rows across trusted
+  calendar phases; missing minutes remain provisional. Cache hits for this basis require a matching
+  same-process access lease lasting at most 60 seconds and the configured cache TTL, so restart or
+  expiry causes a provider refetch. This does not prove Plus/license rights or open remote writers.
   Expired rows remain audit-only and can still block a materially conflicting cross-provider
-  candidate, while expired cache entries are not served. The store remains provisional without
-  trusted source-admission evidence and is not wired to existing Drive/S3OSS archive writers. See
+  candidate, while expired cache entries are not served. Other provisional sources remain unable to
+  replace verified current versions. The store is not wired to existing Drive/S3OSS archive writers. See
   [the cache reconciliation policy](docs/policies/mdp-cache-reconciliation-v1.md).
 
 ## Public runner commands

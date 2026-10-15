@@ -12,8 +12,9 @@ impl CacheVersionStoreV1 {
         self.rollback_to_checked(key, target_version_id, now_unix_seconds, None)
     }
 
-    /// Roll back to an authoritative version only after the caller's current trusted issuer and
-    /// revocation verifier accepts its retained signed admission receipt.
+    /// Roll back to a signed-admission version only after the caller's current trusted issuer and
+    /// revocation verifier accepts its retained receipt. A local Alpaca target requires its live
+    /// same-process query lease through `rollback_to`.
     pub(crate) fn rollback_to_with_verifier(
         &self,
         key: &CacheKeyV1,
@@ -149,8 +150,9 @@ impl CacheVersionStoreV1 {
         self.recover_to_checked(key, target_version_id, now_unix_seconds, None)
     }
 
-    /// Recover an authoritative pointer only after the caller's current trusted issuer and
-    /// revocation verifier accepts its retained signed admission receipt.
+    /// Recover a signed-admission pointer only after the caller's current trusted issuer and
+    /// revocation verifier accepts its retained receipt. A local Alpaca target requires its live
+    /// same-process query lease through `recover_to`.
     pub(crate) fn recover_to_with_verifier(
         &self,
         key: &CacheKeyV1,

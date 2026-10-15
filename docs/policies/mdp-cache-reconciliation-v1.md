@@ -8,8 +8,10 @@ create an entitlement/completeness certificate.
 ## Identity and coverage
 
 `CacheKeyV1` is derived before a provider fetch from the request and a stable
-`CacheQuerySourceScopeV1`. It fingerprints the selected actual provider and feed (`unknown` remains
-`unknown`), stable non-secret route identity, SHA-256 of the stable entitlement realm, entitlement
+`CacheQuerySourceScopeV1`. It fingerprints the selected provider/feed scope. Alpaca SIP/BOATS
+requests use the explicitly selected route feed as a cache partition, while the response provenance
+remains unverified until the same-page SDK witness is checked; `unknown` remains `unknown` where no
+feed is selected. The key also binds stable non-secret route identity, SHA-256 of the stable entitlement realm, entitlement
 state, expected numeric encoding, asset class, requested and effective resolution, provider mode,
 domain-separated rights-profile SHA-256, adjustment, symbol, session scope and calendar-derived
 session instances, half-open UTC request window, optional calendar version, request-cursor digest,
@@ -36,10 +38,13 @@ entitlement realm, payload hash, and original expiry. The MDP outer cursor, arbi
 delegations, and credentials are never persisted or logged.
 
 The caller derives the pre-fetch key, then supplies the SDK-observation `BarsResponseV1`, the
-adapter's canonical `BarsResponseV1`, and `ProviderPageEvidenceV1` to
-`CacheVersionStoreV1::publish_bars_responses`. The raw observation response is Core-validated and
-persisted unchanged, including provider-local session IDs and rows later filtered by the trusted
-calendar mapper. The canonical response is validated against the request and key window; its
+adapter's canonical `BarsResponseV1`, and `ProviderPageEvidenceV1` to the ordinary
+`CacheVersionStoreV1::publish_bars_responses` path or, for a non-empty Alpaca SIP/BOATS page with
+an opaque Broker witness, to `publish_bars_responses_with_alpaca_query_access`. The dedicated
+finalizer rechecks the exact page chain and may derive complete coverage from trusted phase slices;
+the ordinary publisher does not grant that local query basis. The raw observation response is
+Core-validated and persisted unchanged, including provider-local session IDs and rows later
+filtered by the trusted calendar mapper. The canonical response is validated against the request and key window; its
 trusted sessions, segments, gaps, and completeness facts alone define cache coverage. Each
 canonical row must link to a raw observation by exact instrument, half-open timestamps, provenance,
 and Core `ExactDecimal`-normalized OHLCV; the provider-local session ID is ignored for that link,
@@ -69,18 +74,41 @@ a cache error only if its independent provider route and entitlement checks pass
 
 ## Authority and reconciliation
 
-Production publication currently has no trusted provider-admission proof and therefore remains
-`Provisional`, including Alpaca SIP/BOATS. `verify_provider_admission_v1` accepts only a signed,
-query-bound receipt verified by an injected `TrustedProviderAdmissionVerifierV1`, together with
-actual authorization-context and SDK/Gateway runtime observations. The default
-`UnavailableProviderAdmissionVerifierV1` fails closed. Missing actual feed, entitlement, runtime
-facts, or an independently reviewed issuer/key set keeps admission `BlockedExternal`; request feed,
-environment variables, dependency lockfiles, and top-level summaries cannot substitute for source
-provenance. Capability receipts are cursor-agnostic; dataset receipts bind the exact page cursor and
-the raw/canonical observations, rows, coverage, and reconciliation-policy hashes. Test-only
-synthetic evidence exercises authoritative rollback and conflict paths but is not provider or
-production evidence. OPRA is never a historical stock-bars authority candidate. Cache status does
-not establish adapter or user entitlement.
+The ordinary publisher and incomplete inputs remain `Provisional`. The dedicated
+`publish_bars_responses_with_alpaca_query_access` path validates the opaque witness attached by the
+pinned Alpaca SDK adapter after a successful decoded stock-bars page. It checks the fixed API
+contract, requested SIP/BOATS selector, symbol, raw adjustment, timeframe, inclusive bounds, sort,
+page limit, response observation time, row count and page-cursor chain against the exact Core
+request and raw/canonical responses. A requested feed selector is protocol provenance for that
+query; it is not a response echo, an account-plan statement, Plus entitlement or a global provider
+capability. Entitlement remains `Unknown`.
+
+That witness alone never establishes complete history. The cache derives `Complete` only when the
+bounded chain starts at its first page and is exhausted, the trusted calendar phase slices match the
+requested sessions/window, and exact raw/canonical observations tile every phase at the requested
+resolution without gaps or truncation. For example, a regular-session one-minute phase must contain
+all 390 consecutive bars. A missing minute stays provisional; the cache does not infer no-trade
+intervals or synthesize bars. Pages with a continuation, missing phase mapping, unknown sequence
+facts, empty response, or otherwise incomplete coverage may remain as raw/provisional evidence.
+
+An accepted Alpaca query basis is local to this cache and is separate from `entitlement_status` and
+remote archive publication. It grants a process-local access lease for the exact cache key and
+version, capped by the configured cache TTL and 60 seconds from the successful provider query.
+Cache hits require that unexpired lease. A cold restart or expired lease returns a miss/`Expired` so
+the provider is queried again; a persisted witness hash or Parquet readback is only local lineage
+integrity and cannot prove current access. No JWT, credential, Plus/license claim, or external
+signing key is persisted for this path.
+
+The separate `verify_provider_admission_v1` path accepts only a signed, query-bound receipt verified
+by an injected `TrustedProviderAdmissionVerifierV1`, together with actual authorization-context and
+SDK/Gateway runtime observations. The default `UnavailableProviderAdmissionVerifierV1` fails closed.
+That path is still required where the stronger signed admission contract applies, and remote archive
+writers remain closed. Request feed, environment variables, dependency lockfiles, and top-level
+summaries cannot substitute for source provenance. Capability receipts are cursor-agnostic; dataset
+receipts bind the exact page cursor and the raw/canonical observations, rows, coverage, and
+reconciliation-policy hashes. Test-only synthetic evidence exercises comparison and rollback paths
+but is not provider evidence. OPRA is never a historical stock-bars authority candidate. Cache
+status does not establish adapter-wide or user entitlement.
 
 When an eligible same-feed candidate is compared with an already verified authoritative current
 version, rows are normalized with Core `ExactDecimal`, deduplicated by stable identity, and compared
@@ -218,13 +246,16 @@ process-kill or storage-device durability qualification.
 
 `list_verified_versions` verifies immutable data and receipt integrity, but its authority field is a
 historical publication result, not current permission to serve that data. `rollback_to` and
-`recover_to` accept provisional targets without an issuer verifier; production-authoritative targets
-require `rollback_to_with_verifier` or `recover_to_with_verifier`, which recheck the retained signed
-admission, expiry, issuer allowlist, and revocation policy. Authoritative reads similarly require
-`load_current_with_verifier` or `load_logical_current_with_verifier`; the default production read
-path fails closed for authoritative versions. Neither pointer operation scans and promotes an orphan
-automatically. Conflict-rejected versions are not eligible rollback/recovery targets. Expired versions
-are retained for audit and are not eligible for load, rollback, or recovery. Cache invalidation
+`recover_to` accept provisional targets without an issuer verifier; signed-admission targets require
+`rollback_to_with_verifier` or `recover_to_with_verifier`, which recheck the retained signed
+admission, expiry, issuer allowlist, and revocation policy. A local Alpaca query-authority target
+instead requires its exact-key/version, same-process access lease; a cold restart or expired lease
+blocks load and pointer changes until a fresh provider query publishes a current version. Ordinary
+reads allow provisional versions and this lease-backed local path, while signed-admission authority
+requires `load_current_with_verifier` or `load_logical_current_with_verifier`. Neither pointer
+operation scans and promotes an orphan automatically. Conflict-rejected versions are not eligible
+rollback/recovery targets. Expired versions are retained for audit and are not eligible for load,
+rollback, or recovery. Cache invalidation
 returned by a pointer change includes every session changed by one logical-manifest commit and is the
 signal the caller must propagate to downstream query caches.
 

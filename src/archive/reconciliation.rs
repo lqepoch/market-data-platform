@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+pub(crate) mod alpaca_query_access;
 pub(crate) mod authority;
 mod authority_types;
 pub(crate) mod logical_index;
@@ -31,6 +32,8 @@ pub(crate) use store::{
     CacheVersionStoreV1, CacheVersionSummaryV1,
     provider_admission_dataset_binding_for_bars_responses,
 };
+
+pub(crate) use alpaca_query_access::AlpacaStockBarsQueryWitnessV1;
 
 #[cfg(test)]
 pub(crate) use store::CacheTransactionFaultV1;
@@ -603,6 +606,10 @@ pub(crate) struct ProviderPageEvidenceV1 {
     pub sequence_gap_count: Option<u64>,
     pub truncated: bool,
     pub provider_cursor_cache_input: Option<ProviderCursorCacheInputV1>,
+    /// In-process Broker witnesses for actual SDK pages in this bounded provider-page chain.
+    /// They are deliberately not serialized; the cache validates them against query/data and
+    /// persists separate credential-free local receipts only after validation.
+    pub alpaca_query_access_pages: Vec<AlpacaStockBarsQueryWitnessV1>,
 }
 
 impl fmt::Debug for ProviderPageEvidenceV1 {
@@ -617,6 +624,10 @@ impl fmt::Debug for ProviderPageEvidenceV1 {
             .field("last_source_sequence", &self.last_source_sequence)
             .field("sequence_gap_count", &self.sequence_gap_count)
             .field("truncated", &self.truncated)
+            .field(
+                "alpaca_query_access_page_count",
+                &self.alpaca_query_access_pages.len(),
+            )
             .field(
                 "provider_cursor_cache_input",
                 &self
