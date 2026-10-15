@@ -292,6 +292,23 @@ fn valid_sha256(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+fn map_alpaca_error(error: AlpacaRestError) -> ProviderQueryError {
+    match error {
+        AlpacaRestError::AuthenticationRejected => ProviderQueryError::Unauthorized,
+        AlpacaRestError::AccessDenied => ProviderQueryError::Forbidden,
+        AlpacaRestError::RateLimited => ProviderQueryError::RateLimited,
+        AlpacaRestError::Timeout => ProviderQueryError::Timeout,
+        AlpacaRestError::ResponseTooLarge => ProviderQueryError::ResponseTooLarge,
+        AlpacaRestError::InvalidConfiguration => ProviderQueryError::InvalidConfiguration,
+        AlpacaRestError::InvalidRequest | AlpacaRestError::ProtocolViolation => {
+            ProviderQueryError::MalformedResponse
+        }
+        AlpacaRestError::ProviderRejected | AlpacaRestError::Transport => {
+            ProviderQueryError::ProviderUnavailable
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{projection_contains_every_sdk_bar, stock_bars_cursor_token_sha256};
@@ -320,22 +337,5 @@ mod tests {
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
         assert!(!format!("{cursor:?}").contains("abc"));
-    }
-}
-
-fn map_alpaca_error(error: AlpacaRestError) -> ProviderQueryError {
-    match error {
-        AlpacaRestError::AuthenticationRejected => ProviderQueryError::Unauthorized,
-        AlpacaRestError::AccessDenied => ProviderQueryError::Forbidden,
-        AlpacaRestError::RateLimited => ProviderQueryError::RateLimited,
-        AlpacaRestError::Timeout => ProviderQueryError::Timeout,
-        AlpacaRestError::ResponseTooLarge => ProviderQueryError::ResponseTooLarge,
-        AlpacaRestError::InvalidConfiguration => ProviderQueryError::InvalidConfiguration,
-        AlpacaRestError::InvalidRequest | AlpacaRestError::ProtocolViolation => {
-            ProviderQueryError::MalformedResponse
-        }
-        AlpacaRestError::ProviderRejected | AlpacaRestError::Transport => {
-            ProviderQueryError::ProviderUnavailable
-        }
     }
 }

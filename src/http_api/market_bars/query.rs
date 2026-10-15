@@ -1109,9 +1109,7 @@ fn publish_cache_observation(
     if prepared.cache_status != BarsCacheStatusV1::Miss || cancellation.is_cancelled() {
         return None;
     }
-    let Some(selection) = prepared.selection.as_ref() else {
-        return None;
-    };
+    let selection = prepared.selection.as_ref()?;
     if selected_alpaca_feed(selection.provider_group().source).is_some() && raw_page.rows.is_empty()
     {
         return None;

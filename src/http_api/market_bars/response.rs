@@ -869,7 +869,7 @@ mod tests {
             &verified_at,
             "alpaca",
             "sip",
-            &[verified_row.clone()],
+            std::slice::from_ref(&verified_row),
         ));
         assert_eq!(response.verified_at, None);
 
@@ -882,7 +882,7 @@ mod tests {
             &verified_at,
             "alpaca",
             "sip",
-            &[verified_row.clone()],
+            std::slice::from_ref(&verified_row),
         ));
         assert_eq!(response.verified_at, None);
 
