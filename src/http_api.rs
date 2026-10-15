@@ -197,7 +197,8 @@ pub async fn serve_with_pair_read_config(
         market_calendar: crate::market_calendar::LoadedMarketCalendar::from_environment()?,
         market_bars: market_bars::MarketBarsRuntime::from_environment()?,
         yfinance_research:
-            crate::market_query::providers::YFinanceResearchRuntime::from_environment()?
+            crate::market_query::providers::YFinanceResearchRuntime::from_environment()
+                .map_err(|_| MarketDataError::InvalidInput)?
                 .map(Arc::new),
         query_client,
         reader,
