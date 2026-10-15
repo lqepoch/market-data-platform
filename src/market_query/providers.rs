@@ -116,6 +116,13 @@ impl MarketBarsProviderRuntime {
         alpaca_source_capabilities(self.alpaca.is_some())
     }
 
+    /// Whether the explicit loopback Futu history path is configured for provisional attempts.
+    /// This does not describe reachability, provider rights, realtime access, or planner coverage.
+    pub(crate) const fn futu_history_attempt_configured(&self) -> bool {
+        self.provider_attempt_policy
+            .futu_history_attempts_configured()
+    }
+
     /// Return request-scoped route-attempt capabilities for the exact query and trusted calendar.
     /// The policy is server-owned and does not use request fields to grant provider authority.
     /// Futu capabilities represent only bounded historical endpoint attempts; they never claim
@@ -155,6 +162,9 @@ impl MarketBarsProviderRuntime {
 
     /// Select a provider run and bind its cursor to the verified principal rights profile.
     /// `rights_profile_sha256` must come from the authenticated HTTP adapter, not request input.
+    /// Valid A04 receipts bind cursor continuity, while the server-owned attempt policy permits
+    /// configured NEW/BUFFER Futu history attempts without receipts; neither path grants cache
+    /// promotion authority.
     pub fn select_page_at(
         &self,
         request: &BarsRequestV1,
@@ -235,12 +245,6 @@ impl MarketBarsProviderRuntime {
                 if !self.provider_attempt_policy.permits_futu_plan(plan) {
                     return Err(ProviderQueryError::ProviderCapabilityUnavailable);
                 }
-                // Recheck attached A04 evidence for this run, but do not gate the policy-approved
-                // history attempt on it. The independent cache-promotion path validates authority.
-                if !self.futu_admissions.is_empty() {
-                    let _admission_validation =
-                        selection.validate_futu_admission(plan, admission::now_unix_seconds()?);
-                }
                 let futu = self
                     .futu
                     .as_ref()
@@ -275,6 +279,24 @@ impl MarketBarsProviderRuntime {
         self.yfinance
             .fetch_research_observations(request, &context)
             .await
+    }
+
+    /// Construct adapter clients for selection-only tests without making network requests.
+    #[cfg(test)]
+    pub(crate) fn configured_sources_for_selection_test() -> Self {
+        let credentials = AlpacaRestCredentials::new("synthetic-test-key", "synthetic-test-secret")
+            .expect("fixed test-only credentials satisfy the client configuration");
+        let alpaca = AlpacaRestReadClient::new(credentials, AlpacaRestLimits::default())
+            .expect("fixed test-only Alpaca client configuration");
+        Self {
+            alpaca: Some(alpaca),
+            futu: Some(futu::FutuGateway::new(1).expect("nonzero test-only loopback port")),
+            yfinance: yfinance::YFinanceBridge::disabled_for_test()
+                .expect("fixed disabled research bridge configuration"),
+            futu_admissions: Vec::new(),
+            provider_attempt_policy: ProviderAttemptPolicy::from_futu_gateway_configuration(true),
+            cursor_signer: cursor::CursorSigner::for_test(),
+        }
     }
 }
 

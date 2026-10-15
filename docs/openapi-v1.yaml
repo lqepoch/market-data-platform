@@ -431,6 +431,12 @@ paths:
   /v1/providers/capabilities:
     get:
       summary: Discover provider ownership without asserting entitlement or coverage
+      description: >-
+        The runtime's `futu_historical_attemptable` flag reflects only explicit server-side
+        loopback history-adapter configuration. It is separate from generic planner capabilities
+        and does not prove reachability, provider permission, entitlement, actual feed, realtime
+        access, or historical coverage. Verification remains blocked until independent evidence
+        is supplied.
       security: [{mdpDelegation: []}]
       responses:
         '200':

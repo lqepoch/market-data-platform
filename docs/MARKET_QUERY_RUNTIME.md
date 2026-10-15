@@ -46,6 +46,10 @@ the verified research channel. No order operation is added.
   provider-capability gap. To roll back Futu attempts, unset this variable and restart the MDP
   process. A04 admission remains separate and is still required for trusted cache
   promotion; a policy-approved fetch without complete A04 evidence stays provisional.
+  `/v1/providers/capabilities` reports `futu_historical_attemptable` from this explicit
+  server-side configuration, independently of generic planner capabilities. A true value means
+  only that the bounded history attempt path is configured; it does not establish loopback
+  reachability, login, permission, entitlement, actual feed, realtime access, or coverage.
 - `MDP_YFINANCE_BRIDGE_ENABLED` defaults false; the fixed loopback bridge port
   `MDP_YFINANCE_BRIDGE_PORT` defaults to 8765. The caller-only
   `PUBLIC_MDP_YFINANCE_BRIDGE_BEARER_TOKEN` must match the Stock service's
