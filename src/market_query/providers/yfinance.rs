@@ -91,7 +91,7 @@ impl fmt::Debug for YFinanceResearchObservationPage {
             .field("bar_count", &count)
             .field("fetched_at_utc", &self.fetched_at_utc)
             .field("payload", &"[REDACTED]")
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -111,7 +111,7 @@ impl fmt::Debug for YFinanceBridge {
             .field("host", &"127.0.0.1")
             .field("port", &self.port)
             .field("has_bearer", &self.bearer.is_some())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
