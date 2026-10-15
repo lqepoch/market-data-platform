@@ -387,6 +387,108 @@ paths:
           headers:
             Cache-Control:
               $ref: "#/components/headers/NoStore"
+  /v1/research/yfinance/daily:
+    get:
+      operationId: getYahooDailyResearchObservationsV1
+      summary: Read provider-native Yahoo daily observations for research display
+      description: >-
+        This independent endpoint is disabled by default and requires a verified research
+        market:read principal. It returns the validated Stock bridge payload without projecting
+        it to Core Bars V1 or asserting raw prices, complete calendar coverage, point-in-time
+        availability, canonical status, or execution authority. Adjustment is a request preference;
+        Yahoo semantics remain unknown/provider-native. Requests use UTC [start,end), support
+        1970 through at most 100 years and eight unique symbols, and page newest-first in contiguous
+        windows of at most 3650 days. Repeat the original query and pass next_cursor unchanged to
+        continue toward older history. A 200 response can be partial; inspect the embedded bridge
+        missing_symbols and coverage.gaps. A wholly empty page is an error, not proof of a closed
+        market. This route does not use market-bars cache/archive authority.
+      security: [{mdpDelegation: []}]
+      parameters:
+        - name: symbols
+          in: query
+          required: true
+          description: Comma-separated 1–8 unique uppercase stock/ETF symbols; OCC option symbols are rejected.
+          schema: {type: string, minLength: 1, maxLength: 263}
+        - name: asset_class
+          in: query
+          required: true
+          schema: {type: string, enum: [stock, etf]}
+        - name: start_utc
+          in: query
+          required: true
+          description: UTC RFC 3339 instant, inclusive; no earlier than 1970-01-01T00:00:00Z.
+          schema: {type: string, format: date-time, pattern: "Z$"}
+        - name: end_utc
+          in: query
+          required: true
+          description: UTC RFC 3339 instant, exclusive; at most one day beyond request time.
+          schema: {type: string, format: date-time, pattern: "Z$"}
+        - name: adjustment
+          in: query
+          required: false
+          description: Provider request preference only; neither option confirms raw/as-traded prices.
+          schema: {type: string, enum: [unadjusted, adjusted], default: unadjusted}
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque 30-minute HMAC continuation bound to the full query and verified principal.
+          schema: {type: string, maxLength: 8192}
+      responses:
+        "200":
+          description: One nonempty provider-native daily page; partial symbol coverage remains explicit in payload.
+          headers: {Cache-Control: {$ref: "#/components/headers/NoStore"}}
+          content:
+            application/json: {schema: {$ref: "#/components/schemas/YFinanceResearchObservationsV1"}}
+        "400":
+          description: Malformed query, unknown parameter, invalid cursor, or query/cursor binding mismatch.
+          headers: {Cache-Control: {$ref: "#/components/headers/NoStore"}}
+          content:
+            application/json: {schema: {$ref: "#/components/schemas/YFinanceResearchError"}}
+        "401":
+          description: Missing/invalid MDP delegation or bridge service credential rejection.
+          headers: {Cache-Control: {$ref: "#/components/headers/NoStore"}}
+          content:
+            application/json: {schema: {$ref: "#/components/schemas/YFinanceResearchError"}}
+        "403":
+          description: The verified principal is not on the research channel, or the bridge denies access.
+          headers: {Cache-Control: {$ref: "#/components/headers/NoStore"}}
+          content:
+            application/json: {schema: {$ref: "#/components/schemas/YFinanceResearchError"}}
+        "410":
+          description: The signed continuation expired; restart from the newest page.
+          headers: {Cache-Control: {$ref: "#/components/headers/NoStore"}}
+          content:
+            application/json: {schema: {$ref: "#/components/schemas/YFinanceResearchError"}}
+        "413":
+          description: Query, cursor, upstream payload, or serialized response exceeded its bound.
+          headers: {Cache-Control: {$ref: "#/components/headers/NoStore"}}
+          content:
+            application/json: {schema: {$ref: "#/components/schemas/YFinanceResearchError"}}
+        "422":
+          description: Unsupported symbol, asset class, date range, or adjustment request.
+          headers: {Cache-Control: {$ref: "#/components/headers/NoStore"}}
+          content:
+            application/json: {schema: {$ref: "#/components/schemas/YFinanceResearchError"}}
+        "429":
+          description: The Yahoo bridge rate-limited the bounded provider request.
+          headers: {Cache-Control: {$ref: "#/components/headers/NoStore"}}
+          content:
+            application/json: {schema: {$ref: "#/components/schemas/YFinanceResearchError"}}
+        "502":
+          description: Malformed provider response or an all-empty provider page.
+          headers: {Cache-Control: {$ref: "#/components/headers/NoStore"}}
+          content:
+            application/json: {schema: {$ref: "#/components/schemas/YFinanceResearchError"}}
+        "503":
+          description: The independent API or Yahoo bridge is disabled or unavailable.
+          headers: {Cache-Control: {$ref: "#/components/headers/NoStore"}}
+          content:
+            application/json: {schema: {$ref: "#/components/schemas/YFinanceResearchError"}}
+        "504":
+          description: The bounded Yahoo provider request exceeded its deadline.
+          headers: {Cache-Control: {$ref: "#/components/headers/NoStore"}}
+          content:
+            application/json: {schema: {$ref: "#/components/schemas/YFinanceResearchError"}}
   /v1/market/sessions:
     get:
       operationId: getMarketSessionInstancesV1
@@ -622,6 +724,219 @@ components:
           maxItems: 390
           items:
             $ref: "#/components/schemas/TradeMinuteBarV1"
+    YFinanceResearchObservationsV1:
+      type: object
+      additionalProperties: false
+      required: [schema_version, provider, source, asset_class, resolution, requested_adjustment, provider_adjustment_semantics, adjustment_confirmed_raw, numeric_encoding, canonical, point_in_time, executable, display_only, mdp_coverage_asserted, requested_symbols, requested_range, page_range, observation, next_cursor]
+      properties:
+        schema_version: {type: string, const: mdp-yfinance-research-observations-v1}
+        provider: {type: string, const: yfinance}
+        source: {type: string, const: Yahoo Finance}
+        asset_class: {type: string, enum: [stock, etf]}
+        resolution: {type: string, const: 1d}
+        requested_adjustment: {type: string, enum: [unadjusted, adjusted]}
+        provider_adjustment_semantics: {type: string, const: unknown_or_provider_native}
+        adjustment_confirmed_raw: {type: boolean, const: false}
+        numeric_encoding: {type: string, const: binary_float_projection}
+        canonical: {type: boolean, const: false}
+        point_in_time: {type: boolean, const: false}
+        executable: {type: boolean, const: false}
+        display_only: {type: boolean, const: true}
+        mdp_coverage_asserted: {type: boolean, const: false}
+        requested_symbols:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          items: {type: string, pattern: "^[A-Z0-9][A-Z0-9.-]{0,31}$"}
+        requested_range: {$ref: "#/components/schemas/YFinanceResearchRange"}
+        page_range: {$ref: "#/components/schemas/YFinanceResearchRange"}
+        observation: {$ref: "#/components/schemas/YFinanceResearchObservation"}
+        next_cursor: {type: [string, "null"], maxLength: 8192}
+    YFinanceResearchRange:
+      type: object
+      additionalProperties: false
+      required: [start_utc, end_utc, semantics]
+      properties:
+        start_utc: {type: string, format: date-time, pattern: "Z$"}
+        end_utc: {type: string, format: date-time, pattern: "Z$"}
+        semantics: {type: string, const: start_inclusive_end_exclusive}
+    YFinanceResearchObservation:
+      type: object
+      additionalProperties: false
+      required: [source_observation_sha256, fetched_at_utc, payload]
+      properties:
+        source_observation_sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: SHA-256 of the exact HTTP response body received from the local Stock bridge.
+        fetched_at_utc: {type: string, format: date-time}
+        payload:
+          type: object
+          description: Validated yfinance-history-bridge-v1 JSON preserved without Bars V1 projection.
+          additionalProperties: false
+          required: [schema_version, status, provider, source, asset_class, classification_source, resolution, effective_resolution, adjustment, provider_adjustment_semantics, adjustment_confirmed_raw, provider_repair_enabled, numeric_encoding, volume_encoding, canonical, point_in_time, executable, display_only, requested_range, requested_symbols, returned_symbols, missing_symbols, available_at, fetched_at, source_observed_at, request_started_at, cache_status, freshness, coverage, action_coverage, actions, bars, provenance]
+          properties:
+            schema_version: {type: string, const: yfinance-history-bridge-v1}
+            status: {type: string, enum: [ready, partial]}
+            provider: {type: string, const: yfinance}
+            source: {type: string, const: Yahoo Finance}
+            asset_class: {type: string, enum: [stock, etf]}
+            classification_source: {type: string, const: caller_declared}
+            resolution: {type: string, const: 1d}
+            effective_resolution: {type: string, const: 1d}
+            adjustment: {type: string, enum: [unadjusted, adjusted]}
+            provider_adjustment_semantics: {type: string, const: unknown_or_provider_native}
+            adjustment_confirmed_raw: {type: boolean, const: false}
+            provider_repair_enabled: {type: boolean, const: false}
+            numeric_encoding: {type: string, const: binary_float_projection}
+            volume_encoding: {type: string, const: integer_exact_or_safe_integer_float}
+            canonical: {type: boolean, const: false}
+            point_in_time: {type: boolean, const: false}
+            executable: {type: boolean, const: false}
+            display_only: {type: boolean, const: true}
+            requested_range:
+              type: object
+              additionalProperties: false
+              required: [start, end, semantics]
+              properties:
+                start: {type: string, format: date-time}
+                end: {type: string, format: date-time}
+                semantics: {type: string, const: start_inclusive_end_exclusive}
+            requested_symbols: {type: array, minItems: 1, maxItems: 8, uniqueItems: true, items: {type: string}}
+            returned_symbols: {type: array, items: {type: string}, uniqueItems: true}
+            missing_symbols: {type: array, items: {type: string}, uniqueItems: true}
+            available_at: {type: string, format: date-time}
+            fetched_at: {type: string, format: date-time}
+            source_observed_at: {type: string, format: date-time}
+            request_started_at: {type: string, format: date-time}
+            cache_status: {type: string, enum: [network, fresh_cache, stale_cache]}
+            freshness: {type: string, enum: [retrieved, stale]}
+            coverage:
+              type: object
+              additionalProperties: false
+              required: [requested_start, requested_end, bar_count, per_symbol, gaps, calendar_gaps_assessed]
+              properties:
+                requested_start: {type: string, format: date-time}
+                requested_end: {type: string, format: date-time}
+                bar_count: {type: integer, minimum: 0, maximum: 24000}
+                per_symbol:
+                  type: array
+                  minItems: 1
+                  maxItems: 8
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [symbol, bar_count, first_bar_at, last_bar_at, gaps]
+                    properties:
+                      symbol: {type: string}
+                      bar_count: {type: integer, minimum: 0, maximum: 24000}
+                      first_bar_at: {type: [string, "null"], format: date-time}
+                      last_bar_at: {type: [string, "null"], format: date-time}
+                      gaps: {type: array, maxItems: 8, items: {type: string}}
+                gaps:
+                  type: array
+                  maxItems: 72
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [code]
+                    properties:
+                      code: {type: string}
+                      symbol: {type: string}
+                calendar_gaps_assessed: {type: boolean, const: false}
+            action_coverage:
+              type: object
+              additionalProperties: false
+              required: [dividends, stock_splits, symbol_renames]
+              properties:
+                dividends: {type: string, enum: [provider_field_present, provider_field_unavailable]}
+                stock_splits: {type: string, enum: [provider_field_present, provider_field_unavailable]}
+                symbol_renames: {type: string, const: unsupported}
+            actions:
+              type: array
+              maxItems: 48000
+              items:
+                oneOf:
+                  - type: object
+                    additionalProperties: false
+                    required: [symbol, event_ts_utc, kind, amount, source]
+                    properties:
+                      symbol: {type: string}
+                      event_ts_utc: {type: string, format: date-time}
+                      kind: {type: string, const: DIVIDEND}
+                      amount: {type: string}
+                      source: {type: string, const: Yahoo Finance}
+                  - type: object
+                    additionalProperties: false
+                    required: [symbol, event_ts_utc, kind, ratio, source]
+                    properties:
+                      symbol: {type: string}
+                      event_ts_utc: {type: string, format: date-time}
+                      kind: {type: string, const: SPLIT}
+                      ratio: {type: string}
+                      source: {type: string, const: Yahoo Finance}
+            bars:
+              type: array
+              maxItems: 24000
+              items:
+                type: object
+                additionalProperties: false
+                required: [symbol, asset_class, event_ts_utc, resolution, adjustment, open, high, low, close, adj_close, volume, dividends, stock_splits]
+                properties:
+                  symbol: {type: string}
+                  asset_class: {type: string, enum: [stock, etf]}
+                  event_ts_utc: {type: string, format: date-time}
+                  resolution: {type: string, const: 1d}
+                  adjustment: {type: string, enum: [unadjusted, adjusted]}
+                  open: {type: [string, "null"]}
+                  high: {type: [string, "null"]}
+                  low: {type: [string, "null"]}
+                  close: {type: [string, "null"]}
+                  adj_close: {type: [string, "null"]}
+                  volume: {type: [string, "null"]}
+                  dividends: {type: [string, "null"]}
+                  stock_splits: {type: [string, "null"]}
+            provenance:
+              type: object
+              additionalProperties: false
+              required: [acquired_at, adapter_version, adjustment, cache_status, config_fingerprint, end, include_actions, interval, missing_symbols, prepost, provider, query_fingerprint, requested_at, requested_symbols, returned_symbols, row_count, schema_version, served_at, source, start]
+              properties:
+                acquired_at: {type: string, format: date-time}
+                adapter_version: {type: string}
+                adjustment: {type: string, enum: [unadjusted, adjusted]}
+                cache_status: {type: string, enum: [network, fresh_cache, stale_cache]}
+                config_fingerprint: {type: string, pattern: "^[0-9a-f]{64}$"}
+                end: {type: string, format: date-time}
+                include_actions: {type: boolean, const: true}
+                interval: {type: string, const: 1d}
+                missing_symbols: {type: array, items: {type: string}}
+                prepost: {type: boolean, const: false}
+                provider: {type: string, const: yahoo_finance}
+                query_fingerprint: {type: string, pattern: "^[0-9a-f]{64}$"}
+                requested_at: {type: string, format: date-time}
+                requested_symbols: {type: array, items: {type: string}}
+                returned_symbols: {type: array, items: {type: string}}
+                row_count: {type: integer, minimum: 0, maximum: 24000}
+                schema_version: {type: string, const: research-bars-v1}
+                served_at: {type: string, format: date-time}
+                source: {type: string, const: yfinance}
+                start: {type: string, format: date-time}
+    YFinanceResearchError:
+      type: object
+      additionalProperties: false
+      required: [schema_version, status, error]
+      properties:
+        schema_version: {type: string, const: mdp-yfinance-research-observations-v1}
+        status: {type: string, const: error}
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, retryable]
+          properties:
+            code: {type: string}
+            message: {type: string}
+            retryable: {type: boolean}
     LocalCapturePairChunkSummaryV2:
       type: object
       additionalProperties: false

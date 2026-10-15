@@ -63,6 +63,68 @@ impl CursorSigner {
         })
     }
 
+    /// Sign the narrowly typed Yahoo research cursor under its independent domain.
+    pub(super) fn sign_yfinance_research_cursor(
+        &self,
+        claims: &super::research_cursor::YFinanceResearchCursorClaims,
+    ) -> Result<String, ProviderQueryError> {
+        const PREFIX: &str = "mdpy1:";
+        const DOMAIN: &[u8] = b"lqepoch.mdp.yfinance-research-cursor.v1\0";
+        const MAX_BYTES: usize = super::research_cursor::MAX_RESEARCH_CURSOR_BYTES;
+
+        let body = serde_json::to_vec(claims).map_err(|_| ProviderQueryError::InvalidCursor)?;
+        let mut signed_body = Vec::with_capacity(DOMAIN.len() + body.len());
+        signed_body.extend_from_slice(DOMAIN);
+        signed_body.extend_from_slice(&body);
+        let tag = hmac::sign(self.key.as_ref(), &signed_body);
+        let token = format!("{PREFIX}{}.{}", hex::encode(body), hex::encode(tag));
+        if token.len() > MAX_BYTES {
+            return Err(ProviderQueryError::InvalidCursor);
+        }
+        Ok(token)
+    }
+
+    /// Verify only the Yahoo research cursor domain and its fixed claims type.
+    pub(super) fn verify_yfinance_research_cursor(
+        &self,
+        token: &str,
+    ) -> Result<super::research_cursor::YFinanceResearchCursorClaims, ProviderQueryError> {
+        const PREFIX: &str = "mdpy1:";
+        const DOMAIN: &[u8] = b"lqepoch.mdp.yfinance-research-cursor.v1\0";
+        const MAX_BYTES: usize = super::research_cursor::MAX_RESEARCH_CURSOR_BYTES;
+
+        let encoded = token
+            .strip_prefix(PREFIX)
+            .filter(|value| !value.is_empty())
+            .ok_or(ProviderQueryError::InvalidCursor)?;
+        if token.len() > MAX_BYTES {
+            return Err(ProviderQueryError::InvalidCursor);
+        }
+        let (body_hex, tag_hex) = encoded
+            .split_once('.')
+            .ok_or(ProviderQueryError::InvalidCursor)?;
+        if body_hex.is_empty()
+            || body_hex.len() % 2 != 0
+            || tag_hex.len() != hmac::HMAC_SHA256.tag_len() * 2
+            || !body_hex
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            || !tag_hex
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err(ProviderQueryError::InvalidCursor);
+        }
+        let body = hex::decode(body_hex).map_err(|_| ProviderQueryError::InvalidCursor)?;
+        let tag = hex::decode(tag_hex).map_err(|_| ProviderQueryError::InvalidCursor)?;
+        let mut signed_body = Vec::with_capacity(DOMAIN.len() + body.len());
+        signed_body.extend_from_slice(DOMAIN);
+        signed_body.extend_from_slice(&body);
+        hmac::verify(self.key.as_ref(), &signed_body, &tag)
+            .map_err(|_| ProviderQueryError::InvalidCursor)?;
+        serde_json::from_slice(&body).map_err(|_| ProviderQueryError::InvalidCursor)
+    }
+
     #[cfg(test)]
     pub(super) fn for_test() -> Self {
         Self::for_test_with_key(b"fixed-test-only-market-bars-cursor-signing-key")
@@ -687,7 +749,7 @@ fn cache_identity(
             };
             (
                 "alpaca",
-                "unknown",
+                feed_label,
                 format!("alpaca-rest-stock-bars-{feed_label}-request-v1"),
                 Some(feed_label.to_owned()),
                 NumericEncodingV1::DecimalToken,
@@ -1122,6 +1184,21 @@ mod tests {
         (request, plan)
     }
 
+    fn alpaca_cache_identity(
+        plan: &MarketBarsPlan,
+        feed: AlpacaFeed,
+    ) -> super::super::types::ProviderCacheIdentity {
+        let source = PlannedSource::Alpaca { feed };
+        let mut group = plan.provider_groups[0].clone();
+        group.source = source;
+        for slice in &mut group.slices_recent_to_old {
+            slice.source = Some(source);
+        }
+        super::cache_identity(plan, &group)
+            .expect("valid selected Alpaca cache identity")
+            .0
+    }
+
     fn mutate_envelope(token: &str, update: impl FnOnce(&mut Value)) -> String {
         let encoded = token.strip_prefix(super::CURSOR_PREFIX).expect("v2 cursor");
         let (body_hex, tag_hex) = encoded.split_once('.').expect("body and tag");
@@ -1163,6 +1240,29 @@ mod tests {
         next_request.cursor = Some(next_cursor);
         let next_page = select_page(&next_request, &first_plan).expect("continued page selection");
         assert_ne!(first.cache_key(), next_page.cache_key());
+    }
+
+    #[test]
+    fn alpaca_cache_identity_uses_the_selected_feed_partition() {
+        let (_, plan) = fixture("2026-10-14T19:00:00Z");
+        let sip = alpaca_cache_identity(&plan, AlpacaFeed::Sip);
+        let boats = alpaca_cache_identity(&plan, AlpacaFeed::Boats);
+
+        assert_eq!(sip.provider, "alpaca");
+        assert_eq!(sip.feed, "sip");
+        assert_eq!(sip.requested_feed.as_deref(), Some("sip"));
+        assert_eq!(
+            sip.entitlement_status,
+            market_contracts::BarsEntitlementStatusV1::Unknown
+        );
+        assert_eq!(boats.provider, "alpaca");
+        assert_eq!(boats.feed, "boats");
+        assert_eq!(boats.requested_feed.as_deref(), Some("boats"));
+        assert_eq!(
+            boats.entitlement_status,
+            market_contracts::BarsEntitlementStatusV1::Unknown
+        );
+        assert_ne!(sip.source_scope_id, boats.source_scope_id);
     }
 
     #[test]

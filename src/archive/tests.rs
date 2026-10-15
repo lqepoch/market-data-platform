@@ -884,13 +884,9 @@ fn staging_cleanup_dry_run_and_apply_preserve_active_locked_and_unknown_state() 
     fs::write(&active, b"active").unwrap();
     let locked = staging.join(".locked-dataset-manifest-4294967295-3.tmp");
     fs::write(&locked, b"locked").unwrap();
-    let locked_file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .open(state.join("locked-dataset.lock"))
-        .unwrap();
-    locked_file.lock_exclusive().unwrap();
+    // Hold the same RAII lock used by publishers and cleanup. Its explicit unlock in Drop also
+    // releases the lock if a parallel worker temporarily inherited a duplicate file descriptor.
+    let locked_file = ArchiveDatasetLock::try_acquire(&state.join("locked-dataset.lock")).unwrap();
     let unknown = staging.join(".unknown-dataset-manifest-readback-4294967295-4.tmp");
     fs::write(&unknown, b"unknown").unwrap();
     fs::write(state.join("unknown-dataset.receipt.json"), b"not-json").unwrap();
@@ -914,6 +910,7 @@ fn staging_cleanup_dry_run_and_apply_preserve_active_locked_and_unknown_state() 
     drop(locked_file);
     let unlocked = ArchivePublisher::cleanup_staging(&state, &staging, true).unwrap();
     assert_eq!(unlocked.removed_files, 1);
+    assert_eq!(unlocked.skipped_locked, 0);
     assert!(!locked.exists());
     assert!(unknown.exists());
 }

@@ -81,9 +81,18 @@ and local documentation.
   month-assigned shards (64 sessions/256 KiB each, 1500 references/4 MiB maximum root, and a
   32 MiB/96,000-session referenced-data cap). Session months come only from validated calendar
   phase slices; missing phase mapping retains provisional artifacts without advancing the index.
+  A dedicated Alpaca cache finalizer can establish local source-protocol evidence from an opaque
+  witness attached to a successful pinned-SDK page, while entitlement stays `Unknown`. It derives
+  complete coverage only from an exhausted Broker page-token chain and exact, gap-free rows across
+  trusted calendar phases; the MDP selection cursor remains only a cache-page identity. Each page
+  receipt separately hashes the ordered Core raw-row projection that is persisted, and ambiguous
+  page receive timestamps fail closed; missing minutes remain provisional. Cache hits for this
+  basis require a matching same-process access lease lasting at most 60 seconds and the configured
+  cache TTL, so restart or
+  expiry causes a provider refetch. This does not prove Plus/license rights or open remote writers.
   Expired rows remain audit-only and can still block a materially conflicting cross-provider
-  candidate, while expired cache entries are not served. The store remains provisional without
-  trusted source-admission evidence and is not wired to existing Drive/S3OSS archive writers. See
+  candidate, while expired cache entries are not served. Other provisional sources remain unable to
+  replace verified current versions. The store is not wired to existing Drive/S3OSS archive writers. See
   [the cache reconciliation policy](docs/policies/mdp-cache-reconciliation-v1.md).
 
 ## Public runner commands
@@ -523,3 +532,9 @@ cursors are authenticated and principal-bound; their dedicated signing-key lifec
 documented with the runtime configuration. An explicitly configured Futu Gateway port enables
 only provisional historical attempts for planner NEW/BUFFER slices; it does not claim realtime
 transport, entitlement, feed, or cache authority.
+
+The separate `GET /v1/research/yfinance/daily` endpoint is default-off and returns validated
+Yahoo bridge observations for research display without converting them to Bars V1 or asserting
+raw prices, calendar completeness, PIT availability, or execution authority. Its bounds, research
+principal requirement, newest-first cursor and rollback settings are documented in the same runtime
+guide.

@@ -190,8 +190,8 @@ pub(crate) struct CacheLogicalComparisonV1 {
 
 /// Cache publication does not have the current provider verifier needed to reauthorize an old
 /// receipt. Old rows remain historical price evidence for conflict auditing, never current access
-/// permission. A candidate is labelled verified only at the instant its independent admission
-/// was checked; later reads still require the current verifier.
+/// permission. A source observation is classified at publication; later reads separately require
+/// the signed verifier or an unexpired same-runtime provider-query lease.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CacheLogicalEvidenceStatusV1 {
@@ -200,6 +200,7 @@ pub(crate) enum CacheLogicalEvidenceStatusV1 {
     LegacyUnclassifiedHistorical,
     ProvisionalObservation,
     AdmissionVerifiedAtPublication,
+    SourceProtocolQueryVerifiedAtPublication,
     ExpiredProvisionalHistorical,
     ExpiredAuthorityHistorical,
     UnrevalidatedAuthorityHistorical,
@@ -631,11 +632,7 @@ pub(crate) fn compare_session_overlap(
         candidate_feed: candidate.key.feed.clone(),
         candidate_version_id: candidate.version_id.to_owned(),
         candidate_authority: candidate.authority,
-        candidate_evidence_status: if candidate.authority == CacheAuthorityV1::Authoritative {
-            CacheLogicalEvidenceStatusV1::AdmissionVerifiedAtPublication
-        } else {
-            CacheLogicalEvidenceStatusV1::ProvisionalObservation
-        },
+        candidate_evidence_status: candidate.evidence_status,
         kind: if same_feed {
             CacheLogicalComparisonKindV1::SameFeed
         } else {

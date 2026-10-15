@@ -14,10 +14,10 @@ use axum::{
 };
 use chrono::{DateTime, Datelike, Duration, NaiveDate, SecondsFormat, Utc, Weekday};
 use market_contracts::{
-    AdjustmentV1, AssetClassV1, BarCoverageSegmentV1, BarResolutionV1, BarRowV1,
+    AdjustmentV1, AssetClassV1, BarCoverageGapV1, BarCoverageSegmentV1, BarResolutionV1, BarRowV1,
     BarSourceProvenanceV1, BarsCacheStatusV1, BarsCoverageStatusV1, BarsEntitlementStatusV1,
-    BarsResponseV1, BarsValidationStateV1, DecimalString, EntitlementState, NumericEncodingV1,
-    ProtoTimestampV2,
+    BarsResponseV1, BarsValidationStateV1, CoverageGapReasonV1, DecimalString, EntitlementState,
+    NumericEncodingV1, ProtoTimestampV2,
 };
 use sha2::{Digest, Sha256};
 use tower::ServiceExt;
@@ -57,6 +57,7 @@ const TEST_SOURCE_NAME: &str = "SyntheticVerified fixture only; not ProviderVeri
 enum SyntheticFacts {
     KnownSipAuthorized,
     UnknownFeedAndEntitlement,
+    EmptySipObservation,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -116,6 +117,10 @@ impl SyntheticMarketBarsPageSource for SyntheticPageSource {
                 identity.feed = "unknown".to_owned();
                 identity.entitlement_status = BarsEntitlementStatusV1::Unknown;
             }
+            SyntheticFacts::EmptySipObservation => {
+                identity.feed = "sip".to_owned();
+                identity.entitlement_status = BarsEntitlementStatusV1::Unknown;
+            }
         }
         identity
     }
@@ -146,10 +151,16 @@ impl SyntheticMarketBarsPageSource for SyntheticPageSource {
                 BarsValidationStateV1::Provisional,
                 BarsCoverageStatusV1::Partial,
             ),
+            SyntheticFacts::EmptySipObservation => (
+                "unknown",
+                BarsEntitlementStatusV1::Unknown,
+                BarsValidationStateV1::Provisional,
+                BarsCoverageStatusV1::Partial,
+            ),
         };
         let mut rows = Vec::new();
         let mut cursor = start;
-        while cursor < end {
+        while cursor < end && !matches!(self.facts, SyntheticFacts::EmptySipObservation) {
             let bar_end = (cursor + Duration::minutes(1)).min(end);
             let bar_start_utc = timestamp(&cursor.to_rfc3339_opts(SecondsFormat::Nanos, true))?;
             let bar_end_exclusive_utc =
@@ -180,6 +191,7 @@ impl SyntheticMarketBarsPageSource for SyntheticPageSource {
         }
         let start_utc = timestamp(&start.to_rfc3339_opts(SecondsFormat::Nanos, true))?;
         let end_exclusive_utc = timestamp(&end.to_rfc3339_opts(SecondsFormat::Nanos, true))?;
+        let empty_observation = rows.is_empty();
         let response = BarsResponseV1 {
             schema_version: market_contracts::BARS_SCHEMA_VERSION_V1,
             provider: "alpaca".to_owned(),
@@ -190,14 +202,26 @@ impl SyntheticMarketBarsPageSource for SyntheticPageSource {
             adjustment: AdjustmentV1::Unadjusted,
             rows,
             coverage_status: coverage,
-            segments: vec![BarCoverageSegmentV1 {
-                start_utc,
-                end_exclusive_utc,
-                coverage_status: coverage,
-                provenance_id: Some("synthetic-page-v1".to_owned()),
-                session_instance_id: "provider-local".to_owned(),
-            }],
-            gaps: Vec::new(),
+            segments: if empty_observation {
+                Vec::new()
+            } else {
+                vec![BarCoverageSegmentV1 {
+                    start_utc: start_utc.clone(),
+                    end_exclusive_utc: end_exclusive_utc.clone(),
+                    coverage_status: coverage,
+                    provenance_id: Some("synthetic-page-v1".to_owned()),
+                    session_instance_id: "provider-local".to_owned(),
+                }]
+            },
+            gaps: if empty_observation {
+                vec![BarCoverageGapV1 {
+                    start_utc,
+                    end_exclusive_utc,
+                    reason_code: CoverageGapReasonV1::Unknown,
+                }]
+            } else {
+                Vec::new()
+            },
             source_provenance: vec![BarSourceProvenanceV1 {
                 provenance_id: "synthetic-page-v1".to_owned(),
                 provider: "alpaca".to_owned(),
@@ -456,6 +480,7 @@ async fn harness_with_cache_limits(
             "d".repeat(64),
         )),
         market_bars: Some(Arc::clone(&runtime)),
+        yfinance_research: None,
         query_client,
         reader,
         pair_query_available: false,
@@ -475,6 +500,7 @@ async fn harness_with_cache_limits(
 async fn synthetic_verified_dataset_flows_through_authenticated_http_and_cold_cache_reverify() {
     let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let mut harness = harness(SyntheticFacts::KnownSipAuthorized, false).await;
+    let mut published_verification = None;
     for expected_cache_status in ["miss", "hit"] {
         let response =
             send_bars_request(&harness.app, &test_support::terminal_token("market:read")).await;
@@ -488,7 +514,39 @@ async fn synthetic_verified_dataset_flows_through_authenticated_http_and_cold_ca
             body["rows"][0]["session_instance_id"],
             "XNYS:2026-01-05:regular"
         );
-        assert_eq!(body["verified_at"], serde_json::Value::Null);
+        let verified_at = body["verified_at"].as_str().unwrap_or_else(|| {
+            let segment_states = body["segments"]
+                .as_array()
+                .map(|segments| {
+                    segments
+                        .iter()
+                        .map(|segment| segment["coverage_status"].as_str().unwrap_or("invalid"))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let row_states = body["rows"]
+                .as_array()
+                .map(|rows| {
+                    rows.iter()
+                        .map(|row| row["validation_state"].as_str().unwrap_or("invalid"))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            panic!(
+                "synthetic {expected_cache_status} cache response lacks its local verification timestamp: coverage={:?}, segments={segment_states:?}, rows={row_states:?}, gaps={}, truncated={:?}, entitlement={:?}",
+                body["coverage_status"],
+                body["gaps"].as_array().map_or(0, Vec::len),
+                body["truncated"],
+                body["entitlement_status"],
+            )
+        });
+        let parsed = DateTime::parse_from_rfc3339(verified_at).unwrap();
+        assert!(parsed.timestamp() <= Utc::now().timestamp());
+        if let Some(expected) = &published_verification {
+            assert_eq!(verified_at, expected);
+        } else {
+            published_verification = Some(verified_at.to_owned());
+        }
         assert!(
             body["source_provenance"][0]["source"]
                 .as_str()
@@ -685,6 +743,37 @@ async fn unknown_provider_facts_never_reach_the_attestor_or_claim_authority() {
             .cache_invalidation_events_for_rights_profile(&rights_for_terminal())
             .is_empty(),
         "partial source pages do not advance the complete-session logical index"
+    );
+    harness.supervisor.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn empty_alpaca_observation_bypasses_cache_and_is_fetched_again() {
+    let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
+    let mut harness = harness_without_authority(SyntheticFacts::EmptySipObservation).await;
+
+    for _ in 0..2 {
+        let response =
+            send_bars_request(&harness.app, &test_support::terminal_token("market:read")).await;
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        let body = response_json(response).await;
+        // With no rows or retained source segments, the public aggregate has no observed
+        // source identity. The attempted route alone must not supply a row provenance label.
+        assert_eq!(body["provider"], "unknown");
+        assert_eq!(body["feed"], "unknown");
+        assert_eq!(body["entitlement_status"], "unknown");
+        assert_eq!(body["cache_status"], "bypass");
+        assert!(body["rows"].as_array().unwrap().is_empty());
+        assert!(body["source_provenance"].as_array().unwrap().is_empty());
+        assert!(!body["gaps"].as_array().unwrap().is_empty());
+    }
+
+    assert_eq!(harness.source.fetch_count.load(Ordering::SeqCst), 2);
+    assert!(
+        harness
+            .runtime
+            .cache_invalidation_events_for_rights_profile(&rights_for_terminal())
+            .is_empty()
     );
     harness.supervisor.shutdown().await.unwrap();
 }
@@ -991,6 +1080,7 @@ async fn app_without_market_bars() -> (tempfile::TempDir, axum::Router, QuerySup
         auth_configured: true,
         market_calendar: None,
         market_bars: None,
+        yfinance_research: None,
         query_client,
         reader,
         pair_query_available: false,

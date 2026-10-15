@@ -23,6 +23,8 @@ pub enum ProviderQueryError {
     ProviderUnavailable,
     #[error("provider response is malformed")]
     MalformedResponse,
+    #[error("Yahoo research bridge returned no observations for this window")]
+    EmptyResearchObservation,
     #[error("provider response exceeded the configured bound")]
     ResponseTooLarge,
     #[error("provider page limit was reached before exhaustion")]

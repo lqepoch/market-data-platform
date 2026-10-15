@@ -25,13 +25,25 @@ struct PreparedMarketBars {
     cache_identity: Option<crate::market_query::providers::ProviderCacheIdentity>,
     cache_request: Option<BarsRequestV1>,
     cache_scope: Option<crate::archive::reconciliation::CacheQuerySourceScopeV1>,
-    cache_hit: Option<BarsResponseV1>,
+    cache_hit: Option<CachedMarketBarsPage>,
     cache_status: BarsCacheStatusV1,
+}
+
+#[derive(Clone)]
+struct CachedMarketBarsPage {
+    response: BarsResponseV1,
+    verification: Option<VerifiedCachePageEvidence>,
+}
+
+#[derive(Clone)]
+struct VerifiedCachePageEvidence {
+    verified_at: ProtoTimestampV2,
+    canonical_rows: Vec<market_contracts::BarRowV1>,
 }
 
 enum ProviderFetchOutcome {
     NoProviderGroup,
-    CacheHit(BarsResponseV1),
+    CacheHit(CachedMarketBarsPage),
     Provider(crate::market_query::providers::ProviderPageFetch),
 }
 
@@ -274,13 +286,27 @@ pub(super) async fn run_market_bars_query(
             Ok(ProviderFetchOutcome::NoProviderGroup) => {
                 response_without_provider(&finalize_request, &prepared.plan, prepared.cache_status)?
             }
-            Ok(ProviderFetchOutcome::CacheHit(page)) => response_from_page(
-                &finalize_request,
-                &prepared.plan,
-                prepared.selection.as_ref(),
-                page,
-                prepared.cache_status,
-            )?,
+            Ok(ProviderFetchOutcome::CacheHit(page)) => {
+                let mut response = response_from_page(
+                    &finalize_request,
+                    &prepared.plan,
+                    prepared.selection.as_ref(),
+                    page.response,
+                    prepared.cache_status,
+                )?;
+                if let (Some(verification), Some(identity)) =
+                    (page.verification, prepared.cache_identity.as_ref())
+                {
+                    super::response::attach_verified_at_from_cache(
+                        &mut response,
+                        &verification.verified_at,
+                        &identity.provider,
+                        &identity.feed,
+                        &verification.canonical_rows,
+                    );
+                }
+                response
+            }
             Ok(ProviderFetchOutcome::Provider(page)) => {
                 let selection =
                     prepared
@@ -289,22 +315,27 @@ pub(super) async fn run_market_bars_query(
                         .ok_or(crate::MarketDataError::Provider(
                             crate::error::ProviderFailure::InvalidResponse,
                         ))?;
+                let page_cache_status = provider_page_cache_status(
+                    selection.provider_group().source,
+                    page.response.rows.len(),
+                    prepared.cache_status,
+                );
                 let raw_page = page.response.clone();
                 let cache_page = response_for_cache_page(
                     &finalize_request,
                     &prepared.plan,
                     selection,
                     raw_page.clone(),
-                    prepared.cache_status,
+                    page_cache_status,
                 )?;
                 let response = response_from_page(
                     &finalize_request,
                     &prepared.plan,
                     Some(selection),
                     page.response,
-                    prepared.cache_status,
+                    page_cache_status,
                 )?;
-                publish_cache_observation(
+                let verification = publish_cache_observation(
                     &finalize_runtime,
                     &prepared,
                     raw_page,
@@ -312,6 +343,18 @@ pub(super) async fn run_market_bars_query(
                     page.evidence,
                     &cancellation,
                 );
+                let mut response = response;
+                if let (Some(verification), Some(identity)) =
+                    (verification, prepared.cache_identity.as_ref())
+                {
+                    super::response::attach_verified_at_from_cache(
+                        &mut response,
+                        &verification.verified_at,
+                        &identity.provider,
+                        &identity.feed,
+                        &verification.canonical_rows,
+                    );
+                }
                 response
             }
             Err(error) if provider_error_is_http_fatal(error) => {
@@ -339,7 +382,7 @@ fn cache_preflight(
 ) -> (
     Option<BarsRequestV1>,
     Option<crate::archive::reconciliation::CacheQuerySourceScopeV1>,
-    Option<BarsResponseV1>,
+    Option<CachedMarketBarsPage>,
     BarsCacheStatusV1,
 ) {
     let CachePreflightContext {
@@ -428,6 +471,7 @@ fn cache_preflight(
     };
     let exact_result = match read_result {
         Ok(read) => {
+            let verification = verified_cache_page_evidence(&read, now_unix_seconds);
             let continuation = match (
                 read.bars_evidence.truncated,
                 read.provider_cursor_receipt.as_ref(),
@@ -453,7 +497,10 @@ fn cache_preflight(
                 (
                     Some(cache_request.clone()),
                     Some(source_scope.clone()),
-                    Some(response),
+                    Some(CachedMarketBarsPage {
+                        response,
+                        verification,
+                    }),
                     BarsCacheStatusV1::Hit,
                 )
             } else {
@@ -511,7 +558,7 @@ fn cache_preflight(
 /// partial, truncated, or over-limit cases continue through the normal provider path.
 fn logical_authoritative_cache_page(
     context: LogicalCacheLookupContext<'_>,
-) -> Option<BarsResponseV1> {
+) -> Option<CachedMarketBarsPage> {
     use crate::{
         archive::reconciliation::CacheAuthorityV1,
         session_router::{AlpacaFeed, PlannedSource},
@@ -789,13 +836,70 @@ fn logical_authoritative_cache_page(
     cached_page.truncated = false;
     cached_page.validate().ok()?;
     request.validate_response(&cached_page).ok()?;
-    Some(cached_page)
+    let mut verification = verified_cache_page_evidence(&read.snapshot, now_unix_seconds);
+    if let Some(verification) = verification.as_mut() {
+        verification.canonical_rows.clone_from(&cached_page.rows);
+    }
+    Some(CachedMarketBarsPage {
+        response: cached_page,
+        verification,
+    })
 }
 
 fn parse_utc_timestamp(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .ok()
         .map(|value| value.with_timezone(&Utc))
+}
+
+fn verified_cache_page_evidence(
+    read: &crate::archive::reconciliation::CacheReadResultV1,
+    now_unix_seconds: u64,
+) -> Option<VerifiedCachePageEvidence> {
+    use market_contracts::{BarsCoverageStatusV1, BarsValidationStateV1};
+
+    let verified_at = verified_at_from_cache_receipt(
+        read.current.authority,
+        read.created_at_unix_seconds,
+        now_unix_seconds,
+    )?;
+    if !read.coverage.is_complete_for_key(&read.key)
+        || read.bars_evidence.coverage_status != BarsCoverageStatusV1::Complete
+        || read.bars_evidence.truncated
+        || !read.bars_evidence.gaps.is_empty()
+        || read.bars_evidence.segments.is_empty()
+        || read
+            .bars_evidence
+            .segments
+            .iter()
+            .any(|segment| segment.coverage_status != BarsCoverageStatusV1::Complete)
+        || read.bars_rows.is_empty()
+        || read
+            .bars_rows
+            .iter()
+            .any(|row| row.validation_state != BarsValidationStateV1::Validated)
+    {
+        return None;
+    }
+
+    Some(VerifiedCachePageEvidence {
+        verified_at,
+        canonical_rows: read.bars_rows.clone(),
+    })
+}
+
+fn verified_at_from_cache_receipt(
+    authority: crate::archive::reconciliation::CacheAuthorityV1,
+    created_at_unix_seconds: u64,
+    now_unix_seconds: u64,
+) -> Option<ProtoTimestampV2> {
+    if authority != crate::archive::reconciliation::CacheAuthorityV1::Authoritative
+        || created_at_unix_seconds > now_unix_seconds
+    {
+        return None;
+    }
+    let seconds = i64::try_from(created_at_unix_seconds).ok()?;
+    format_utc_timestamp(DateTime::<Utc>::from_timestamp(seconds, 0)?)
 }
 
 fn request_window(request: &BarsRequestV1) -> crate::Result<crate::session_router::UtcWindow> {
@@ -889,6 +993,104 @@ fn entitlement_state(value: BarsEntitlementStatusV1) -> EntitlementState {
     }
 }
 
+fn provider_page_cache_status(
+    source: crate::session_router::PlannedSource,
+    row_count: usize,
+    current: BarsCacheStatusV1,
+) -> BarsCacheStatusV1 {
+    if row_count == 0
+        && selected_alpaca_feed(source).is_some()
+        && current != BarsCacheStatusV1::Unavailable
+    {
+        BarsCacheStatusV1::Bypass
+    } else {
+        current
+    }
+}
+
+fn selected_alpaca_feed(source: crate::session_router::PlannedSource) -> Option<&'static str> {
+    match source {
+        crate::session_router::PlannedSource::Alpaca {
+            feed: crate::session_router::AlpacaFeed::Sip,
+        } => Some("sip"),
+        crate::session_router::PlannedSource::Alpaca {
+            feed: crate::session_router::AlpacaFeed::Boats,
+        } => Some("boats"),
+        crate::session_router::PlannedSource::Futu
+        | crate::session_router::PlannedSource::YFinanceDailyResearch => None,
+    }
+}
+
+fn alpaca_query_access_publication_is_eligible(
+    selection: &crate::market_query::providers::ProviderPageSelection,
+    identity: Option<&crate::market_query::providers::ProviderCacheIdentity>,
+    scope: &crate::archive::reconciliation::CacheQuerySourceScopeV1,
+    raw: &BarsResponseV1,
+    canonical: &BarsResponseV1,
+    evidence: &crate::archive::reconciliation::ProviderPageEvidenceV1,
+    phase_slices: &[crate::archive::reconciliation::authority::ProviderPhaseSliceV1],
+) -> bool {
+    let Some(expected_feed) = selected_alpaca_feed(selection.provider_group().source) else {
+        return false;
+    };
+    let Some(identity) = identity else {
+        return false;
+    };
+    let page_count = evidence.alpaca_query_access_pages.len();
+    let provenance_matches = |response: &BarsResponseV1| {
+        !response.source_provenance.is_empty()
+            && response.source_provenance.iter().all(|provenance| {
+                provenance.provider == "alpaca"
+                    && provenance.feed == expected_feed
+                    && provenance.entitlement_status == BarsEntitlementStatusV1::Unknown
+                    && provenance.numeric_encoding
+                        == market_contracts::NumericEncodingV1::DecimalToken
+            })
+    };
+
+    group_contains_only_old_verified_slices(selection.provider_group())
+        && !phase_slices.is_empty()
+        && (1..=crate::archive::reconciliation::alpaca_query_access::MAX_ALPACA_QUERY_ACCESS_PAGES)
+            .contains(&page_count)
+        && u32::try_from(page_count).ok() == evidence.pages_seen
+        && evidence.response_observed_at_utc.is_some()
+        && evidence
+            .source_observation_sha256
+            .as_deref()
+            .is_some_and(|digest| {
+                digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+        && evidence.truncated == raw.truncated
+        && evidence.truncated == canonical.truncated
+        && identity.provider == "alpaca"
+        && identity.feed == expected_feed
+        && identity.requested_feed.as_deref() == Some(expected_feed)
+        && identity.entitlement_status == BarsEntitlementStatusV1::Unknown
+        && identity.numeric_encoding == market_contracts::NumericEncodingV1::DecimalToken
+        && identity.effective_resolution == selection.provider_group().resolution
+        && identity.session_instance_ids == scope.session_instance_ids
+        && identity.market_calendar_version.as_deref() == scope.market_calendar_version.as_deref()
+        && identity.source_scope_id == scope.source_scope_id
+        && scope.provider == "alpaca"
+        && scope.feed == expected_feed
+        && scope.entitlement == EntitlementState::Unknown
+        && scope.numeric_encoding == market_contracts::NumericEncodingV1::DecimalToken
+        && scope.effective_resolution == selection.provider_group().resolution
+        && raw.provider == "alpaca"
+        && raw.feed == expected_feed
+        && raw.entitlement_status == BarsEntitlementStatusV1::Unknown
+        && canonical.provider == "alpaca"
+        && canonical.feed == expected_feed
+        && canonical.entitlement_status == BarsEntitlementStatusV1::Unknown
+        && !raw.rows.is_empty()
+        && !canonical.rows.is_empty()
+        && provenance_matches(raw)
+        && provenance_matches(canonical)
+}
+
 fn publish_cache_observation(
     runtime: &MarketBarsRuntime,
     prepared: &PreparedMarketBars,
@@ -896,20 +1098,22 @@ fn publish_cache_observation(
     cache_page: BarsResponseV1,
     evidence: crate::archive::reconciliation::ProviderPageEvidenceV1,
     cancellation: &crate::cancellation::CancellationToken,
-) {
+) -> Option<VerifiedCachePageEvidence> {
     let (Some(cache), Some(request), Some(scope)) = (
         runtime.cache.as_ref(),
         prepared.cache_request.as_ref(),
         prepared.cache_scope.as_ref(),
     ) else {
-        return;
+        return None;
     };
     if prepared.cache_status != BarsCacheStatusV1::Miss || cancellation.is_cancelled() {
-        return;
+        return None;
     }
-    let Some(selection) = prepared.selection.as_ref() else {
-        return;
-    };
+    let selection = prepared.selection.as_ref()?;
+    if selected_alpaca_feed(selection.provider_group().source).is_some() && raw_page.rows.is_empty()
+    {
+        return None;
+    }
     let phase_slices = provider_phase_slices(selection).unwrap_or_default();
     let fallback_policy =
         crate::archive::reconciliation::authority::ReconciliationPolicyV1::legacy_same_feed(
@@ -969,7 +1173,7 @@ fn publish_cache_observation(
             ) {
                 Ok(admission) if admission.dataset_binding().is_some() => {
                     if cancellation.is_cancelled() {
-                        return;
+                        return None;
                     }
                     match cache.publish_bars_responses_with_admission(
                         input(),
@@ -985,7 +1189,14 @@ fn publish_cache_observation(
                                 &scope.rights_profile_sha256,
                                 now_unix_seconds,
                             );
-                            return;
+                            return authoritative_page_after_publish(
+                                runtime,
+                                cache,
+                                request,
+                                scope,
+                                &result,
+                                cancellation,
+                            );
                         }
                         Err(
                             crate::archive::reconciliation::CacheReconciliationError::AdmissionMismatch
@@ -1002,7 +1213,7 @@ fn publish_cache_observation(
                             // Conflicts and uncertain/failed atomic commits must not be retried as
                             // a lower-authority write. Leave their audit/current state intact.
                             tracing::warn!("market-bars signed cache publication was unavailable");
-                            return;
+                            return None;
                         }
                     }
                 }
@@ -1016,11 +1227,55 @@ fn publish_cache_observation(
         }
     }
 
+    // This local query-access basis is independent of the signed admission path above. It records
+    // only a real, non-empty SDK page for the selected feed; entitlement remains Unknown. The A04
+    // publisher revalidates the opaque witness chain and grants only its short same-process lease.
+    if selected_alpaca_feed(selection.provider_group().source).is_some()
+        && scope.entitlement == EntitlementState::Unknown
+        && alpaca_query_access_publication_is_eligible(
+            selection,
+            prepared.cache_identity.as_ref(),
+            scope,
+            &raw_page,
+            &cache_page,
+            &evidence,
+            &phase_slices,
+        )
+    {
+        match cache.publish_bars_responses_with_alpaca_query_access_cancellable(
+            input(),
+            now_unix_seconds,
+            policy,
+            cancellation,
+        ) {
+            Ok(result) => {
+                consume_cache_invalidation(
+                    runtime,
+                    &result,
+                    &scope.rights_profile_sha256,
+                    now_unix_seconds,
+                );
+                return authoritative_page_after_publish(
+                    runtime,
+                    cache,
+                    request,
+                    scope,
+                    &result,
+                    cancellation,
+                );
+            }
+            Err(_) => {
+                tracing::warn!("market-bars Alpaca query-access cache publication was unavailable")
+            }
+        }
+        return None;
+    }
+
     // Keep SDK-normalized provider rows in the raw Parquet view and the trusted-calendar mapping
     // in the canonical view. The cache facade verifies their exact bar identity relation; it must
     // not treat provider-local session IDs as trusted calendar evidence.
     if cancellation.is_cancelled() {
-        return;
+        return None;
     }
     match cache.publish_bars_responses_with_policy(input(), now_unix_seconds, policy) {
         Ok(result) => consume_cache_invalidation(
@@ -1031,6 +1286,40 @@ fn publish_cache_observation(
         ),
         Err(_) => tracing::warn!("market-bars provisional cache publication was unavailable"),
     }
+    None
+}
+
+fn authoritative_page_after_publish(
+    runtime: &MarketBarsRuntime,
+    cache: &crate::archive::reconciliation::CacheVersionStoreV1,
+    request: &BarsRequestV1,
+    scope: &crate::archive::reconciliation::CacheQuerySourceScopeV1,
+    result: &crate::archive::reconciliation::CachePublishResultV1,
+    cancellation: &crate::cancellation::CancellationToken,
+) -> Option<VerifiedCachePageEvidence> {
+    use crate::archive::reconciliation::CacheAuthorityV1;
+
+    if cancellation.is_cancelled() || result.authority != CacheAuthorityV1::Authoritative {
+        return None;
+    }
+    let published_current = result.current.as_ref()?;
+    if published_current.authority != CacheAuthorityV1::Authoritative
+        || published_current.version_id != result.published_version_id
+    {
+        return None;
+    }
+    let key = crate::archive::reconciliation::CacheKeyV1::from_request(request, scope).ok()?;
+    let now_unix_seconds = unix_seconds_now();
+    let read = if let Some(authority) = runtime.authority.as_ref() {
+        cache.load_current_with_verifier(&key, now_unix_seconds, authority.verifier.as_ref())
+    } else {
+        cache.load_current_cancellable(&key, now_unix_seconds, cancellation)
+    }
+    .ok()?;
+    if cancellation.is_cancelled() || &read.current != published_current {
+        return None;
+    }
+    verified_cache_page_evidence(&read, unix_seconds_now())
 }
 
 fn provider_phase_slices(
@@ -1264,7 +1553,7 @@ mod authority_eligibility_tests {
 
     use super::{
         group_contains_only_old_verified_slices, logical_cache_mode_allows_alpaca,
-        logical_cache_source_matches,
+        logical_cache_source_matches, provider_page_cache_status, verified_at_from_cache_receipt,
     };
 
     fn slice(rank: SessionRank) -> PlannedSlice {
@@ -1387,5 +1676,80 @@ mod authority_eligibility_tests {
             "unknown",
             EntitlementState::Unknown,
         ));
+        assert!(!logical_cache_source_matches(
+            "boats",
+            "alpaca",
+            "boats",
+            EntitlementState::Unknown,
+        ));
+    }
+
+    #[test]
+    fn empty_alpaca_pages_bypass_cache_without_changing_other_routes() {
+        use market_contracts::BarsCacheStatusV1;
+
+        let sip = PlannedSource::Alpaca {
+            feed: AlpacaFeed::Sip,
+        };
+        let boats = PlannedSource::Alpaca {
+            feed: AlpacaFeed::Boats,
+        };
+
+        assert_eq!(
+            provider_page_cache_status(sip, 0, BarsCacheStatusV1::Miss),
+            BarsCacheStatusV1::Bypass
+        );
+        assert_eq!(
+            provider_page_cache_status(boats, 0, BarsCacheStatusV1::Miss),
+            BarsCacheStatusV1::Bypass
+        );
+        assert_eq!(
+            provider_page_cache_status(sip, 1, BarsCacheStatusV1::Miss),
+            BarsCacheStatusV1::Miss
+        );
+        assert_eq!(
+            provider_page_cache_status(sip, 0, BarsCacheStatusV1::Unavailable),
+            BarsCacheStatusV1::Unavailable
+        );
+        assert_eq!(
+            provider_page_cache_status(PlannedSource::Futu, 0, BarsCacheStatusV1::Miss),
+            BarsCacheStatusV1::Miss
+        );
+    }
+
+    #[test]
+    fn cache_receipt_timestamp_requires_authority_and_cannot_be_from_the_future() {
+        use crate::archive::reconciliation::CacheAuthorityV1;
+
+        let created_at = 1_800_000_000;
+        let verified_at = verified_at_from_cache_receipt(
+            CacheAuthorityV1::Authoritative,
+            created_at,
+            created_at + 1,
+        )
+        .expect("authoritative persisted receipt timestamp");
+        assert_eq!(
+            chrono::DateTime::parse_from_rfc3339(verified_at.as_str())
+                .expect("canonical UTC timestamp")
+                .timestamp(),
+            i64::try_from(created_at).expect("fixture timestamp fits")
+        );
+        assert!(verified_at.as_str().ends_with('Z'));
+        assert_eq!(
+            verified_at_from_cache_receipt(
+                CacheAuthorityV1::Provisional,
+                created_at,
+                created_at + 1,
+            ),
+            None
+        );
+        assert_eq!(
+            verified_at_from_cache_receipt(
+                CacheAuthorityV1::Authoritative,
+                created_at + 1,
+                created_at,
+            ),
+            None
+        );
     }
 }

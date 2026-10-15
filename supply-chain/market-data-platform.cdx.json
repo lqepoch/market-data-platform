@@ -3,7 +3,7 @@
   "components": [
     {
       "author": "Weiming Zhai <wmzhai@gmail.com>",
-      "bom-ref": "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#alpaca-core@0.33.3",
+      "bom-ref": "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#alpaca-core@0.33.3",
       "description": "Shared primitives for the alpaca-rust workspace",
       "externalReferences": [
         {
@@ -25,14 +25,14 @@
         }
       ],
       "name": "alpaca-core",
-      "purl": "pkg:cargo/alpaca-core@0.33.3?vcs_url=git%2Bhttps://github.com/lqepoch/broker-connectors%4099e1d36f864d1e89e8cfba95651d29920e2f4c5a",
+      "purl": "pkg:cargo/alpaca-core@0.33.3?vcs_url=git%2Bhttps://github.com/lqepoch/broker-connectors%408c3d99c192d07049cd0d4b23e21257aebab9408f",
       "scope": "required",
       "type": "library",
       "version": "0.33.3"
     },
     {
       "author": "Weiming Zhai <wmzhai@gmail.com>",
-      "bom-ref": "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#alpaca-data@0.33.3",
+      "bom-ref": "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#alpaca-data@0.33.3",
       "description": "Rust client for the Alpaca Market Data HTTP API",
       "externalReferences": [
         {
@@ -54,14 +54,14 @@
         }
       ],
       "name": "alpaca-data",
-      "purl": "pkg:cargo/alpaca-data@0.33.3?vcs_url=git%2Bhttps://github.com/lqepoch/broker-connectors%4099e1d36f864d1e89e8cfba95651d29920e2f4c5a",
+      "purl": "pkg:cargo/alpaca-data@0.33.3?vcs_url=git%2Bhttps://github.com/lqepoch/broker-connectors%408c3d99c192d07049cd0d4b23e21257aebab9408f",
       "scope": "required",
       "type": "library",
       "version": "0.33.3"
     },
     {
       "author": "Weiming Zhai <wmzhai@gmail.com>",
-      "bom-ref": "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#alpaca-rest-http@0.33.3",
+      "bom-ref": "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#alpaca-rest-http@0.33.3",
       "description": "Shared HTTP transport layer for the alpaca-rust workspace",
       "externalReferences": [
         {
@@ -83,13 +83,13 @@
         }
       ],
       "name": "alpaca-rest-http",
-      "purl": "pkg:cargo/alpaca-rest-http@0.33.3?vcs_url=git%2Bhttps://github.com/lqepoch/broker-connectors%4099e1d36f864d1e89e8cfba95651d29920e2f4c5a",
+      "purl": "pkg:cargo/alpaca-rest-http@0.33.3?vcs_url=git%2Bhttps://github.com/lqepoch/broker-connectors%408c3d99c192d07049cd0d4b23e21257aebab9408f",
       "scope": "required",
       "type": "library",
       "version": "0.33.3"
     },
     {
-      "bom-ref": "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#alpaca-rest-read@0.1.0",
+      "bom-ref": "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#alpaca-rest-read@0.1.0",
       "description": "Bounded, read-only Alpaca REST market-data adapter",
       "externalReferences": [
         {
@@ -103,13 +103,13 @@
         }
       ],
       "name": "alpaca-rest-read",
-      "purl": "pkg:cargo/alpaca-rest-read@0.1.0?vcs_url=git%2Bhttps://github.com/lqepoch/broker-connectors%4099e1d36f864d1e89e8cfba95651d29920e2f4c5a",
+      "purl": "pkg:cargo/alpaca-rest-read@0.1.0?vcs_url=git%2Bhttps://github.com/lqepoch/broker-connectors%408c3d99c192d07049cd0d4b23e21257aebab9408f",
       "scope": "required",
       "type": "library",
       "version": "0.1.0"
     },
     {
-      "bom-ref": "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#alpaca-stream@0.1.0",
+      "bom-ref": "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#alpaca-stream@0.1.0",
       "description": "Bounded, read-only Alpaca OPRA/indicative options WebSocket protocol",
       "externalReferences": [
         {
@@ -123,13 +123,13 @@
         }
       ],
       "name": "alpaca-stream",
-      "purl": "pkg:cargo/alpaca-stream@0.1.0?vcs_url=git%2Bhttps://github.com/lqepoch/broker-connectors%4099e1d36f864d1e89e8cfba95651d29920e2f4c5a",
+      "purl": "pkg:cargo/alpaca-stream@0.1.0?vcs_url=git%2Bhttps://github.com/lqepoch/broker-connectors%408c3d99c192d07049cd0d4b23e21257aebab9408f",
       "scope": "required",
       "type": "library",
       "version": "0.1.0"
     },
     {
-      "bom-ref": "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#broker-ports@0.1.0",
+      "bom-ref": "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#broker-ports@0.1.0",
       "description": "Provider-neutral, read-only market-data port contracts",
       "externalReferences": [
         {
@@ -143,7 +143,7 @@
         }
       ],
       "name": "broker-ports",
-      "purl": "pkg:cargo/broker-ports@0.1.0?vcs_url=git%2Bhttps://github.com/lqepoch/broker-connectors%4099e1d36f864d1e89e8cfba95651d29920e2f4c5a",
+      "purl": "pkg:cargo/broker-ports@0.1.0?vcs_url=git%2Bhttps://github.com/lqepoch/broker-connectors%408c3d99c192d07049cd0d4b23e21257aebab9408f",
       "scope": "required",
       "type": "library",
       "version": "0.1.0"
@@ -9158,12 +9158,12 @@
         "registry+https://github.com/rust-lang/crates.io-index#url@2.5.8",
         "registry+https://github.com/rust-lang/crates.io-index#zeroize@1.9.1"
       ],
-      "ref": "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#alpaca-core@0.33.3"
+      "ref": "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#alpaca-core@0.33.3"
     },
     {
       "dependsOn": [
-        "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#alpaca-core@0.33.3",
-        "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#alpaca-rest-http@0.33.3",
+        "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#alpaca-core@0.33.3",
+        "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#alpaca-rest-http@0.33.3",
         "registry+https://github.com/rust-lang/crates.io-index#chrono@0.4.45",
         "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.13.5",
         "registry+https://github.com/rust-lang/crates.io-index#rust_decimal@1.43.0",
@@ -9173,11 +9173,11 @@
         "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.2",
         "registry+https://github.com/rust-lang/crates.io-index#zeroize@1.9.1"
       ],
-      "ref": "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#alpaca-data@0.33.3"
+      "ref": "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#alpaca-data@0.33.3"
     },
     {
       "dependsOn": [
-        "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#alpaca-core@0.33.3",
+        "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#alpaca-core@0.33.3",
         "registry+https://github.com/rust-lang/crates.io-index#reqwest@0.13.5",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
         "registry+https://github.com/rust-lang/crates.io-index#serde_json@1.0.151",
@@ -9185,23 +9185,24 @@
         "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.2",
         "registry+https://github.com/rust-lang/crates.io-index#zeroize@1.9.1"
       ],
-      "ref": "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#alpaca-rest-http@0.33.3"
+      "ref": "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#alpaca-rest-http@0.33.3"
     },
     {
       "dependsOn": [
-        "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#alpaca-data@0.33.3",
-        "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#alpaca-rest-http@0.33.3",
+        "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#alpaca-data@0.33.3",
+        "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#alpaca-rest-http@0.33.3",
         "registry+https://github.com/rust-lang/crates.io-index#chrono@0.4.45",
         "git+https://github.com/lqepoch/trading-core?rev=f793be47ab90ebff9f530c8b08f41db5e774e4e5#market-contracts@0.1.0",
         "registry+https://github.com/rust-lang/crates.io-index#serde@1.0.229",
+        "registry+https://github.com/rust-lang/crates.io-index#sha2@0.10.9",
         "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.2",
         "registry+https://github.com/rust-lang/crates.io-index#zeroize@1.9.1"
       ],
-      "ref": "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#alpaca-rest-read@0.1.0"
+      "ref": "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#alpaca-rest-read@0.1.0"
     },
     {
       "dependsOn": [
-        "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#broker-ports@0.1.0",
+        "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#broker-ports@0.1.0",
         "registry+https://github.com/rust-lang/crates.io-index#chrono@0.4.45",
         "registry+https://github.com/rust-lang/crates.io-index#futures-util@0.3.34",
         "git+https://github.com/lqepoch/trading-core?rev=f793be47ab90ebff9f530c8b08f41db5e774e4e5#market-contracts@0.1.0",
@@ -9211,7 +9212,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#tokio-tungstenite@0.30.0",
         "registry+https://github.com/rust-lang/crates.io-index#zeroize@1.9.1"
       ],
-      "ref": "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#alpaca-stream@0.1.0"
+      "ref": "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#alpaca-stream@0.1.0"
     },
     {
       "dependsOn": [
@@ -9220,7 +9221,7 @@
         "registry+https://github.com/rust-lang/crates.io-index#sha2@0.10.9",
         "registry+https://github.com/rust-lang/crates.io-index#tokio@1.53.2"
       ],
-      "ref": "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#broker-ports@0.1.0"
+      "ref": "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#broker-ports@0.1.0"
     },
     {
       "dependsOn": [
@@ -9245,13 +9246,13 @@
     },
     {
       "dependsOn": [
-        "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#alpaca-rest-read@0.1.0",
-        "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#alpaca-stream@0.1.0",
+        "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#alpaca-rest-read@0.1.0",
+        "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#alpaca-stream@0.1.0",
         "registry+https://github.com/rust-lang/crates.io-index#arrow-array@60.0.0",
         "registry+https://github.com/rust-lang/crates.io-index#arrow-schema@60.0.0",
         "registry+https://github.com/rust-lang/crates.io-index#aws-lc-rs@1.18.1",
         "registry+https://github.com/rust-lang/crates.io-index#axum@0.8.9",
-        "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#broker-ports@0.1.0",
+        "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#broker-ports@0.1.0",
         "registry+https://github.com/rust-lang/crates.io-index#chrono@0.4.45",
         "registry+https://github.com/rust-lang/crates.io-index#clap@4.5.53",
         "git+https://github.com/lqepoch/trading-core?rev=f793be47ab90ebff9f530c8b08f41db5e774e4e5#exact-decimal@0.1.0",

@@ -62,6 +62,35 @@ the verified research channel. No order operation is added.
   native research observations; `auto_adjust=false` does not prove as-traded
   unadjusted prices. Unknown adjustment semantics therefore cannot satisfy the
   strict shared Bars V1 contract, including requests before 2016.
+- `MDP_YFINANCE_RESEARCH_API_ENABLED` separately enables
+  `GET /v1/research/yfinance/daily`; it defaults to false and does not enable
+  `/v1/market/bars`. This runtime constructs only the Yahoo bridge caller and the
+  existing MDP cursor signer. The endpoint also needs the bridge enabled and a
+  server-side bridge bearer; otherwise it returns a typed 503. It accepts a
+  research-channel `market:read` principal only. Browser clients must call it
+  through the research BFF; no bridge bearer or cursor-signing secret is exposed.
+  It accepts 1–8 unique uppercase stock/ETF symbols, UTC RFC 3339
+  `start_utc` inclusive and `end_utc` exclusive, and `adjustment=unadjusted|adjusted`
+  (default `unadjusted`). The full range is bounded to 100 years, 1970 onward,
+  with `end_utc` at most one day beyond the request clock. Pages are newest-first,
+  contiguous and at most 3650 days; repeat the full original query and pass the
+  opaque `cursor` unchanged to continue toward older dates. Each bridge call batches
+  the requested symbols once and is bounded to 24,000 rows and 16 MiB. Cursors use
+  a separate HMAC domain under `MDP_MARKET_CURSOR_SIGNING_KEY`, bind the full query
+  and verified principal, and expire after 30 minutes. With no configured key they
+  use a process-local CSPRNG key, so restart invalidates them.
+  A 200 response retains the validated `yfinance-history-bridge-v1` payload and
+  explicit missing-symbol/gap fields. It labels adjustment semantics as
+  `unknown_or_provider_native`, raw confirmation as false, numeric encoding as
+  `binary_float_projection`, and the observation as display-only, noncanonical,
+  non-PIT and nonexecutable. The outer source-observation hash covers the exact
+  HTTP body received from the Stock bridge; `fetched_at_utc` is MDP receipt time,
+  not historical availability. An all-empty page, malformed response or bridge
+  failure is an error rather than evidence of a closed market. This endpoint does
+  not convert data to Core Bars V1, merge it with Alpaca/Futu, assert calendar
+  coverage, or use the market-bars cache/archive promotion path. To roll back,
+  set the API flag to false or unset it and restart; Stock network and bridge
+  permissions remain separately controlled.
 - Optional `MDP_MARKET_CACHE_ROOT` must be dedicated and empty/new or bear the
   cache's exact private ownership marker. Non-empty foreign directories are rejected
   without permission/content changes. Do not select QQQ Drive or Stock S3/OSS roots.
@@ -138,11 +167,22 @@ unsupported uses 422, and authentication, quotas, timeouts and expired cursors k
 specific statuses. Unknown actual feed and entitlement remain unknown. Returned
 source segments and rows cannot be replaced by a single source label.
 
-Cache configuration does not make provisional input authoritative. Provider route policy only
-allows an attempt; production provider admission and material conflict checks are still required for
-trusted historical promotion. Synthetic test
-admission is excluded from production. Existing archive publication gates remain
-closed. See `policies/mdp-cache-reconciliation-v1.md` for lineage and rollback.
+Cache configuration and route policy only permit an attempt. A separate local Alpaca path accepts
+the opaque witness attached by the pinned Broker SDK after a successful nonempty SIP/BOATS query.
+It binds the exact request, page chain and raw-row projection, and derives completeness from the
+trusted calendar timeline. Missing bars or an incomplete chain remain provisional. The current
+producer fetches one SDK page per request; the bounded chain validator does not by itself implement
+cross-request multi-page reconciliation. Complete versions receive a same-process exact-key/version
+access lease of at most 60 seconds; restart or lease expiry requires a new provider read.
+Entitlement remains unknown. Independent signed admission is still required by the separate
+external archive boundary, which remains closed; synthetic admission is excluded from production.
+
+`verified_at` is propagated only from a complete authoritative cache version that passes current
+readback and access checks. A fresh publication must still be the current published version on
+exact-key reread. Mapped rows must match the verified canonical observations with no gaps or
+truncation. This local receipt timestamp does not grant entitlement: unknown entitlement can keep
+the HTTP coverage summary partial and row/segment state provisional. See
+`policies/mdp-cache-reconciliation-v1.md` for lineage and rollback.
 
 `GET /v1/market/cache/status` requires the same verified `market:read` delegation and includes at
 most 128 in-memory invalidation/readback summaries filtered by the verified principal and current

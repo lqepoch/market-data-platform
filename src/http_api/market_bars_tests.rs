@@ -957,6 +957,7 @@ async fn bars_route_authenticates_before_research_gate_and_ignores_identity_head
         auth_configured: true,
         market_calendar: None,
         market_bars: None,
+        yfinance_research: None,
         query_client,
         reader,
         pair_query_available: false,

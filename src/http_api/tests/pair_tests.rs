@@ -200,6 +200,7 @@ fn pair_service_with_deadline(
         auth_configured: auth.is_some(),
         market_calendar: None,
         market_bars: None,
+        yfinance_research: None,
         query_client,
         reader: query_reader,
         #[cfg(target_os = "linux")]

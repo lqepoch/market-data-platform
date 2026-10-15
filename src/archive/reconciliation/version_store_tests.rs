@@ -137,6 +137,7 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
             sequence_gap_count: None,
             truncated: false,
             provider_cursor_cache_input: None,
+            alpaca_query_access_pages: Vec::new(),
         }
     }
 
@@ -335,6 +336,7 @@ fn synthetic_verified_version_store_preserves_raw_rows_and_rolls_back_after_work
             )
             .unwrap(),
         ),
+        alpaca_query_access_pages: Vec::new(),
     };
     canonical_page.cache_status = BarsCacheStatusV1::Miss;
     let page_publish = store

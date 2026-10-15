@@ -15,6 +15,7 @@ mod error;
 mod futu;
 mod projection;
 mod provider_policy;
+pub(crate) mod research_cursor;
 mod types;
 mod yfinance;
 
@@ -40,7 +41,122 @@ pub use error::{ProviderConfigError, ProviderQueryError};
 pub use types::{
     ProviderCacheIdentity, ProviderCachePolicy, ProviderPageFetch, ProviderRequestContext,
 };
-pub use yfinance::YFinanceResearchObservationPage;
+pub use yfinance::{
+    YFinanceResearchAdjustment, YFinanceResearchObservationPage, YFinanceResearchWindowRequest,
+};
+
+/// Independent page selection for the provider-native Yahoo research endpoint.
+pub(crate) struct YFinanceResearchPageSelection {
+    pub(crate) window: research_cursor::ResearchWindow,
+    pub(crate) page_index: u32,
+    request_sha256: String,
+}
+
+/// Isolated Yahoo research runtime. This does not initialize Alpaca/Futu, Core bars, or cache
+/// authority; a configured bridge remains a provisional display-only observation source.
+pub(crate) struct YFinanceResearchRuntime {
+    bridge: yfinance::YFinanceBridge,
+    cursor_signer: cursor::CursorSigner,
+}
+
+impl fmt::Debug for YFinanceResearchRuntime {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("YFinanceResearchRuntime")
+            .field("bridge", &self.bridge)
+            .field("cursor_signer", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl YFinanceResearchRuntime {
+    /// Build the independent endpoint only when its explicit default-off feature flag is true.
+    pub(crate) fn from_environment() -> Result<Option<Self>, ProviderConfigError> {
+        let enabled = match env::var("MDP_YFINANCE_RESEARCH_API_ENABLED") {
+            Ok(value) => parse_research_api_enabled(Some(&value))?,
+            Err(env::VarError::NotPresent) => parse_research_api_enabled(None)?,
+            Err(env::VarError::NotUnicode(_)) => return Err(ProviderConfigError::InvalidValue),
+        };
+        if !enabled {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            bridge: yfinance::YFinanceBridge::from_environment()?,
+            cursor_signer: cursor::CursorSigner::from_environment()?,
+        }))
+    }
+
+    pub(crate) fn select_page(
+        &self,
+        request: &YFinanceResearchWindowRequest,
+        cursor: Option<&str>,
+        principal_scope_sha256: &str,
+        now_unix_seconds: u64,
+    ) -> Result<YFinanceResearchPageSelection, ProviderQueryError> {
+        let request_sha256 = research_cursor::request_sha256(
+            &request.symbols,
+            request.asset_class,
+            request.start_utc,
+            request.end_utc,
+            request.adjustment,
+        );
+        let (window, page_index) = research_cursor::select_window(
+            &self.cursor_signer,
+            cursor,
+            &request_sha256,
+            principal_scope_sha256,
+            request.start_utc,
+            request.end_utc,
+            now_unix_seconds,
+        )?;
+        Ok(YFinanceResearchPageSelection {
+            window,
+            page_index,
+            request_sha256,
+        })
+    }
+
+    pub(crate) fn cursor_for_previous_page(
+        &self,
+        selection: &YFinanceResearchPageSelection,
+        full_start_utc: chrono::DateTime<chrono::Utc>,
+        principal_scope_sha256: &str,
+        now_unix_seconds: u64,
+    ) -> Result<Option<String>, ProviderQueryError> {
+        let Some(window) = research_cursor::previous_page(selection.window, full_start_utc) else {
+            return Ok(None);
+        };
+        let page_index = selection
+            .page_index
+            .checked_add(1)
+            .ok_or(ProviderQueryError::InvalidCursor)?;
+        research_cursor::issue_cursor(
+            &self.cursor_signer,
+            &selection.request_sha256,
+            principal_scope_sha256,
+            window,
+            page_index,
+            now_unix_seconds,
+        )
+        .map(Some)
+    }
+
+    pub(crate) async fn fetch_window(
+        &self,
+        request: &YFinanceResearchWindowRequest,
+        context: &ProviderRequestContext,
+    ) -> Result<YFinanceResearchObservationPage, ProviderQueryError> {
+        self.bridge.fetch_research_window(request, context).await
+    }
+}
+
+fn parse_research_api_enabled(value: Option<&str>) -> Result<bool, ProviderConfigError> {
+    match value {
+        None | Some("false") => Ok(false),
+        Some("true") => Ok(true),
+        Some(_) => Err(ProviderConfigError::InvalidValue),
+    }
+}
 
 /// Runtime clients for read-only Alpaca history, the existing Futu Gateway, and the isolated
 /// provider-native Yahoo research bridge.
@@ -416,7 +532,10 @@ fn parse_optional_port_value(value: Option<&str>) -> Result<Option<u16>, Provide
 mod tests {
     use crate::session_router::{AlpacaFeed, DataInterval, Provider, SessionPhase};
 
-    use super::{ProviderConfigError, alpaca_source_capabilities, parse_optional_port_value};
+    use super::{
+        ProviderConfigError, alpaca_source_capabilities, parse_optional_port_value,
+        parse_research_api_enabled,
+    };
 
     #[test]
     fn advertises_only_configured_alpaca_code_paths_and_never_entitlement() {
@@ -452,6 +571,17 @@ mod tests {
         );
         assert_eq!(
             parse_optional_port_value(Some("not-a-port")),
+            Err(ProviderConfigError::InvalidValue)
+        );
+    }
+
+    #[test]
+    fn yahoo_research_api_feature_is_default_off_and_strictly_boolean() {
+        assert_eq!(parse_research_api_enabled(None), Ok(false));
+        assert_eq!(parse_research_api_enabled(Some("false")), Ok(false));
+        assert_eq!(parse_research_api_enabled(Some("true")), Ok(true));
+        assert_eq!(
+            parse_research_api_enabled(Some("yes")),
             Err(ProviderConfigError::InvalidValue)
         );
     }

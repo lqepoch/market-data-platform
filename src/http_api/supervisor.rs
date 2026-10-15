@@ -18,6 +18,7 @@ use crate::{
     MarketDataError,
     aggregate::TradeMinuteBarV1,
     cancellation::CancellationToken,
+    market_query::providers::{ProviderQueryError, YFinanceResearchObservationPage},
     remote_query::{DatasetNamespace, RemoteArchiveReader, RemoteQuerySummary},
 };
 
@@ -42,6 +43,7 @@ pub(super) struct QueryClient {
 enum SupervisorMessage {
     Query(QueryJob),
     MarketBars(MarketBarsJob),
+    YFinanceResearch(YFinanceResearchJob),
     #[cfg(target_os = "linux")]
     VerifyPair(PairVerifyJob),
 }
@@ -49,6 +51,15 @@ enum SupervisorMessage {
 type MarketBarsFuture =
     Pin<Box<dyn Future<Output = crate::Result<market_contracts::BarsResponseV1>> + Send + 'static>>;
 type MarketBarsExecutor = Box<dyn FnOnce(CancellationToken) -> MarketBarsFuture + Send + 'static>;
+type YFinanceResearchFuture = Pin<
+    Box<
+        dyn Future<Output = Result<YFinanceResearchObservationPage, ProviderQueryError>>
+            + Send
+            + 'static,
+    >,
+>;
+type YFinanceResearchExecutor =
+    Box<dyn FnOnce(CancellationToken) -> YFinanceResearchFuture + Send + 'static>;
 
 struct QueryJob {
     namespace: DatasetNamespace,
@@ -64,6 +75,12 @@ struct MarketBarsJob {
     response: oneshot::Sender<crate::Result<market_contracts::BarsResponseV1>>,
 }
 
+struct YFinanceResearchJob {
+    cancellation: CancellationToken,
+    execute: YFinanceResearchExecutor,
+    response: oneshot::Sender<Result<YFinanceResearchObservationPage, ProviderQueryError>>,
+}
+
 #[cfg(target_os = "linux")]
 struct PairVerifyJob {
     receipt_name: String,
@@ -76,6 +93,13 @@ pub(super) enum QueryFailure {
     Timeout,
     Unavailable,
     Data(MarketDataError),
+}
+
+#[derive(Debug)]
+pub(super) enum YFinanceResearchFailure {
+    Timeout,
+    Unavailable,
+    Provider(ProviderQueryError),
 }
 
 impl QuerySupervisor {
@@ -244,6 +268,45 @@ impl QueryClient {
         }
     }
 
+    /// Run one provider-native Yahoo observation through the same bounded queue, cancellation,
+    /// deadline, and joined-worker lifecycle used by other HTTP provider work.
+    pub(super) async fn yfinance_research<P, Fut>(
+        &self,
+        execute: P,
+    ) -> std::result::Result<YFinanceResearchObservationPage, YFinanceResearchFailure>
+    where
+        P: FnOnce(CancellationToken) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<YFinanceResearchObservationPage, ProviderQueryError>>
+            + Send
+            + 'static,
+    {
+        let cancellation = CancellationToken::new();
+        let _cancel_on_drop = CancelOnDrop(cancellation.clone());
+        let (response, receiver) = oneshot::channel();
+        let job = YFinanceResearchJob {
+            cancellation,
+            execute: Box::new(move |cancellation| Box::pin(execute(cancellation))),
+            response,
+        };
+        if let Err(error) = self
+            .sender
+            .try_send(SupervisorMessage::YFinanceResearch(job))
+        {
+            drop(error);
+            tracing::warn!("MDP query supervisor is unavailable or at capacity");
+            return Err(YFinanceResearchFailure::Unavailable);
+        }
+        match tokio::time::timeout(self.deadline, receiver).await {
+            Err(_) => Err(YFinanceResearchFailure::Timeout),
+            Ok(Err(_)) => {
+                tracing::error!("MDP Yahoo research worker ended without a response");
+                Err(YFinanceResearchFailure::Unavailable)
+            }
+            Ok(Ok(Err(error))) => Err(YFinanceResearchFailure::Provider(error)),
+            Ok(Ok(Ok(page))) => Ok(page),
+        }
+    }
+
     #[cfg(target_os = "linux")]
     pub(super) async fn verify_pair(
         &self,
@@ -356,6 +419,26 @@ async fn run_owner(
                             let result = execute(job_cancellation.clone()).await;
                             if !job_cancellation.is_cancelled() {
                                 let _ = response.send(result);
+                            }
+                        });
+                        registry_lock(&cancellations).insert(abort.id(), cancellation);
+                    }
+                    Some(SupervisorMessage::YFinanceResearch(job)) => {
+                        let YFinanceResearchJob { cancellation, execute, response } = job;
+                        let job_cancellation = cancellation.clone();
+                        let abort = active.spawn(async move {
+                            let result = await_provider_or_cancel(
+                                execute(job_cancellation.clone()),
+                                &job_cancellation,
+                            )
+                            .await;
+                            if !job_cancellation.is_cancelled() {
+                                match result {
+                                    Some(result) => { let _ = response.send(result); }
+                                    None => {
+                                        let _ = response.send(Err(ProviderQueryError::Timeout));
+                                    }
+                                }
                             }
                         });
                         registry_lock(&cancellations).insert(abort.id(), cancellation);

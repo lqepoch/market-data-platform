@@ -13,8 +13,8 @@ use super::{
 };
 
 impl CacheVersionStoreV1 {
-    /// Load provisional provider-neutral data. Production authoritative reads require the
-    /// verifier-taking method, which rechecks the retained signature and current expiry.
+    /// Load provisional or live-lease-backed local Alpaca data. Signed-admission authority
+    /// requires the verifier-taking method, which rechecks the retained signature and expiry.
     pub(crate) fn load_logical_current(
         &self,
         identity: &CacheLogicalIdentityV1,
@@ -27,8 +27,8 @@ impl CacheVersionStoreV1 {
         Ok(result)
     }
 
-    /// Load a provider-neutral authoritative pointer after rechecking its retained signed
-    /// admission against the current trusted issuer/revocation policy.
+    /// Load a provider-neutral pointer after rechecking signed admission where applicable; local
+    /// Alpaca query authority still requires its exact-key same-process lease.
     pub(crate) fn load_logical_current_with_verifier(
         &self,
         identity: &CacheLogicalIdentityV1,
