@@ -514,9 +514,32 @@ async fn synthetic_verified_dataset_flows_through_authenticated_http_and_cold_ca
             body["rows"][0]["session_instance_id"],
             "XNYS:2026-01-05:regular"
         );
-        let verified_at = body["verified_at"]
-            .as_str()
-            .expect("complete synthetic cache read retains its local verification timestamp");
+        let verified_at = body["verified_at"].as_str().unwrap_or_else(|| {
+            let segment_states = body["segments"]
+                .as_array()
+                .map(|segments| {
+                    segments
+                        .iter()
+                        .map(|segment| segment["coverage_status"].as_str().unwrap_or("invalid"))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let row_states = body["rows"]
+                .as_array()
+                .map(|rows| {
+                    rows.iter()
+                        .map(|row| row["validation_state"].as_str().unwrap_or("invalid"))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            panic!(
+                "synthetic {expected_cache_status} cache response lacks its local verification timestamp: coverage={:?}, segments={segment_states:?}, rows={row_states:?}, gaps={}, truncated={:?}, entitlement={:?}",
+                body["coverage_status"],
+                body["gaps"].as_array().map_or(0, Vec::len),
+                body["truncated"],
+                body["entitlement_status"],
+            )
+        });
         let parsed = DateTime::parse_from_rfc3339(verified_at).unwrap();
         assert!(parsed.timestamp() <= Utc::now().timestamp());
         if let Some(expected) = &published_verification {
