@@ -426,8 +426,8 @@ fn validate_research_window_page(
                 "calendar_gaps_assessed",
             ],
         )
-        || parse_json_timestamp(coverage.get("requested_start")) != Ok(start.clone())
-        || parse_json_timestamp(coverage.get("requested_end")) != Ok(end.clone())
+        || parse_json_timestamp(coverage.get("requested_start")) != Ok(start)
+        || parse_json_timestamp(coverage.get("requested_end")) != Ok(end)
         || coverage
             .get("calendar_gaps_assessed")
             .and_then(Value::as_bool)
@@ -481,27 +481,27 @@ fn validate_research_window_page(
             || bar.get("adjustment").and_then(Value::as_str) != Some(requested_adjustment)
             || event_ts < start
             || event_ts >= end
-            || !seen_bars.insert((symbol.to_owned(), event_ts.clone()))
+            || !seen_bars.insert((symbol.to_owned(), event_ts))
             || previous_bar_key
                 .as_ref()
-                .is_some_and(|previous| previous > &(symbol.to_owned(), event_ts.clone()))
+                .is_some_and(|previous| previous > &(symbol.to_owned(), event_ts))
             || !bar.as_object().is_some_and(valid_bar_numbers)
         {
             return Err(ProviderQueryError::MalformedResponse);
         }
-        previous_bar_key = Some((symbol.to_owned(), event_ts.clone()));
+        previous_bar_key = Some((symbol.to_owned(), event_ts));
         *bar_counts.entry(symbol).or_default() += 1;
         first_last
             .entry(symbol)
             .and_modify(|bounds| {
                 if event_ts < bounds.0 {
-                    bounds.0 = event_ts.clone();
+                    bounds.0 = event_ts;
                 }
                 if event_ts > bounds.1 {
-                    bounds.1 = event_ts.clone();
+                    bounds.1 = event_ts;
                 }
             })
-            .or_insert((event_ts.clone(), event_ts));
+            .or_insert((event_ts, event_ts));
     }
     let bar_symbols = bar_counts
         .keys()
@@ -778,10 +778,10 @@ fn validate_per_symbol_coverage(
         if count != Some(expected_count) {
             return false;
         }
-        let expected_bounds = first_last.get(symbol).cloned();
+        let expected_bounds = first_last.get(symbol).copied();
         if !matches_optional_timestamp(
             item.get("first_bar_at"),
-            expected_bounds.as_ref().map(|bounds| bounds.0.clone()),
+            expected_bounds.as_ref().map(|bounds| bounds.0),
         ) || !matches_optional_timestamp(
             item.get("last_bar_at"),
             expected_bounds.map(|bounds| bounds.1),
