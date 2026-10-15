@@ -167,11 +167,22 @@ unsupported uses 422, and authentication, quotas, timeouts and expired cursors k
 specific statuses. Unknown actual feed and entitlement remain unknown. Returned
 source segments and rows cannot be replaced by a single source label.
 
-Cache configuration does not make provisional input authoritative. Provider route policy only
-allows an attempt; production provider admission and material conflict checks are still required for
-trusted historical promotion. Synthetic test
-admission is excluded from production. Existing archive publication gates remain
-closed. See `policies/mdp-cache-reconciliation-v1.md` for lineage and rollback.
+Cache configuration and route policy only permit an attempt. A separate local Alpaca path accepts
+the opaque witness attached by the pinned Broker SDK after a successful nonempty SIP/BOATS query.
+It binds the exact request, page chain and raw-row projection, and derives completeness from the
+trusted calendar timeline. Missing bars or an incomplete chain remain provisional. The current
+producer fetches one SDK page per request; the bounded chain validator does not by itself implement
+cross-request multi-page reconciliation. Complete versions receive a same-process exact-key/version
+access lease of at most 60 seconds; restart or lease expiry requires a new provider read.
+Entitlement remains unknown. Independent signed admission is still required by the separate
+external archive boundary, which remains closed; synthetic admission is excluded from production.
+
+`verified_at` is propagated only from a complete authoritative cache version that passes current
+readback and access checks. A fresh publication must still be the current published version on
+exact-key reread. Mapped rows must match the verified canonical observations with no gaps or
+truncation. This local receipt timestamp does not grant entitlement: unknown entitlement can keep
+the HTTP coverage summary partial and row/segment state provisional. See
+`policies/mdp-cache-reconciliation-v1.md` for lineage and rollback.
 
 `GET /v1/market/cache/status` requires the same verified `market:read` delegation and includes at
 most 128 in-memory invalidation/readback summaries filtered by the verified principal and current
