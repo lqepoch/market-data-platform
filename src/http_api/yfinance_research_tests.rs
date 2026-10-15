@@ -104,13 +104,26 @@ fn enforces_1970_range_future_and_maximum_duration_bounds() {
         Err(QueryError::Unsupported)
     ));
     let start = "1970-01-01T00:00:00Z";
-    let end = (DateTime::parse_from_rfc3339(start)
+    let maximum_end = DateTime::parse_from_rfc3339(start)
         .expect("start")
         .with_timezone(&Utc)
-        + Duration::days(MAX_RANGE_DAYS + 1))
-    .to_rfc3339_opts(SecondsFormat::AutoSi, true);
+        + Duration::days(MAX_RANGE_DAYS);
+    // Exercise duration independently of the earlier future-date rejection. This is a
+    // synthetic clock, not an assertion that the provider offers this historical interval.
+    let synthetic_now = maximum_end + Duration::days(2);
+    assert!(
+        parse_query(
+            query(
+                start,
+                &maximum_end.to_rfc3339_opts(SecondsFormat::AutoSi, true)
+            ),
+            synthetic_now,
+        )
+        .is_ok()
+    );
+    let end = (maximum_end + Duration::days(1)).to_rfc3339_opts(SecondsFormat::AutoSi, true);
     assert!(matches!(
-        parse_query(query(start, &end), now()),
+        parse_query(query(start, &end), synthetic_now),
         Err(QueryError::TooLarge)
     ));
 }

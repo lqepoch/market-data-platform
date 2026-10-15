@@ -500,6 +500,7 @@ async fn harness_with_cache_limits(
 async fn synthetic_verified_dataset_flows_through_authenticated_http_and_cold_cache_reverify() {
     let _worker_guard = crate::parquet_worker::serialize_worker_test_async().await;
     let mut harness = harness(SyntheticFacts::KnownSipAuthorized, false).await;
+    let mut published_verification = None;
     for expected_cache_status in ["miss", "hit"] {
         let response =
             send_bars_request(&harness.app, &test_support::terminal_token("market:read")).await;
@@ -513,7 +514,16 @@ async fn synthetic_verified_dataset_flows_through_authenticated_http_and_cold_ca
             body["rows"][0]["session_instance_id"],
             "XNYS:2026-01-05:regular"
         );
-        assert_eq!(body["verified_at"], serde_json::Value::Null);
+        let verified_at = body["verified_at"]
+            .as_str()
+            .expect("complete synthetic cache read retains its local verification timestamp");
+        let parsed = DateTime::parse_from_rfc3339(verified_at).unwrap();
+        assert!(parsed.timestamp() <= Utc::now().timestamp());
+        if let Some(expected) = &published_verification {
+            assert_eq!(verified_at, expected);
+        } else {
+            published_verification = Some(verified_at.to_owned());
+        }
         assert!(
             body["source_provenance"][0]["source"]
                 .as_str()
@@ -724,11 +734,15 @@ async fn empty_alpaca_observation_bypasses_cache_and_is_fetched_again() {
             send_bars_request(&harness.app, &test_support::terminal_token("market:read")).await;
         assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
         let body = response_json(response).await;
-        assert_eq!(body["provider"], "alpaca");
+        // With no rows or retained source segments, the public aggregate has no observed
+        // source identity. The attempted route alone must not supply a row provenance label.
+        assert_eq!(body["provider"], "unknown");
         assert_eq!(body["feed"], "unknown");
         assert_eq!(body["entitlement_status"], "unknown");
         assert_eq!(body["cache_status"], "bypass");
         assert!(body["rows"].as_array().unwrap().is_empty());
+        assert!(body["source_provenance"].as_array().unwrap().is_empty());
+        assert!(!body["gaps"].as_array().unwrap().is_empty());
     }
 
     assert_eq!(harness.source.fetch_count.load(Ordering::SeqCst), 2);
