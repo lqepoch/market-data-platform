@@ -28,7 +28,7 @@ dependencies = [
 [[package]]
 name = "alpaca-core"
 version = "0.33.3"
-source = "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#99e1d36f864d1e89e8cfba95651d29920e2f4c5a"
+source = "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#8c3d99c192d07049cd0d4b23e21257aebab9408f"
 dependencies = [
  "rust_decimal",
  "serde",
@@ -41,7 +41,7 @@ dependencies = [
 [[package]]
 name = "alpaca-data"
 version = "0.33.3"
-source = "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#99e1d36f864d1e89e8cfba95651d29920e2f4c5a"
+source = "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#8c3d99c192d07049cd0d4b23e21257aebab9408f"
 dependencies = [
  "alpaca-core",
  "alpaca-rest-http",
@@ -58,7 +58,7 @@ dependencies = [
 [[package]]
 name = "alpaca-rest-http"
 version = "0.33.3"
-source = "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#99e1d36f864d1e89e8cfba95651d29920e2f4c5a"
+source = "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#8c3d99c192d07049cd0d4b23e21257aebab9408f"
 dependencies = [
  "alpaca-core",
  "reqwest",
@@ -72,13 +72,14 @@ dependencies = [
 [[package]]
 name = "alpaca-rest-read"
 version = "0.1.0"
-source = "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#99e1d36f864d1e89e8cfba95651d29920e2f4c5a"
+source = "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#8c3d99c192d07049cd0d4b23e21257aebab9408f"
 dependencies = [
  "alpaca-data",
  "alpaca-rest-http",
  "chrono",
  "market-contracts",
  "serde",
+ "sha2",
  "tokio",
  "zeroize",
 ]
@@ -86,7 +87,7 @@ dependencies = [
 [[package]]
 name = "alpaca-stream"
 version = "0.1.0"
-source = "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#99e1d36f864d1e89e8cfba95651d29920e2f4c5a"
+source = "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#8c3d99c192d07049cd0d4b23e21257aebab9408f"
 dependencies = [
  "broker-ports",
  "chrono",
@@ -404,7 +405,7 @@ dependencies = [
 [[package]]
 name = "broker-ports"
 version = "0.1.0"
-source = "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#99e1d36f864d1e89e8cfba95651d29920e2f4c5a"
+source = "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#8c3d99c192d07049cd0d4b23e21257aebab9408f"
 dependencies = [
  "domain",
  "market-contracts",

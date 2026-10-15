@@ -18,8 +18,8 @@ aws-lc-rs = "=1.18.1"
 hex = "=0.4.3"
 market-contracts = { git = "https://github.com/lqepoch/trading-core", rev = "f793be47ab90ebff9f530c8b08f41db5e774e4e5", package = "market-contracts" }
 exact-decimal = { git = "https://github.com/lqepoch/trading-core", rev = "f793be47ab90ebff9f530c8b08f41db5e774e4e5", package = "exact-decimal" }
-broker-ports = { git = "https://github.com/lqepoch/broker-connectors", rev = "99e1d36f864d1e89e8cfba95651d29920e2f4c5a", package = "broker-ports" }
-alpaca-stream = { git = "https://github.com/lqepoch/broker-connectors", rev = "99e1d36f864d1e89e8cfba95651d29920e2f4c5a", package = "alpaca-stream" }
+broker-ports = { git = "https://github.com/lqepoch/broker-connectors", rev = "8c3d99c192d07049cd0d4b23e21257aebab9408f", package = "broker-ports" }
+alpaca-stream = { git = "https://github.com/lqepoch/broker-connectors", rev = "8c3d99c192d07049cd0d4b23e21257aebab9408f", package = "alpaca-stream" }
 parquet = { version = "=60.0.0", default-features = false, features = ["arrow", "zstd"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = { version = "=1.0.151", features = ["arbitrary_precision"] }
@@ -30,7 +30,7 @@ zeroize = "=1.9.1"
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.20", features = ["env-filter"] }
 
-alpaca-rest-read = { git = "https://github.com/lqepoch/broker-connectors", rev = "99e1d36f864d1e89e8cfba95651d29920e2f4c5a", package = "alpaca-rest-read" }
+alpaca-rest-read = { git = "https://github.com/lqepoch/broker-connectors", rev = "8c3d99c192d07049cd0d4b23e21257aebab9408f", package = "alpaca-rest-read" }
 reqwest = { version = "=0.13.5", default-features = false, features = ["json", "stream"] }
 
 [features]
