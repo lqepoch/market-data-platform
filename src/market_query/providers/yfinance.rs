@@ -485,7 +485,7 @@ fn validate_research_window_page(
             || previous_bar_key
                 .as_ref()
                 .is_some_and(|previous| previous > &(symbol.to_owned(), event_ts.clone()))
-            || !valid_bar_numbers(bar)
+            || !bar.as_object().is_some_and(valid_bar_numbers)
         {
             return Err(ProviderQueryError::MalformedResponse);
         }
@@ -932,7 +932,7 @@ fn valid_decimal_string(value: &str) -> bool {
         return false;
     }
     let bytes = value.as_bytes();
-    let digits = bytes.iter().filter(u8::is_ascii_digit).count();
+    let digits = bytes.iter().filter(|byte| byte.is_ascii_digit()).count();
     let dots = bytes.iter().filter(|byte| **byte == b'.').count();
     let sign_offset = usize::from(matches!(bytes.first(), Some(b'-' | b'+')));
     digits > 0
@@ -1403,6 +1403,51 @@ mod tests {
         } else {
             "partial"
         };
+        let requested_range = json!({
+            "start": start,
+            "end": end,
+            "semantics": "start_inclusive_end_exclusive"
+        });
+        let coverage_gaps = json!([
+            {"code": "DATE_GAPS_UNASSESSED"},
+            {"code": "SYMBOL_RENAME_HISTORY_UNAVAILABLE"},
+            {"code": "NON_POINT_IN_TIME_PROVIDER_HISTORY"}
+        ]);
+        let coverage = json!({
+            "requested_start": start,
+            "requested_end": end,
+            "bar_count": bars_len,
+            "per_symbol": per_symbol_coverage,
+            "gaps": coverage_gaps,
+            "calendar_gaps_assessed": false
+        });
+        let action_coverage = json!({
+            "dividends": "provider_field_present",
+            "stock_splits": "provider_field_present",
+            "symbol_renames": "unsupported"
+        });
+        let provenance = json!({
+            "schema_version": "research-bars-v1",
+            "provider": "yahoo_finance",
+            "source": "yfinance",
+            "adapter_version": "synthetic-fixture",
+            "query_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "config_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "interval": "1d",
+            "adjustment": adjustment,
+            "prepost": false,
+            "include_actions": true,
+            "requested_symbols": symbols,
+            "returned_symbols": returned_symbols,
+            "missing_symbols": missing_symbols,
+            "start": start,
+            "end": end,
+            "requested_at": "2026-10-13T00:00:00Z",
+            "acquired_at": "2026-10-14T00:00:00Z",
+            "served_at": "2026-10-14T00:00:00Z",
+            "cache_status": "network",
+            "row_count": bars_len
+        });
         json!({
             "schema_version": "yfinance-history-bridge-v1",
             "status": status,
@@ -1422,61 +1467,21 @@ mod tests {
             "point_in_time": false,
             "executable": false,
             "display_only": true,
-            "requested_range": {
-                "start": start,
-                "end": end,
-                "semantics": "start_inclusive_end_exclusive"
-            },
+            "requested_range": requested_range,
             "requested_symbols": symbols,
             "returned_symbols": returned_symbols,
             "missing_symbols": missing_symbols,
             "cache_status": "network",
             "freshness": "retrieved",
-            "coverage": {
-                "requested_start": start,
-                "requested_end": end,
-                "bar_count": bars_len,
-                "per_symbol": per_symbol_coverage,
-                "gaps": [
-                    {"code": "DATE_GAPS_UNASSESSED"},
-                    {"code": "SYMBOL_RENAME_HISTORY_UNAVAILABLE"},
-                    {"code": "NON_POINT_IN_TIME_PROVIDER_HISTORY"}
-                ],
-                "calendar_gaps_assessed": false
-            },
-            "action_coverage": {
-                "dividends": "provider_field_present",
-                "stock_splits": "provider_field_present",
-                "symbol_renames": "unsupported"
-            },
+            "coverage": coverage,
+            "action_coverage": action_coverage,
             "actions": [],
             "bars": bars,
             "available_at": "2026-10-14T00:00:00Z",
             "fetched_at": "2026-10-14T00:00:00Z",
             "source_observed_at": "2026-10-14T00:00:00Z",
             "request_started_at": "2026-10-13T00:00:00Z",
-            "provenance": {
-                "schema_version": "research-bars-v1",
-                "provider": "yahoo_finance",
-                "source": "yfinance",
-                "adapter_version": "synthetic-fixture",
-                "query_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "config_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-                "interval": "1d",
-                "adjustment": adjustment,
-                "prepost": false,
-                "include_actions": true,
-                "requested_symbols": symbols,
-                "returned_symbols": returned_symbols,
-                "missing_symbols": missing_symbols,
-                "start": start,
-                "end": end,
-                "requested_at": "2026-10-13T00:00:00Z",
-                "acquired_at": "2026-10-14T00:00:00Z",
-                "served_at": "2026-10-14T00:00:00Z",
-                "cache_status": "network",
-                "row_count": bars_len
-            }
+            "provenance": provenance
         })
     }
 }
