@@ -168,7 +168,7 @@ pub(crate) fn validate_query_access_pages(
         let age = now
             .checked_sub(observed_seconds)
             .ok_or(CacheReconciliationError::AdmissionExpired)?;
-        if age < 0 || age > MAX_ALPACA_QUERY_AGE_SECONDS {
+        if !(0..=MAX_ALPACA_QUERY_AGE_SECONDS).contains(&age) {
             return Err(CacheReconciliationError::AdmissionExpired);
         }
         let row_count = u64::from(witness.row_count());

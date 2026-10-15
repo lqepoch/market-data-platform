@@ -16,8 +16,8 @@ use chrono::{DateTime, Datelike, Duration, NaiveDate, SecondsFormat, Utc, Weekda
 use market_contracts::{
     AdjustmentV1, AssetClassV1, BarCoverageGapV1, BarCoverageSegmentV1, BarResolutionV1, BarRowV1,
     BarSourceProvenanceV1, BarsCacheStatusV1, BarsCoverageStatusV1, BarsEntitlementStatusV1,
-    BarsResponseV1, BarsValidationStateV1, DecimalString, EntitlementState, NumericEncodingV1,
-    ProtoTimestampV2,
+    BarsResponseV1, BarsValidationStateV1, CoverageGapReasonV1, DecimalString, EntitlementState,
+    NumericEncodingV1, ProtoTimestampV2,
 };
 use sha2::{Digest, Sha256};
 use tower::ServiceExt;

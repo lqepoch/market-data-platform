@@ -2111,7 +2111,7 @@ fn bars_rows_sha256(rows: &[BarRowV1]) -> Result<String> {
 }
 
 fn logical_receipt_shape_is_valid(receipt: &CacheVersionReceiptV1) -> bool {
-    if !matches!(receipt.receipt_version, 7 | 8 | 9) {
+    if !matches!(receipt.receipt_version, 7..=9) {
         return true;
     }
     if matches!(receipt.receipt_version, 8 | 9)

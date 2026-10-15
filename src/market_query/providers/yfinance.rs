@@ -680,11 +680,11 @@ fn validate_provenance(
         && served_at == fetched_at
         && acquired_at == source_observed_at
         && requested_at == request_started_at
-        && match (cache_status, freshness) {
-            (Some("stale_cache"), Some("stale")) => true,
-            (Some("network" | "fresh_cache"), Some("retrieved")) => true,
-            _ => false,
-        }
+        && matches!(
+            (cache_status, freshness),
+            (Some("stale_cache"), Some("stale"))
+                | (Some("network" | "fresh_cache"), Some("retrieved"))
+        )
 }
 
 fn valid_sha256(value: Option<&str>) -> bool {

@@ -79,7 +79,7 @@ pub(crate) fn previous_page(
     })
 }
 
-pub(crate) fn select_window(
+pub(super) fn select_window(
     signer: &CursorSigner,
     token: Option<&str>,
     request_sha256: &str,
@@ -130,7 +130,7 @@ pub(crate) fn select_window(
     ))
 }
 
-pub(crate) fn issue_cursor(
+pub(super) fn issue_cursor(
     signer: &CursorSigner,
     request_sha256: &str,
     principal_scope_sha256: &str,
