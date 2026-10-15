@@ -1,7 +1,7 @@
 {
   "artifacts": {
-    "supply-chain/NOTICE.txt": "47f8b86f8b8ef85f255d1b69cea80f43e9f780491fc77c6b7bacd050509c05ef",
-    "supply-chain/market-data-platform.cdx.json": "4f867a6dee78c5e6268c877385ac9703ea9cc58a59ee813b541c0f07e5210d8b"
+    "supply-chain/NOTICE.txt": "f05fabaec1f6d730dfbc88b1514b58b881bf8984dd3a646504996a927dcee9f2",
+    "supply-chain/market-data-platform.cdx.json": "49397bdc64e4d0134b881a5a922a74702ed60c5b76829241643e698c04ea492a"
   },
   "component": {
     "license": "MIT",
@@ -19,7 +19,7 @@
         "alpaca-stream",
         "broker-ports"
       ],
-      "rev": "99e1d36f864d1e89e8cfba95651d29920e2f4c5a"
+      "rev": "8c3d99c192d07049cd0d4b23e21257aebab9408f"
     },
     {
       "origin": "https://github.com/lqepoch/trading-core",
@@ -34,11 +34,11 @@
   "inputs": [
     {
       "path": "Cargo.toml",
-      "sha256": "0d21b45959e26a6ddb73ce6eedb71cddf56decd7f9ba7811fe138b7cf4133eb1"
+      "sha256": "2fa6db4717afa4005be7a96b5ec8ad3729271fd704818bd6e4d8dddd3881ba10"
     },
     {
       "path": "Cargo.lock",
-      "sha256": "a739df93f7801c022c1fd8a1559fb0bff8f63cb611f532d5fe671ce70996897f"
+      "sha256": "c39ea82f705aab53fbf256d398812367ec249c9940f9f20457a5595b21a148a3"
     },
     {
       "path": "Dockerfile",
@@ -122,7 +122,7 @@
     },
     {
       "path": "supply-chain/git-source-pins.json",
-      "sha256": "7772b1c8f6da84dfa2dd24f32382d4c1665ec634f1b41b249733ac06d89b2a4f"
+      "sha256": "f2862b84998ae2c57791841ce3d2d9b897fab87d1dc21475ed6d692f1a257f7f"
     },
     {
       "path": "supply-chain/licenses/webpki-root-certs-1.0.9.LICENSE",
@@ -160,35 +160,35 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "alpaca-core",
-      "source": "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#99e1d36f864d1e89e8cfba95651d29920e2f4c5a",
+      "source": "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#8c3d99c192d07049cd0d4b23e21257aebab9408f",
       "version": "0.33.3"
     },
     {
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "alpaca-data",
-      "source": "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#99e1d36f864d1e89e8cfba95651d29920e2f4c5a",
+      "source": "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#8c3d99c192d07049cd0d4b23e21257aebab9408f",
       "version": "0.33.3"
     },
     {
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "alpaca-rest-http",
-      "source": "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#99e1d36f864d1e89e8cfba95651d29920e2f4c5a",
+      "source": "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#8c3d99c192d07049cd0d4b23e21257aebab9408f",
       "version": "0.33.3"
     },
     {
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "alpaca-rest-read",
-      "source": "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#99e1d36f864d1e89e8cfba95651d29920e2f4c5a",
+      "source": "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#8c3d99c192d07049cd0d4b23e21257aebab9408f",
       "version": "0.1.0"
     },
     {
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "alpaca-stream",
-      "source": "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#99e1d36f864d1e89e8cfba95651d29920e2f4c5a",
+      "source": "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#8c3d99c192d07049cd0d4b23e21257aebab9408f",
       "version": "0.1.0"
     },
     {
@@ -384,7 +384,7 @@
       "checksum": null,
       "license": "MIT OR Apache-2.0",
       "name": "broker-ports",
-      "source": "git+https://github.com/lqepoch/broker-connectors?rev=99e1d36f864d1e89e8cfba95651d29920e2f4c5a#99e1d36f864d1e89e8cfba95651d29920e2f4c5a",
+      "source": "git+https://github.com/lqepoch/broker-connectors?rev=8c3d99c192d07049cd0d4b23e21257aebab9408f#8c3d99c192d07049cd0d4b23e21257aebab9408f",
       "version": "0.1.0"
     },
     {
