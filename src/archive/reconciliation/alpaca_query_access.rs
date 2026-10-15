@@ -6,9 +6,9 @@
 
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use market_contracts::{
-    AdjustmentV1, AssetClassV1, BarResolutionV1, BarsCoverageStatusV1, BarsEntitlementStatusV1,
-    BarsRequestV1, BarsResponseV1, BarsValidationStateV1, EntitlementState, NumericEncodingV1,
-    UtcTimestamp,
+    AdjustmentV1, AssetClassV1, BarResolutionV1, BarRowV1, BarsCoverageStatusV1,
+    BarsEntitlementStatusV1, BarsRequestV1, BarsResponseV1, BarsValidationStateV1,
+    EntitlementState, NumericEncodingV1, UtcTimestamp,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -26,7 +26,10 @@ const QUERY_ACCESS_RECEIPT_DOMAIN: &[u8] = b"lqepoch.mdp.alpaca-query-access-rec
 const QUERY_ACCESS_CHAIN_DOMAIN: &[u8] = b"lqepoch.mdp.alpaca-query-access-page-chain.v1\0";
 const QUERY_ACCESS_CHAIN_HASH_DOMAIN: &[u8] =
     b"lqepoch.mdp.alpaca-query-access-page-chain-hash.v1\0";
+const QUERY_ACCESS_PROJECTED_RAW_ROWS_DOMAIN: &[u8] =
+    b"lqepoch.mdp.alpaca-query-projected-raw-rows.v1\0";
 const MAX_ALPACA_PAGE_SIZE: u16 = 1_000;
+const MAX_ALPACA_PAGE_PROJECTED_BYTES: usize = 32 * 1024 * 1024;
 const MAX_ALPACA_QUERY_AGE_SECONDS: i64 = 60;
 pub(crate) const MAX_ALPACA_QUERY_ACCESS_PAGES: usize = 64;
 
@@ -41,16 +44,19 @@ pub(crate) mod stored;
 pub(crate) struct AlpacaStockBarsQueryWitnessV1 {
     witness: alpaca_rest_read::AlpacaStockBarsQueryAccessWitness,
     expected_request_cursor_sha256: Option<String>,
+    projected_raw_rows_sha256: String,
 }
 
 impl AlpacaStockBarsQueryWitnessV1 {
     /// Copy an opaque Broker witness after checking the request's separately derived cursor hash.
     ///
-    /// `expected_request_cursor_sha256` must come from the selected typed provider cursor, not
-    /// from the witness itself. The first page uses `None`.
+    /// `expected_request_cursor_sha256` comes from the selected typed provider cursor, not the
+    /// witness itself; the first SDK page uses `None`. `projected_raw_rows` is the exact Core row
+    /// projection for this page, before calendar remapping.
     pub(crate) fn from_broker_witness(
         witness: &alpaca_rest_read::AlpacaStockBarsQueryAccessWitness,
         expected_request_cursor_sha256: Option<&str>,
+        projected_raw_rows: &[BarRowV1],
     ) -> Result<Self> {
         validate_static_witness(witness)?;
         if expected_request_cursor_sha256 != witness.request_cursor_sha256()
@@ -58,17 +64,17 @@ impl AlpacaStockBarsQueryWitnessV1 {
         {
             return Err(CacheReconciliationError::Conflict);
         }
+        let witnessed_row_count = usize::try_from(witness.row_count())
+            .map_err(|_| CacheReconciliationError::LimitExceeded)?;
+        if projected_raw_rows.len() != witnessed_row_count {
+            return Err(CacheReconciliationError::AdmissionMismatch);
+        }
+        let projected_raw_rows_sha256 = alpaca_query_projected_raw_rows_sha256(projected_raw_rows)?;
         Ok(Self {
             witness: witness.clone(),
             expected_request_cursor_sha256: expected_request_cursor_sha256.map(str::to_owned),
+            projected_raw_rows_sha256,
         })
-    }
-
-    /// Borrow the original opaque witness so the adapter can keep one source of truth.
-    pub(crate) const fn broker_witness(
-        &self,
-    ) -> &alpaca_rest_read::AlpacaStockBarsQueryAccessWitness {
-        &self.witness
     }
 }
 
@@ -127,7 +133,7 @@ pub(crate) fn validate_query_access_pages(
     }
 
     let mut receipts = Vec::with_capacity(pages.len());
-    let mut expected_rows_by_time = BTreeMap::<String, u64>::new();
+    let mut page_observation_times = BTreeSet::new();
     let mut total_rows = 0u64;
     let mut previous_next: Option<&str> = None;
     let now =
@@ -153,6 +159,11 @@ pub(crate) fn validate_query_access_pages(
             return Err(CacheReconciliationError::AdmissionMismatch);
         }
         let observed_at = witness.response_observed_at().as_str().to_owned();
+        if !page_observation_times.insert(observed_at.clone()) {
+            // Cold read partitions rows by this timestamp. Shared timestamps would make
+            // multi-page row boundaries ambiguous, so do not claim query evidence for them.
+            return Err(CacheReconciliationError::AdmissionMismatch);
+        }
         let observed_seconds = parse_utc_datetime(&observed_at)?.timestamp();
         let age = now
             .checked_sub(observed_seconds)
@@ -164,14 +175,11 @@ pub(crate) fn validate_query_access_pages(
         total_rows = total_rows
             .checked_add(row_count)
             .ok_or(CacheReconciliationError::LimitExceeded)?;
-        let observed_count = expected_rows_by_time.entry(observed_at).or_default();
-        *observed_count = observed_count
-            .checked_add(row_count)
-            .ok_or(CacheReconciliationError::LimitExceeded)?;
         previous_next = witness.next_page_cursor_sha256();
         let mut receipt = AlpacaQueryAccessReceiptV1::from_witness(
             witness,
             page.expected_request_cursor_sha256.clone(),
+            page.projected_raw_rows_sha256.clone(),
         );
         receipt.cache_key_fingerprint_sha256 = cache_key_fingerprint.clone();
         receipt.cache_request_cursor_sha256 = request.cursor.as_deref().map(super::sha256_text);
@@ -201,17 +209,31 @@ pub(crate) fn validate_query_access_pages(
     {
         return Err(CacheReconciliationError::AdmissionMismatch);
     }
+    let mut raw_rows_by_observation = BTreeMap::<String, Vec<&BarRowV1>>::new();
     for row in &raw_response.rows {
-        let observed_at = row.received_at_utc.as_str();
-        let Some(expected_count) = expected_rows_by_time.get_mut(observed_at) else {
-            return Err(CacheReconciliationError::AdmissionMismatch);
-        };
-        *expected_count = expected_count
-            .checked_sub(1)
-            .ok_or(CacheReconciliationError::AdmissionMismatch)?;
+        raw_rows_by_observation
+            .entry(row.received_at_utc.as_str().to_owned())
+            .or_default()
+            .push(row);
     }
-    if expected_rows_by_time.values().any(|count| *count != 0) {
+    if raw_rows_by_observation.len() != receipts.len() {
         return Err(CacheReconciliationError::AdmissionMismatch);
+    }
+    for receipt in &receipts {
+        let rows = raw_rows_by_observation
+            .get(&receipt.response_observed_at_utc)
+            .ok_or(CacheReconciliationError::AdmissionMismatch)?;
+        let expected_rows_sha256 = receipt
+            .projected_raw_rows_sha256
+            .as_deref()
+            .ok_or(CacheReconciliationError::AdmissionMismatch)?;
+        if rows.len()
+            != usize::try_from(receipt.row_count)
+                .map_err(|_| CacheReconciliationError::LimitExceeded)?
+            || projected_raw_row_refs_sha256(rows.iter().copied())? != expected_rows_sha256
+        {
+            return Err(CacheReconciliationError::AdmissionMismatch);
+        }
     }
     match (
         last.witness.next_page_cursor_sha256(),
@@ -227,10 +249,47 @@ pub(crate) fn validate_query_access_pages(
 
     Ok(AlpacaQueryAccessValidationV1 {
         full_provider_chain: pages[0].witness.request_cursor_sha256().is_none()
-            && last.witness.next_page_cursor_sha256().is_none()
-            && request.cursor.is_none(),
+            && last.witness.next_page_cursor_sha256().is_none(),
         receipts,
     })
+}
+
+/// Hash an exact ordered Core-row projection of one SDK page. This is separate from the Broker's
+/// typed SDK response digest and binds the rows MDP actually persists.
+pub(crate) fn alpaca_query_projected_raw_rows_sha256(rows: &[BarRowV1]) -> Result<String> {
+    projected_raw_row_refs_sha256(rows.iter())
+}
+
+fn projected_raw_row_refs_sha256<'a>(rows: impl Iterator<Item = &'a BarRowV1>) -> Result<String> {
+    let mut digest = Sha256::new();
+    digest.update(QUERY_ACCESS_PROJECTED_RAW_ROWS_DOMAIN);
+    let mut count = 0u64;
+    let mut total_bytes = 0usize;
+    let mut encoded_rows = Vec::new();
+    for row in rows {
+        let encoded = serde_json::to_vec(row)?;
+        total_bytes = total_bytes
+            .checked_add(encoded.len())
+            .ok_or(CacheReconciliationError::LimitExceeded)?;
+        if total_bytes > MAX_ALPACA_PAGE_PROJECTED_BYTES {
+            return Err(CacheReconciliationError::LimitExceeded);
+        }
+        count = count
+            .checked_add(1)
+            .ok_or(CacheReconciliationError::LimitExceeded)?;
+        let length =
+            u64::try_from(encoded.len()).map_err(|_| CacheReconciliationError::LimitExceeded)?;
+        encoded_rows.push((length, encoded));
+    }
+    if count == 0 || count > u64::from(MAX_ALPACA_PAGE_SIZE) {
+        return Err(CacheReconciliationError::AdmissionMismatch);
+    }
+    digest.update(count.to_be_bytes());
+    for (length, encoded) in encoded_rows {
+        digest.update(length.to_be_bytes());
+        digest.update(encoded);
+    }
+    Ok(hex_digest(digest.finalize().as_slice()))
 }
 
 /// Promote only a response whose full, query-bound provider chain and actual Core rows tile every
@@ -466,7 +525,7 @@ pub(crate) fn alpaca_query_access_chain_observation_sha256(
         return Ok(receipts[0].typed_response_sha256.clone());
     }
     let bytes = serde_json::to_vec(receipts)?;
-    Ok(hash_with_domain(QUERY_ACCESS_CHAIN_DOMAIN, &bytes))
+    Ok(super::hash_domain(QUERY_ACCESS_CHAIN_DOMAIN, &bytes))
 }
 
 pub(crate) fn alpaca_query_access_receipts_sha256(
@@ -479,7 +538,7 @@ pub(crate) fn alpaca_query_access_receipts_sha256(
         receipt.validate()?;
     }
     let bytes = serde_json::to_vec(receipts)?;
-    Ok(hash_with_domain(QUERY_ACCESS_CHAIN_HASH_DOMAIN, &bytes))
+    Ok(super::hash_domain(QUERY_ACCESS_CHAIN_HASH_DOMAIN, &bytes))
 }
 
 impl std::fmt::Debug for AlpacaStockBarsQueryWitnessV1 {
@@ -527,6 +586,8 @@ pub(crate) struct AlpacaQueryAccessReceiptV1 {
     pub response_observed_at_utc: String,
     pub row_count: u32,
     pub next_page_cursor_sha256: Option<String>,
+    #[serde(default)]
+    pub projected_raw_rows_sha256: Option<String>,
     pub source_observation_sha256: String,
 }
 
@@ -534,6 +595,7 @@ impl AlpacaQueryAccessReceiptV1 {
     fn from_witness(
         witness: &alpaca_rest_read::AlpacaStockBarsQueryAccessWitness,
         request_cursor_sha256: Option<String>,
+        projected_raw_rows_sha256: String,
     ) -> Self {
         Self {
             cache_key_fingerprint_sha256: String::new(),
@@ -558,6 +620,7 @@ impl AlpacaQueryAccessReceiptV1 {
             response_observed_at_utc: witness.response_observed_at().as_str().to_owned(),
             row_count: witness.row_count(),
             next_page_cursor_sha256: witness.next_page_cursor_sha256().map(str::to_owned),
+            projected_raw_rows_sha256: Some(projected_raw_rows_sha256),
             source_observation_sha256: String::new(),
         }
     }
@@ -610,6 +673,10 @@ impl AlpacaQueryAccessReceiptV1 {
                 .as_deref()
                 .is_some_and(|value| !valid_sha256(value))
             || !valid_sha256(&self.typed_response_sha256)
+            || self
+                .projected_raw_rows_sha256
+                .as_deref()
+                .is_none_or(|value| !valid_sha256(value))
             || !valid_sha256(&self.source_observation_sha256)
             || self
                 .next_page_cursor_sha256

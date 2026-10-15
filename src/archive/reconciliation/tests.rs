@@ -2653,9 +2653,12 @@ fn synthetic_alpaca_hourly_timeline_accepts_short_final_session_bar() {
 }
 
 #[test]
-fn synthetic_alpaca_page_chain_validates_duplicate_observation_times_and_cursor_links() {
+fn synthetic_alpaca_page_chain_ignores_selection_cursor_and_binds_projected_rows() {
     let mut request = admission_test_request();
     request.end = market_contracts::ProtoTimestampV2::parse("2026-10-08T13:32:00Z").unwrap();
+    // The HTTP selection cursor identifies this MDP cache page; it is not Alpaca's SDK
+    // next_page_token and therefore must not make a complete provider chain incomplete.
+    request.cursor = Some("f".repeat(64));
     let scope = CacheQuerySourceScopeV1 {
         entitlement: EntitlementState::Unknown,
         ..admission_test_scope()
@@ -2663,13 +2666,39 @@ fn synthetic_alpaca_page_chain_validates_duplicate_observation_times_and_cursor_
     let key = CacheKeyV1::from_request(&request, &scope).unwrap();
     let key_fingerprint = key.fingerprint().unwrap();
     let (start, end) = super::alpaca_query_access::key_request_bounds(&key).unwrap();
-    let observed = "2026-10-08T13:31:02Z";
+    let first_observed = "2026-10-08T13:31:02Z";
+    let last_observed = "2026-10-08T13:31:03Z";
+    let mut first = logical_bar_row(
+        "2026-10-08-regular",
+        "2026-10-08T13:30:00Z",
+        "2026-10-08T13:31:00Z",
+        "10.25",
+        "source-1",
+    );
+    first.received_at_utc = market_contracts::ProtoTimestampV2::parse(first_observed).unwrap();
+    first.available_at_utc = first.received_at_utc.clone();
+    let mut second = logical_bar_row(
+        "2026-10-08-regular",
+        "2026-10-08T13:31:00Z",
+        "2026-10-08T13:32:00Z",
+        "10.25",
+        "source-1",
+    );
+    second.received_at_utc = market_contracts::ProtoTimestampV2::parse(last_observed).unwrap();
+    second.available_at_utc = second.received_at_utc.clone();
+    let rows = vec![first, second];
+    let first_row_sha =
+        super::alpaca_query_access::alpaca_query_projected_raw_rows_sha256(&rows[..1]).unwrap();
+    let last_row_sha =
+        super::alpaca_query_access::alpaca_query_projected_raw_rows_sha256(&rows[1..]).unwrap();
     let receipt = |request_cursor_sha256: Option<String>,
                    next_page_cursor_sha256: Option<String>,
-                   response_sha: &str| {
+                   response_sha: &str,
+                   observed_at: &str,
+                   projected_rows_sha256: String| {
         super::alpaca_query_access::AlpacaQueryAccessReceiptV1 {
             cache_key_fingerprint_sha256: key_fingerprint.clone(),
-            cache_request_cursor_sha256: None,
+            cache_request_cursor_sha256: key.request_cursor_sha256.clone(),
             contract_id: "alpaca-stock-bars-single-symbol-v2/typed-observation-v1".to_owned(),
             method: "GET".to_owned(),
             origin: "https://data.alpaca.markets".to_owned(),
@@ -2687,22 +2716,35 @@ fn synthetic_alpaca_page_chain_validates_duplicate_observation_times_and_cursor_
             page_size: 1_000,
             request_cursor_sha256,
             typed_response_sha256: response_sha.to_owned(),
-            response_observed_at_utc: observed.to_owned(),
+            response_observed_at_utc: observed_at.to_owned(),
             row_count: 1,
             next_page_cursor_sha256,
+            projected_raw_rows_sha256: Some(projected_rows_sha256),
             source_observation_sha256: response_sha.to_owned(),
         }
     };
     let receipts = vec![
-        receipt(None, Some("b".repeat(64)), &"a".repeat(64)),
-        receipt(Some("b".repeat(64)), None, &"c".repeat(64)),
+        receipt(
+            None,
+            Some("b".repeat(64)),
+            &"a".repeat(64),
+            first_observed,
+            first_row_sha,
+        ),
+        receipt(
+            Some("b".repeat(64)),
+            None,
+            &"c".repeat(64),
+            last_observed,
+            last_row_sha,
+        ),
     ];
     let chain_sha =
         super::alpaca_query_access::alpaca_query_access_chain_observation_sha256(&receipts)
             .unwrap();
     let mut coverage = coverage(&key, true, 0, false);
     coverage.covered_end_exclusive_utc = key.window_end_exclusive_utc.clone();
-    coverage.response_observed_at_utc = observed.to_owned();
+    coverage.response_observed_at_utc = last_observed.to_owned();
     coverage.pages_seen = Some(2);
     coverage.sequence_gap_count = None;
     coverage.segments[0].coverage_status = market_contracts::BarsCoverageStatusV1::Partial;
@@ -2710,25 +2752,6 @@ fn synthetic_alpaca_page_chain_validates_duplicate_observation_times_and_cursor_
     coverage.segments[0].source_observation_sha256 = chain_sha;
     coverage.segments[0].raw_row_count = 2;
     coverage.segments[0].canonical_row_count = 2;
-    let received_at = market_contracts::ProtoTimestampV2::parse(observed).unwrap();
-    let mut first = logical_bar_row(
-        "2026-10-08-regular",
-        "2026-10-08T13:30:00Z",
-        "2026-10-08T13:31:00Z",
-        "10.25",
-        "source-1",
-    );
-    first.received_at_utc = received_at.clone();
-    let mut second = logical_bar_row(
-        "2026-10-08-regular",
-        "2026-10-08T13:31:00Z",
-        "2026-10-08T13:32:00Z",
-        "10.25",
-        "source-1",
-    );
-    second.received_at_utc = received_at;
-    let rows = vec![first, second];
-
     assert!(
         super::alpaca_query_access::stored::validate_stored_query_access_receipts(
             &key,
@@ -2742,6 +2765,30 @@ fn synthetic_alpaca_page_chain_validates_duplicate_observation_times_and_cursor_
         .is_ok()
     );
 
+    let mut changed_data_same_count_and_time = rows.clone();
+    let changed_price = market_contracts::DecimalString::new("10.26").unwrap();
+    changed_data_same_count_and_time[0].open = changed_price.clone();
+    changed_data_same_count_and_time[0].high = changed_price.clone();
+    changed_data_same_count_and_time[0].low = changed_price.clone();
+    changed_data_same_count_and_time[0].close = changed_price;
+    assert_eq!(changed_data_same_count_and_time.len(), rows.len());
+    assert_eq!(
+        changed_data_same_count_and_time[0].received_at_utc,
+        rows[0].received_at_utc
+    );
+    assert!(matches!(
+        super::alpaca_query_access::stored::validate_stored_query_access_receipts(
+            &key,
+            &coverage,
+            &changed_data_same_count_and_time,
+            &changed_data_same_count_and_time,
+            &receipts,
+            true,
+            &[],
+        ),
+        Err(CacheReconciliationError::UnknownOutcome)
+    ));
+
     let mut broken_chain = receipts.clone();
     broken_chain[1].request_cursor_sha256 = Some("d".repeat(64));
     assert!(matches!(
@@ -2751,6 +2798,21 @@ fn synthetic_alpaca_page_chain_validates_duplicate_observation_times_and_cursor_
             &rows,
             &rows,
             &broken_chain,
+            true,
+            &[],
+        ),
+        Err(CacheReconciliationError::UnknownOutcome)
+    ));
+
+    let mut ambiguous_page_times = receipts.clone();
+    ambiguous_page_times[1].response_observed_at_utc = first_observed.to_owned();
+    assert!(matches!(
+        super::alpaca_query_access::stored::validate_stored_query_access_receipts(
+            &key,
+            &coverage,
+            &rows,
+            &rows,
+            &ambiguous_page_times,
             true,
             &[],
         ),

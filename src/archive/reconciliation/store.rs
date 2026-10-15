@@ -61,6 +61,7 @@ const ROOT_OWNERSHIP_MARKER: &[u8] = b"lqepoch.mdp.cache-root.v1\n";
 const MAX_TREE_ENTRIES: usize = 100_000;
 const RECEIPT_DOMAIN: &[u8] = b"lqepoch.mdp.cache-version-receipt.v7\0";
 const RECEIPT_DOMAIN_V8: &[u8] = b"lqepoch.mdp.cache-version-receipt.v8\0";
+const RECEIPT_DOMAIN_V9: &[u8] = b"lqepoch.mdp.cache-version-receipt.v9\0";
 const LEGACY_RECEIPT_DOMAIN_V6: &[u8] = b"lqepoch.mdp.cache-version-receipt.v6\0";
 const LEGACY_RECEIPT_DOMAIN_V5: &[u8] = b"lqepoch.mdp.cache-version-receipt.v5\0";
 const LEGACY_RECEIPT_DOMAIN_V4: &[u8] = b"lqepoch.mdp.cache-version-receipt.v4\0";
@@ -1370,7 +1371,7 @@ impl CacheVersionStoreV1 {
             );
         let receipt = CacheVersionReceiptV1 {
             receipt_version: if alpaca_query_access_receipts.is_some() {
-                8
+                9
             } else {
                 7
             },
@@ -1748,7 +1749,7 @@ impl CacheVersionStoreV1 {
                             .is_some_and(|maximum| cursor.expires_at_unix_seconds <= maximum)
                         && receipt.coverage.truncated
                 });
-        if !matches!(receipt.receipt_version, 4..=8)
+        if !matches!(receipt.receipt_version, 4..=9)
             || receipt.key != *key
             || receipt.key_fingerprint_sha256 != key_fingerprint
             || receipt.version_id != version_id
@@ -1901,6 +1902,7 @@ impl CacheVersionStoreV1 {
             6 => LEGACY_RECEIPT_DOMAIN_V6,
             7 => RECEIPT_DOMAIN,
             8 => RECEIPT_DOMAIN_V8,
+            9 => RECEIPT_DOMAIN_V9,
             _ => return Err(CacheReconciliationError::UnknownOutcome),
         };
         Ok((receipt, hash_domain(domain, &receipt_bytes)))
@@ -2109,10 +2111,10 @@ fn bars_rows_sha256(rows: &[BarRowV1]) -> Result<String> {
 }
 
 fn logical_receipt_shape_is_valid(receipt: &CacheVersionReceiptV1) -> bool {
-    if !matches!(receipt.receipt_version, 7 | 8) {
+    if !matches!(receipt.receipt_version, 7 | 8 | 9) {
         return true;
     }
-    if (receipt.receipt_version == 8)
+    if matches!(receipt.receipt_version, 8 | 9)
         != (receipt.authority_basis == CacheAuthorityBasisV1::AlpacaQueryAccessObserved)
     {
         return false;
@@ -2254,7 +2256,7 @@ fn validate_stored_version_admission(
             }
         }
         CacheAuthorityBasisV1::AlpacaQueryAccessObserved => {
-            if receipt.receipt_version != 8
+            if receipt.receipt_version != 9
                 || receipt.provider_admission_receipt.is_some()
                 || receipt.provider_admission_receipt_sha256.is_some()
                 || receipt.authority
@@ -2520,6 +2522,7 @@ fn receipt_domain(version: u32) -> Result<&'static [u8]> {
     match version {
         7 => Ok(RECEIPT_DOMAIN),
         8 => Ok(RECEIPT_DOMAIN_V8),
+        9 => Ok(RECEIPT_DOMAIN_V9),
         _ => Err(CacheReconciliationError::InvalidInput),
     }
 }

@@ -83,9 +83,12 @@ and local documentation.
   phase slices; missing phase mapping retains provisional artifacts without advancing the index.
   A dedicated Alpaca cache finalizer can establish local source-protocol evidence from an opaque
   witness attached to a successful pinned-SDK page, while entitlement stays `Unknown`. It derives
-  complete coverage only from an exhausted page chain and exact, gap-free rows across trusted
-  calendar phases; missing minutes remain provisional. Cache hits for this basis require a matching
-  same-process access lease lasting at most 60 seconds and the configured cache TTL, so restart or
+  complete coverage only from an exhausted Broker page-token chain and exact, gap-free rows across
+  trusted calendar phases; the MDP selection cursor remains only a cache-page identity. Each page
+  receipt separately hashes the ordered Core raw-row projection that is persisted, and ambiguous
+  page receive timestamps fail closed; missing minutes remain provisional. Cache hits for this
+  basis require a matching same-process access lease lasting at most 60 seconds and the configured
+  cache TTL, so restart or
   expiry causes a provider refetch. This does not prove Plus/license rights or open remote writers.
   Expired rows remain audit-only and can still block a materially conflicting cross-provider
   candidate, while expired cache entries are not served. Other provisional sources remain unable to

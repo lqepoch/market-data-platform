@@ -291,9 +291,12 @@ reconciliation index stores changed sessions in bounded immutable shards; sessio
 uses validated calendar phase slices rather than parsing opaque IDs. Missing phase mapping keeps
   provisional artifacts without advancing the logical index. A dedicated Alpaca path can record
   successful pinned-SDK query provenance locally, while entitlement remains `Unknown`; it marks
-  coverage complete only when the exhausted page chain and exact calendar-phase timeline have no
-  missing bars or gaps. Cache hits for that basis require a same-process exact-key access lease of
-  at most 60 seconds and the configured cache TTL, so cold restart or expiry refetches the provider.
+  coverage complete only when the exhausted Broker page-token chain and exact calendar-phase
+  timeline have no missing bars or gaps. The MDP selection cursor is a cache-page identity, not a
+  provider pagination fact; each receipt also binds the ordered Core raw-row projection, and
+  ambiguous page receive timestamps fail closed. Cache hits for that basis require a same-process
+  exact-key access lease of at most 60 seconds and the configured cache TTL, so cold restart or
+  expiry refetches the provider.
   This local evidence does not assert Plus/license rights or authorize remote archive publication.
   Expired observations are not served, but remain available for material-conflict audit. This store
   has no provider or remote-archive writer. See

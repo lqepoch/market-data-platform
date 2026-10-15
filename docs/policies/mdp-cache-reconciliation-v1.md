@@ -88,8 +88,16 @@ bounded chain starts at its first page and is exhausted, the trusted calendar ph
 requested sessions/window, and exact raw/canonical observations tile every phase at the requested
 resolution without gaps or truncation. For example, a regular-session one-minute phase must contain
 all 390 consecutive bars. A missing minute stays provisional; the cache does not infer no-trade
-intervals or synthesize bars. Pages with a continuation, missing phase mapping, unknown sequence
-facts, empty response, or otherwise incomplete coverage may remain as raw/provisional evidence.
+intervals or synthesize bars. Provider-chain completeness uses the Broker SDK page-token chain:
+the first page has no incoming provider token, adjacent pages link by token digest, and the last page
+has no next token. The request cursor is only the MDP selection/cache-page identity and does not
+change those provider-chain facts. Each page also binds a domain-separated SHA-256 over the ordered
+Core raw-row projection that MDP persists, separately from the Broker typed SDK response hash.
+Per-page receive timestamps must be distinct so bounded cold-read validation can reconstruct page
+boundaries; ambiguous chains are rejected. These row-projection hashes are persisted in cache
+receipt format 9; older Alpaca query receipts without this binding are not accepted as query-access
+proof. Pages with a continuation, missing phase mapping, unknown sequence facts, empty response, or
+otherwise incomplete coverage may remain as raw/provisional evidence.
 
 An accepted Alpaca query basis is local to this cache and is separate from `entitlement_status` and
 remote archive publication. It grants a process-local access lease for the exact cache key and

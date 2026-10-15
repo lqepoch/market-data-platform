@@ -42,12 +42,16 @@ pub(crate) fn validate_stored_query_access_receipts(
     let expected_observation_sha256 = alpaca_query_access_chain_observation_sha256(receipts)
         .map_err(|_| CacheReconciliationError::UnknownOutcome)?;
     let mut row_counts = BTreeMap::<String, u64>::new();
+    let mut receipt_observation_times = BTreeSet::new();
     let mut total_rows = 0u64;
     let mut previous_next: Option<&str> = None;
     for (index, receipt) in receipts.iter().enumerate() {
         receipt
             .validate()
             .map_err(|_| CacheReconciliationError::UnknownOutcome)?;
+        if !receipt_observation_times.insert(receipt.response_observed_at_utc.clone()) {
+            return Err(CacheReconciliationError::UnknownOutcome);
+        }
         if receipt.symbol != key.symbol
             || receipt.requested_feed != key.feed
             || receipt.cache_key_fingerprint_sha256 != expected_key_fingerprint
@@ -77,15 +81,15 @@ pub(crate) fn validate_stored_query_access_receipts(
             .ok_or(CacheReconciliationError::LimitExceeded)?;
         previous_next = receipt.next_page_cursor_sha256.as_deref();
     }
-    let provider_chain_is_full = first.request_cursor_sha256.is_none()
-        && last.next_page_cursor_sha256.is_none()
-        && key.request_cursor_sha256.is_none();
+    let provider_chain_is_full =
+        first.request_cursor_sha256.is_none() && last.next_page_cursor_sha256.is_none();
+    let expected_adjustment = super::super::enum_label(&AdjustmentV1::Unadjusted)?;
     if !matches!(key.asset_class.as_str(), "stock" | "etf")
         || key.provider != "alpaca"
         || !matches!(key.feed.as_str(), "sip" | "boats")
         || key.entitlement != EntitlementState::Unknown
         || key.numeric_encoding != NumericEncodingV1::DecimalToken.as_str()
-        || key.adjustment != AdjustmentV1::Unadjusted.as_str()
+        || key.adjustment != expected_adjustment
         || full_provider_chain != provider_chain_is_full
         || total_rows != raw_rows.len() as u64
         || coverage.pages_seen != Some(receipts.len() as u32)
@@ -109,6 +113,30 @@ pub(crate) fn validate_stored_query_access_receipts(
     }
     if row_counts.values().any(|count| *count != 0) {
         return Err(CacheReconciliationError::UnknownOutcome);
+    }
+    let mut rows_by_observation = BTreeMap::<String, Vec<&market_contracts::BarRowV1>>::new();
+    for row in raw_rows {
+        rows_by_observation
+            .entry(row.received_at_utc.as_str().to_owned())
+            .or_default()
+            .push(row);
+    }
+    if rows_by_observation.len() != receipts.len() {
+        return Err(CacheReconciliationError::UnknownOutcome);
+    }
+    for receipt in receipts {
+        let rows = rows_by_observation
+            .get(&receipt.response_observed_at_utc)
+            .ok_or(CacheReconciliationError::UnknownOutcome)?;
+        let projection_sha256 = super::projected_raw_row_refs_sha256(rows.iter().copied())
+            .map_err(|_| CacheReconciliationError::UnknownOutcome)?;
+        if rows.len()
+            != usize::try_from(receipt.row_count)
+                .map_err(|_| CacheReconciliationError::UnknownOutcome)?
+            || receipt.projected_raw_rows_sha256.as_deref() != Some(projection_sha256.as_str())
+        {
+            return Err(CacheReconciliationError::UnknownOutcome);
+        }
     }
     if coverage.is_complete_for_key(key) {
         if !full_provider_chain
