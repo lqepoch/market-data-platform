@@ -2,7 +2,6 @@ use chrono::{DateTime, Duration, Utc};
 use market_contracts::{
     AdjustmentV1, BarResolutionV1, CoverageGapReasonV1, ProtoTimestampV2, UtcTimestamp,
 };
-use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -10,8 +9,9 @@ use crate::{
     session_router::{AlpacaFeed, PlannedSource},
 };
 use alpaca_rest_read::{
-    AlpacaRestError, AlpacaRestReadClient, AlpacaStockBarsRequest, RequestedStockBarsFeed,
-    StockBarsSort, StockBarsTimeframe,
+    AlpacaRestError, AlpacaRestReadClient, AlpacaStockBarsQueryAccessWitness,
+    AlpacaStockBarsQuerySuccessClass, AlpacaStockBarsRequest, RequestedStockBarsFeed,
+    StockBarsCursor, StockBarsSort, StockBarsTimeframe,
 };
 
 use super::{
@@ -27,30 +27,9 @@ use super::{
 };
 
 const PROVENANCE_ID: &str = "alpaca-history-page";
-
-#[derive(Serialize)]
-struct ObservationHashInput<'a> {
-    requested_feed: &'a str,
-    response_observed_at: &'a str,
-    rows: Vec<AlpacaObservationFact<'a>>,
-}
-
-#[derive(Serialize)]
-struct AlpacaObservationFact<'a> {
-    symbol: &'a str,
-    timestamp: &'a str,
-    open: &'a str,
-    high: &'a str,
-    low: &'a str,
-    close: &'a str,
-    volume: u64,
-    trade_count: Option<u64>,
-    volume_weighted_price: Option<&'a str>,
-    actual_provider: &'a str,
-    actual_feed: &'a str,
-    entitlement: &'static str,
-    numeric_encoding: &'static str,
-}
+const ALPACA_QUERY_CONTRACT_ID: &str = "alpaca-stock-bars-single-symbol-v2/typed-observation-v1";
+const ALPACA_DATA_ORIGIN: &str = "https://data.alpaca.markets";
+const ALPACA_STOCK_BARS_PATH: &str = "/v2/stocks/{symbol}/bars";
 
 pub(super) async fn fetch_page(
     client: &AlpacaRestReadClient,
@@ -99,7 +78,12 @@ pub(super) async fn fetch_page(
         plan.request.limit,
     )
     .map_err(map_alpaca_error)?;
-    if let Some(cursor) = alpaca_cursor(selection)? {
+    let incoming_cursor = alpaca_cursor(selection)?;
+    let incoming_cursor_sha256 = incoming_cursor
+        .as_ref()
+        .map(stock_bars_cursor_token_sha256)
+        .transpose()?;
+    if let Some(cursor) = incoming_cursor {
         request = request.with_cursor(cursor).map_err(map_alpaca_error)?;
     }
 
@@ -119,7 +103,24 @@ pub(super) async fn fetch_page(
     }
 
     let has_provider_cursor = result.has_next_page();
+    let witness = result
+        .query_access_witness()
+        .cloned()
+        .ok_or(ProviderQueryError::MalformedResponse)?;
     let next_provider_cursor = result.take_next_cursor();
+    let next_provider_cursor_sha256 = next_provider_cursor
+        .as_ref()
+        .map(stock_bars_cursor_token_sha256)
+        .transpose()?;
+    validate_query_access_witness(
+        &witness,
+        &request,
+        incoming_cursor_sha256.as_deref(),
+        result.response_observed_at().as_str(),
+        result.bars().len(),
+        has_provider_cursor,
+        next_provider_cursor_sha256.as_deref(),
+    )?;
     let (continuation_cursor, provider_cursor_cache_input) = match next_provider_cursor {
         Some(cursor) => {
             let cache_input = alpaca_cursor_cache_input(selection, &cursor)?;
@@ -183,18 +184,19 @@ pub(super) async fn fetch_page(
             CoverageGapReasonV1::Unknown,
         )?);
     }
-    let observation_hash = observation_hash(
-        requested_feed.as_str(),
-        result.response_observed_at().as_str(),
-        result.bars(),
-    )?;
+    let feed_label = requested_feed.as_str();
+    let response_feed = if result.bars().is_empty() {
+        "unknown"
+    } else {
+        feed_label
+    };
     let response = build_page(
         plan,
         group,
         provenance(
             "alpaca",
-            "unknown",
-            "Alpaca historical stock-bars API",
+            response_feed,
+            "Alpaca stock-bars SDK success; feed is the documented request selector, not a response echo",
             market_contracts::NumericEncodingV1::DecimalToken,
             PROVENANCE_ID,
         ),
@@ -205,47 +207,92 @@ pub(super) async fn fetch_page(
     )?;
     ProviderPageFetch::new(
         response,
-        Some(observation_hash),
+        Some(witness.typed_response_sha256().to_owned()),
         Some(response_observed_at),
         Some(1),
         Some(!has_provider_cursor),
         provider_cursor_cache_input,
     )
+    .and_then(|page| page.with_alpaca_query_access(&witness, incoming_cursor_sha256.as_deref()))
 }
 
-fn observation_hash(
-    requested_feed: &str,
+fn validate_query_access_witness(
+    witness: &AlpacaStockBarsQueryAccessWitness,
+    request: &AlpacaStockBarsRequest,
+    expected_request_cursor_sha256: Option<&str>,
     response_observed_at: &str,
-    bars: &[alpaca_rest_read::AlpacaStockBarObservation],
-) -> Result<String, ProviderQueryError> {
-    let rows = bars
-        .iter()
-        .map(|bar| {
-            let source = bar.source();
-            AlpacaObservationFact {
-                symbol: bar.symbol(),
-                timestamp: bar.timestamp().as_str(),
-                open: bar.open().as_str(),
-                high: bar.high().as_str(),
-                low: bar.low().as_str(),
-                close: bar.close().as_str(),
-                volume: bar.volume(),
-                trade_count: bar.trade_count(),
-                volume_weighted_price: bar.volume_weighted_price().map(|value| value.as_str()),
-                actual_provider: &source.provider,
-                actual_feed: &source.feed,
-                entitlement: "unknown",
-                numeric_encoding: source.numeric_encoding.as_str(),
-            }
-        })
-        .collect();
-    let bytes = serde_json::to_vec(&ObservationHashInput {
-        requested_feed,
-        response_observed_at,
-        rows,
-    })
-    .map_err(|_| ProviderQueryError::MalformedResponse)?;
-    Ok(hex::encode(Sha256::digest(bytes)))
+    row_count: usize,
+    has_next_page: bool,
+    next_page_cursor_sha256: Option<&str>,
+) -> Result<(), ProviderQueryError> {
+    let row_count_u32 =
+        u32::try_from(row_count).map_err(|_| ProviderQueryError::MalformedResponse)?;
+    if witness.api_contract_id() != ALPACA_QUERY_CONTRACT_ID
+        || witness.api_method() != "GET"
+        || witness.api_origin() != ALPACA_DATA_ORIGIN
+        || witness.api_path_template() != ALPACA_STOCK_BARS_PATH
+        || witness.success_class() != AlpacaStockBarsQuerySuccessClass::SdkReturnedDecodedResponse
+        || witness.symbol() != request.symbol()
+        || witness.requested_feed() != request.requested_feed()
+        || witness.adjustment() != "raw"
+        || witness.currency() != "USD"
+        || witness.asof() != "-"
+        || witness.timeframe() != request.timeframe()
+        || witness.start_inclusive().as_str() != request.start().as_str()
+        || witness.end_inclusive().as_str() != request.end().as_str()
+        || witness.sort() != StockBarsSort::Desc
+        || witness.page_size() != request.page_size()
+        || witness.request_cursor_sha256() != expected_request_cursor_sha256
+        || witness.response_observed_at().as_str() != response_observed_at
+        || witness.row_count() != row_count_u32
+        || witness.contains_rows() != (row_count_u32 > 0)
+        || witness.has_next_page() != has_next_page
+        || witness.next_page_cursor_sha256() != next_page_cursor_sha256
+        || !valid_sha256(witness.typed_response_sha256())
+    {
+        return Err(ProviderQueryError::MalformedResponse);
+    }
+    Ok(())
+}
+
+/// Hash only the opaque provider token from Broker's pinned typed cursor wire format.
+/// The temporary JSON value is dropped immediately and is never logged or persisted here.
+fn stock_bars_cursor_token_sha256(cursor: &StockBarsCursor) -> Result<String, ProviderQueryError> {
+    let payload = serde_json::to_value(cursor).map_err(|_| ProviderQueryError::InvalidCursor)?;
+    let token = payload
+        .get("page_token")
+        .and_then(serde_json::Value::as_str)
+        .filter(|token| !token.is_empty() && !token.bytes().any(|byte| byte.is_ascii_control()))
+        .ok_or(ProviderQueryError::InvalidCursor)?;
+    Ok(hex::encode(Sha256::digest(token.as_bytes())))
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stock_bars_cursor_token_sha256;
+    use alpaca_rest_read::StockBarsCursor;
+
+    #[test]
+    fn typed_cursor_hash_uses_only_the_page_token_and_keeps_debug_redacted() {
+        // Synthetic typed cursor for projection testing only; it is not provider evidence.
+        let cursor: StockBarsCursor = serde_json::from_str(
+            r#"{"version":1,"symbol":"QQQ","timeframe":"minute1","start":"2026-10-08T13:30:00Z","end":"2026-10-08T13:32:00Z","page_size":100,"feed":"sip","sort":"desc","page_token":"abc","last_bar_timestamp":null}"#,
+        )
+        .expect("valid synthetic typed cursor");
+
+        assert_eq!(
+            stock_bars_cursor_token_sha256(&cursor).expect("page-token digest"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert!(!format!("{cursor:?}").contains("abc"));
+    }
 }
 
 fn map_alpaca_error(error: AlpacaRestError) -> ProviderQueryError {

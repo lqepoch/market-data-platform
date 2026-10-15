@@ -1,9 +1,10 @@
 use std::fmt;
 
+use alpaca_rest_read::AlpacaStockBarsQueryAccessWitness;
 use market_contracts::{BarsResponseV1, ProtoTimestampV2};
 use zeroize::Zeroizing;
 
-use crate::archive::reconciliation::ProviderPageEvidenceV1;
+use crate::archive::reconciliation::{AlpacaStockBarsQueryWitnessV1, ProviderPageEvidenceV1};
 
 use super::error::ProviderQueryError;
 
@@ -88,8 +89,23 @@ impl ProviderPageFetch {
                 sequence_gap_count: None,
                 truncated,
                 provider_cursor_cache_input,
+                alpaca_query_access_pages: Vec::new(),
             },
         })
+    }
+
+    pub(crate) fn with_alpaca_query_access(
+        mut self,
+        witness: &AlpacaStockBarsQueryAccessWitness,
+        expected_request_cursor_sha256: Option<&str>,
+    ) -> Result<Self, ProviderQueryError> {
+        let evidence = AlpacaStockBarsQueryWitnessV1::from_broker_witness(
+            witness,
+            expected_request_cursor_sha256,
+        )
+        .map_err(|_| ProviderQueryError::MalformedResponse)?;
+        self.evidence.alpaca_query_access_pages.push(evidence);
+        Ok(self)
     }
 }
 
@@ -100,7 +116,8 @@ impl ProviderPageFetch {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProviderCacheIdentity {
     pub provider: String,
-    /// Actual source feed, or `unknown` where a request selector is not response evidence.
+    /// Selected route partition. Alpaca uses the requested SIP/BOATS selector here; page
+    /// provenance remains `unknown` unless a matching same-page SDK witness supports that route.
     pub feed: String,
     /// Stable adapter/route identity; not an account or entitlement identity.
     pub source_scope_id: String,
