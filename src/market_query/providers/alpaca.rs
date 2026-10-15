@@ -184,6 +184,8 @@ pub(super) async fn fetch_page(
             CoverageGapReasonV1::Unknown,
         )?);
     }
+    let witness_projection_is_complete =
+        projection_contains_every_sdk_bar(result.bars().len(), rows.len());
     let feed_label = requested_feed.as_str();
     let response_feed = if result.bars().is_empty() {
         "unknown"
@@ -218,9 +220,18 @@ pub(super) async fn fetch_page(
         // a non-empty decoded page. Preserve the observation for the caller, which bypasses cache
         // publication for empty Alpaca pages.
         Ok(page)
-    } else {
+    } else if witness_projection_is_complete {
         page.with_alpaca_query_access(&witness, incoming_cursor_sha256.as_deref())
+    } else {
+        // A bar clipped at the Core request boundary is represented by the existing Unknown gap,
+        // not by a fabricated partial bar. Keep the successful SDK observation and selected-feed
+        // protocol fact, but do not bind a witness whose row count cannot match the Core rows.
+        Ok(page)
     }
+}
+
+fn projection_contains_every_sdk_bar(sdk_bar_count: usize, projected_row_count: usize) -> bool {
+    sdk_bar_count > 0 && sdk_bar_count == projected_row_count
 }
 
 fn validate_query_access_witness(
@@ -283,8 +294,18 @@ fn valid_sha256(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::stock_bars_cursor_token_sha256;
+    use super::{projection_contains_every_sdk_bar, stock_bars_cursor_token_sha256};
     use alpaca_rest_read::StockBarsCursor;
+
+    #[test]
+    fn clipped_boundary_page_cannot_attach_a_query_access_witness() {
+        // Example: five one-minute SDK bars intersect a request ending at 13:34:30 UTC.
+        // The 13:34 bar is represented only by an Unknown gap, leaving four full Core rows.
+        assert!(!projection_contains_every_sdk_bar(5, 4));
+        assert!(!projection_contains_every_sdk_bar(5, 6));
+        assert!(projection_contains_every_sdk_bar(5, 5));
+        assert!(!projection_contains_every_sdk_bar(0, 0));
+    }
 
     #[test]
     fn typed_cursor_hash_uses_only_the_page_token_and_keeps_debug_redacted() {
