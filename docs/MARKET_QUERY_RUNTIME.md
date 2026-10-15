@@ -41,8 +41,11 @@ the verified research channel. No order operation is added.
   provisionally only for planner NEW/BUFFER slices and supported history intervals. Its capabilities
   are `historical=true,realtime=false`; this endpoint is not a live stream and does not prove actual
   feed, entitlement, or coverage. A `futu_only` request cannot use its mode to open OLD slices beyond
-  the backend policy. Provider authentication, permission, unsupported-resolution, and transport
-  errors keep their specific error/gap behavior. Missing port configuration leaves a precise
+  the backend policy. Known limitation: a multi-day `futu_only` request can have a same-phase OLD
+  slice suppress otherwise eligible NEW/BUFFER slices of that phase; it does not promise a partial
+  Futu-only result for that window. `auto` routing is unaffected. Provider authentication,
+  permission, unsupported-resolution, and transport errors keep their specific error/gap behavior.
+  Missing port configuration leaves a precise
   provider-capability gap. To roll back Futu attempts, unset this variable and restart the MDP
   process. A04 admission remains separate and is still required for trusted cache
   promotion; a policy-approved fetch without complete A04 evidence stays provisional.

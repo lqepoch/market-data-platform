@@ -106,11 +106,11 @@
     },
     {
       "path": "docs/openapi-v1.yaml",
-      "sha256": "ac93c199d388d5328ab138b992e3ec65f5d7007b70c604207e3bd4a230858756"
+      "sha256": "e6dece9baef841dc96026c09ad28bfcc1a811a5dbebc86953b6878d0fd462caa"
     },
     {
       "path": "docs/MARKET_QUERY_RUNTIME.md",
-      "sha256": "28b108826c48f931afb21df64688caee7d0444eda6068263b389bde919a709f1"
+      "sha256": "4ce104e3e97bbcbddb4cf29ce69568dd0b6b6de5cd7da25c211c4e523b94d9d3"
     },
     {
       "path": "docs/session-router.md",
@@ -2517,7 +2517,7 @@
       },
       {
         "path": "src/market_query/providers/admission.rs",
-        "sha256": "ea44bfeea32277923e6331606ff98add2c13aa70187107a01092ea920a6b077a"
+        "sha256": "00d776fa2952ee3e4c228cfde66fa20927d256f03f1cdce8cfe341ad6bf489d4"
       },
       {
         "path": "src/market_query/providers/alpaca.rs",
@@ -2684,7 +2684,7 @@
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
       }
     ],
-    "sha256": "1f1aef3b97c69709f8b34fd93891d2cd894a30751fd3cc412665a177244090d7"
+    "sha256": "8ddb878b997f08597e5e9212189d9c118be506fe4bb87e7c712da506c8ed107e"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",

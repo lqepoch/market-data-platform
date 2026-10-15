@@ -544,7 +544,8 @@ mod tests {
             start,
             end_exclusive: end,
         };
-        let timestamp = |value| ProtoTimestampV2::parse(&value.to_rfc3339()).unwrap();
+        let timestamp =
+            |value: chrono::DateTime<Utc>| ProtoTimestampV2::parse(&value.to_rfc3339()).unwrap();
         let request = BarsRequestV1 {
             symbol: "SPY".to_owned(),
             asset_class: AssetClassV1::Etf,
@@ -676,7 +677,8 @@ mod tests {
         let start = Utc.with_ymd_and_hms(2026, 1, 5, 9, 0, 0).unwrap();
         let end = Utc.with_ymd_and_hms(2026, 1, 7, 21, 0, 0).unwrap();
         let as_of = Utc.with_ymd_and_hms(2026, 1, 7, 15, 0, 0).unwrap();
-        let timestamp = |value| ProtoTimestampV2::parse(&value.to_rfc3339()).unwrap();
+        let timestamp =
+            |value: chrono::DateTime<Utc>| ProtoTimestampV2::parse(&value.to_rfc3339()).unwrap();
         (
             BarsRequestV1 {
                 symbol: "SPY".to_owned(),

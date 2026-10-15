@@ -257,7 +257,9 @@ paths:
         adjustment evidence cannot be promoted. Downgrade requires explicit caller permission.
         Futu history attempts require an explicitly configured server-side Gateway port and are
         provisional, historical-only, and limited to NEW/BUFFER slices; provider_mode cannot widen
-        this policy. They do not imply realtime access or trusted cache promotion.
+        this policy. A multi-day futu_only request can have a same-phase OLD slice suppress otherwise
+        eligible NEW/BUFFER slices of that phase; partial results are not promised, while auto routing
+        is unaffected. These attempts do not imply realtime access or trusted cache promotion.
         All fields are required except cursor; unknown and duplicate parameters are rejected.
       security: [{mdpDelegation: []}]
       parameters:
