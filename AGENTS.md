@@ -28,6 +28,10 @@ The nine-repository map is a [governance candidate in Draft PR #20](https://gith
   invoke real OAuth or rclone configuration, query or publish remote archives, or upload data/test
   artifacts. Pin third-party Actions to full commit SHAs and grant each workflow only its required
   token permissions. Reuse `docs/CI.md` commands instead of duplicating validation logic.
+  The Windows runtime lane may upload only its verified executable package, candidate/file hashes,
+  source identity, LICENSE and dependency NOTICE. This narrow delivery exception does not permit
+  uploading data, test output, calendars, local paths, environment files or credentials. A packaged
+  Windows executable is local evaluation evidence, not Linux Parquet support or market entitlement.
 - Remote query is an operator-only, read-only CLI path and an authenticated HTTP path. Require an
   explicit curated/diagnostic namespace, verify remote IDs and exact manifest bytes, then verify
   downloaded SHA-256, size, trusted schema fingerprint, footer, and row facts before serving or

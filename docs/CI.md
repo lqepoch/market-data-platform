@@ -12,10 +12,49 @@ connect to market-data providers, perform OAuth, read an operator's rclone confi
 publish remote archives, or upload data and test artifacts. The verification job's automatic
 `GITHUB_TOKEN` is limited to `contents: read` for checkout and is not persisted in the worktree.
 
-The only action in the verification workflow is the official `actions/checkout` action, pinned to
+The Linux verification job uses the official `actions/checkout` action, pinned to
 full commit SHA `3d3c42e5aac5ba805825da76410c181273ba90b1` (release `v7.0.1`). It disables persisted
 checkout credentials. The job token has `contents: read`; all other workflow permissions are
 disabled.
+
+Compilation caching uses `Swatinem/rust-cache` v2.9.2 at
+`6323deb102c322ba6fcbdcafc7e3dddab59af2b6`, with separate Linux/Windows scopes and the
+action's lockfile/toolchain fingerprint. GitHub isolates PR cache writes from main. Cache hits
+never replace the current candidate's tests or packaging validation. The feature-gated library
+safety suite is an explicit Linux step as required by AGENTS, in addition to opt-in Clippy and CLI
+integration; compiling those tests alone is not evidence of executing them.
+
+## Windows local-evaluation runtime
+
+The separate `Windows Core Bars runtime` job uses `windows-2022`, Rust 1.99.0, Python 3.14.6 and
+NASM 2.16.03 (archive SHA-256 `3ee4782247bcb874378d02f7eab4e294a84d3d15f3f6ee2de2f47a46aa7226e6`).
+It checks portable market-query/session contracts, builds the locked release executable and
+uses `scripts/windows_runtime.py` to package and run the actual executable. The smoke uses its own
+empty LocalTest root, archive-reader cache and independently generated synthetic verifier keys.
+It verifies loopback startup, authentication, no-store/readiness and the unconfigured-provider
+failure boundary. It does not add a production synthetic-provider mode or call real providers.
+Positive synthetic Core Bars tests remain test-only. The existing Linux suite remains mandatory.
+The Linux job also runs `python3 -m unittest discover -s tests -p 'test_windows_runtime.py'`
+to reject candidate mismatch, tampered package members, duplicate hashes and incorrect PE architecture.
+Package smoke cleanup terminates and reaps only its owned child; Windows Ctrl-C graceful shutdown
+is not assessed by this lane.
+The market-discovery authorization test uses an empty archive root and verifies it remains empty;
+it must not generate an unrelated Parquet fixture to test metadata/auth-only routes. Archive
+query/readback tests retain their existing Linux fixtures and checks.
+
+`MDP_MARKET_CACHE_ROOT` is omitted on Windows: isolated Parquet decoding and Pair verification remain
+Linux-only and fail `Unsupported` elsewhere. An empty LocalTest root permits HTTP service startup;
+it does not prove Windows archive-query support. Readiness is not market readiness or entitlement.
+An operator must independently provide a real, hash-pinned calendar and authorized Gateway access
+before requesting actual Futu bars. No CI fixture calendar is a deployable market calendar.
+
+Only after the executable smoke succeeds, the job uploads the executable package and archive hash
+with official `actions/upload-artifact` v7.0.2 pinned to
+`cf430e030ddbb5b0abf93d22962f4752f3646cd9`. The package binds the exact candidate SHA and file hashes,
+and includes LICENSE/NOTICE. It excludes environment files, calendars, market/test data and logs.
+This is a narrow binary-delivery exception to the no-data-artifact policy; all job permissions
+remain `contents: read`. Downloading and executing this Actions-built package needs no local
+compilation. `LOCAL_EVALUATION_ONLY` is not production release or complete license acceptance.
 
 ## Public PR verification commands (GitHub Actions)
 

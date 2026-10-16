@@ -29,6 +29,12 @@ jobs:
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
 
+      - name: Cache locked Linux compilation inputs
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          shared-key: mdp-linux-verify-v1
+          cache-on-failure: true
+
       - name: Install pinned supply-chain tools
         run: |
           cargo +1.99.0 install cargo-deny --version 0.20.2 --locked
@@ -49,6 +55,9 @@ jobs:
       - name: Run Rust tests
         run: CARGO_BUILD_JOBS=2 cargo +1.99.0 test --offline
 
+      - name: Run feature-gated library safety tests
+        run: CARGO_BUILD_JOBS=2 cargo +1.99.0 test --offline --features offline-capture-synthetic --lib
+
       - name: Run offline fixture CLI integration
         run: CARGO_BUILD_JOBS=2 cargo +1.99.0 test --offline --features offline-capture-synthetic --test offline_capture_cli
 
@@ -58,5 +67,76 @@ jobs:
       - name: Test supply-chain verifier
         run: python3 -m unittest discover -s tests -p 'test_supply_chain.py'
 
+      - name: Test Windows package validation boundaries
+        run: python3 -m unittest discover -s tests -p 'test_windows_runtime.py'
+
       - name: Verify committed supply-chain artifacts
         run: python3 scripts/supply_chain.py --check
+
+  windows-runtime:
+    name: Windows Core Bars runtime
+    runs-on: windows-2022
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    env:
+      CARGO_BUILD_JOBS: '2'
+      MDP_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Check out exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.MDP_CANDIDATE_SHA }}
+          persist-credentials: false
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.99.0 --profile minimal
+      - name: Cache locked Windows compilation inputs
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          shared-key: mdp-windows-runtime-v1
+          cache-on-failure: true
+      - name: Install pinned Windows Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: 3.14.6
+      - name: Install fixed NASM for Windows TLS
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'nasm-2.16.03-win64.zip'
+          Invoke-WebRequest https://www.nasm.us/pub/nasm/releasebuilds/2.16.03/win64/nasm-2.16.03-win64.zip -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne '3ee4782247bcb874378d02f7eab4e294a84d3d15f3f6ee2de2f47a46aa7226e6') { throw 'NASM checksum mismatch' }
+          Expand-Archive -LiteralPath $archive -DestinationPath (Join-Path $env:RUNNER_TEMP 'nasm')
+          Join-Path $env:RUNNER_TEMP 'nasm/nasm-2.16.03' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Fetch locked public dependencies
+        run: cargo +1.99.0 fetch --locked
+      - name: Verify portable market-query contracts
+        shell: pwsh
+        run: |
+          cargo +1.99.0 test --offline --locked --lib market_query
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo +1.99.0 test --offline --locked --lib http_api::market_bars::tests
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo +1.99.0 test --offline --locked --lib http_api::auth
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo +1.99.0 test --offline --locked --lib http_api::tests::market
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo +1.99.0 test --offline --locked --test session_router
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Build locked Windows executable
+        run: cargo +1.99.0 build --offline --locked --release
+      - name: Package and exercise immutable runtime
+        shell: pwsh
+        run: |
+          python scripts/windows_runtime.py package --binary target/release/market-data-platform.exe --output "$env:RUNNER_TEMP/mdp-windows" --candidate $env:MDP_CANDIDATE_SHA
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/windows_runtime.py smoke --package "$env:RUNNER_TEMP/mdp-windows/runtime" --candidate $env:MDP_CANDIDATE_SHA
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Preserve verified executable and provenance
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: mdp-windows-${{ env.MDP_CANDIDATE_SHA }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/mdp-windows/mdp-windows-x64.zip
+            ${{ runner.temp }}/mdp-windows/ARCHIVE_SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7

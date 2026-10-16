@@ -93,9 +93,11 @@ fn assert_no_store(response: &axum::response::Response) {
 #[tokio::test]
 async fn market_discovery_and_unsupported_reads_require_market_scope() {
     let temp = tempfile::tempdir().unwrap();
-    let remote = synthetic_remote_root(&temp.path().join("remote")).await;
+    // Discovery must not need a Parquet/archive fixture on any platform.
+    let remote = temp.path().join("remote");
+    std::fs::create_dir(&remote).unwrap();
     let (app, mut supervisor) = service(
-        remote,
+        remote.clone(),
         temp.path().join("cache"),
         Some(test_support::auth_config()),
     );
@@ -128,6 +130,7 @@ async fn market_discovery_and_unsupported_reads_require_market_scope() {
         }
     }
     supervisor.shutdown().await.unwrap();
+    assert_eq!(std::fs::read_dir(remote).unwrap().count(), 0);
 }
 
 #[tokio::test]

@@ -54,23 +54,23 @@
     },
     {
       "path": "README.md",
-      "sha256": "e1cd7135dad10b119c01f42bcc8ab38a65d6832e2dc123b37511db80287531e7"
+      "sha256": "820cce75c4ada0ea3585db3fe19754afdd00fd7f8184e38815c0dd61d04b8e3f"
     },
     {
       "path": "AGENTS.md",
-      "sha256": "5696b42d10b4092ace481c0919884fc7c2a81b8e9b0bf8891f679afb7c5f8124"
+      "sha256": "5a78368cb6123a444afce11da6ba577d61c46eadc6a895ae9cfa60fabd8461b3"
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "0544f22fc2374088e97e1e4b3d789e34a189cc69bec6c618d7f2e748b1071e8f"
+      "sha256": "25015b59007034a7e2399d6a746a2834332196d3e9d26d0cc2f7084c9ccc1835"
     },
     {
       "path": "docs/CI.md",
-      "sha256": "f41d2dd62f6a6b7e573235b5f6dcccd3097178d06ea3f6c978da27004bccc801"
+      "sha256": "83d400489dff2e8ca0cde650906ff110dbb7e7ca8c6a2b3a39883335b277aa6d"
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "sha256": "47a5318dd98b1f237560e379be277b34975230405d687d52175318598864d9d1"
+      "sha256": "cd47a4217855aea306ee66491a1df6153ecbf578a8ffbff8ec37f73f948c26a9"
     },
     {
       "path": "docs/CHG-2026-001-MDP-HTTP-PROVENANCE.md",
@@ -2296,6 +2296,10 @@
         "sha256": "854a2c737a6647b0898dc702f6852d7e7e344eb99c9fa62e7a4aa9716388de6d"
       },
       {
+        "path": "scripts/windows_runtime.py",
+        "sha256": "bda106127e8cb5cced4221abd588ffde83b63f76e0ec49fea90c874503b9096b"
+      },
+      {
         "path": "src/aggregate.rs",
         "sha256": "22f292311d910d25014c8183479915a8aa8916fe5e96466b1bae14e895f5a912"
       },
@@ -2485,7 +2489,7 @@
       },
       {
         "path": "src/http_api/tests.rs",
-        "sha256": "e01cdb4b43318d1eb6018ca75edcc5b7fd7bcabe062b5b3751e9e6fc217fc2ce"
+        "sha256": "79f12e13a45d6399b71c72471cc63192ddf54487498fdcc5b5dd68bf02726251"
       },
       {
         "path": "src/http_api/tests/pair_tests.rs",
@@ -2710,9 +2714,13 @@
       {
         "path": "tests/test_supply_chain.py",
         "sha256": "f1f9195c6d28f2177aef4d19ae8dbe6293f811ac15467b5d4f0cea2f82625b7c"
+      },
+      {
+        "path": "tests/test_windows_runtime.py",
+        "sha256": "64f4ee11fad8a55330b2949fb4c632c35ae5a6298a1a3b5517d511bc75802e00"
       }
     ],
-    "sha256": "1a9f9f46432848bd4f630ab09e0ca69354c1da0c50a7c3e699b4118f01f4a7d6"
+    "sha256": "151ae07e6d9430c5abb3d3ef715e23177cb4650cdb1fa514a3361f339adaf1b3"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",
