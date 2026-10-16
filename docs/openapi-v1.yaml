@@ -260,6 +260,9 @@ paths:
         this policy. A multi-day futu_only request can have a same-phase OLD slice suppress otherwise
         eligible NEW/BUFFER slices of that phase; partial results are not promised, while auto routing
         is unaffected. These attempts do not imply realtime access or trusted cache promotion.
+        A failed provider run preserves its classified gap and unknown source facts. If an older
+        planned run remains, the partial empty page carries truncated=true and its signed
+        continuation; the final failed run has none. This does not replace the failed source.
         All fields are required except cursor; unknown and duplicate parameters are rejected.
       security: [{mdpDelegation: []}]
       parameters:

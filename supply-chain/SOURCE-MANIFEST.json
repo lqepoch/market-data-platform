@@ -54,7 +54,7 @@
     },
     {
       "path": "README.md",
-      "sha256": "820cce75c4ada0ea3585db3fe19754afdd00fd7f8184e38815c0dd61d04b8e3f"
+      "sha256": "85c940a1bd5368295c7796b2274c95a7cf48b96495ed853083909625c9b66d33"
     },
     {
       "path": "AGENTS.md",
@@ -70,7 +70,7 @@
     },
     {
       "path": "docs/ARCHITECTURE.md",
-      "sha256": "cd47a4217855aea306ee66491a1df6153ecbf578a8ffbff8ec37f73f948c26a9"
+      "sha256": "55c1e7b18caf21e96d23adfda39ea820b51f100ea5f8d59e63c923ee72e4ef7a"
     },
     {
       "path": "docs/CHG-2026-001-MDP-HTTP-PROVENANCE.md",
@@ -106,11 +106,11 @@
     },
     {
       "path": "docs/openapi-v1.yaml",
-      "sha256": "d3ad957f1bccd575faf5ae2719b56c358901af8526195c454728d422c4c059c7"
+      "sha256": "de9197232b2e9086065833a75d486e81cc2941797db39e1edc4008d736f6c87b"
     },
     {
       "path": "docs/MARKET_QUERY_RUNTIME.md",
-      "sha256": "bfcfae93e1b402aa4ecaf0db3e589b645b6725b5aeace2f7606df2c254318861"
+      "sha256": "2fe5914c55ce198e8be18d05b8b42bfc38fef1614c4316adf235dd1b348057ff"
     },
     {
       "path": "docs/session-router.md",
@@ -2469,7 +2469,7 @@
       },
       {
         "path": "src/http_api/market_bars/response.rs",
-        "sha256": "8a401279b6895d3e652b207d1e8f5ad26f85497aa0b218d2a07ad568851f8938"
+        "sha256": "40478c3e1340f6502c2bc9b3ef7560c97c56b00c055106ce3f04bcd11be2f6d0"
       },
       {
         "path": "src/http_api/market_bars_authority_tests.rs",
@@ -2481,7 +2481,7 @@
       },
       {
         "path": "src/http_api/market_bars_tests.rs",
-        "sha256": "d0b0a102a249ec1ac69ef2420d43941576cbf7c95c340d6d5862ca7cfef6198f"
+        "sha256": "238ee8126cafd949ddd5acc2f556872e1d7d2f6148e4520b7e178c766158fc65"
       },
       {
         "path": "src/http_api/supervisor.rs",
@@ -2720,7 +2720,7 @@
         "sha256": "64f4ee11fad8a55330b2949fb4c632c35ae5a6298a1a3b5517d511bc75802e00"
       }
     ],
-    "sha256": "151ae07e6d9430c5abb3d3ef715e23177cb4650cdb1fa514a3361f339adaf1b3"
+    "sha256": "cc0ee110193cd4859fd3c5d4bd1ef741c748472639d3ba0806f4aac677ec0876"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",

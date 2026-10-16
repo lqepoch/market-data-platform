@@ -378,6 +378,19 @@ pub(super) fn response_for_provider_failure(
     if response.coverage_status != BarsCoverageStatusV1::Unsupported {
         response.coverage_status = BarsCoverageStatusV1::Partial;
     }
+    // A failed provider run still advances through the already signed plan. The cursor selects
+    // only the next planned run; it does not retry this source or authorize a different route.
+    if let Some(cursor) = selection
+        .cursor_for_next_group()
+        .map_err(provider_query_error_to_market_data)?
+    {
+        response.continuation_cursor = Some(cursor);
+        response.truncated = true;
+        response.coverage_status = BarsCoverageStatusV1::Partial;
+    }
+    response
+        .validate()
+        .map_err(|_| crate::MarketDataError::Contract)?;
     Ok(response)
 }
 

@@ -151,6 +151,13 @@ provider, feed, rights realm, payload hash and expiration. The provider-local co
 locator is embedded in the signed outer token, but is never a credential or part of the cache
 identity. Expired or absent page receipts cause a cache miss.
 
+A failed provider run can return zero rows with its classified gap and unknown source facts.
+When an older run remains in the frozen plan, this partial page carries `truncated=true` and the
+same authenticated next-run continuation used after an exhausted successful page. Clients must
+continue even after an empty failed page to reach those older observations. The last failed run
+has no continuation. This does not retry or replace the failed provider, change source priority,
+claim complete coverage, or turn request authentication/cursor errors into successful data.
+
 Outer continuations use versioned `mdp2` tokens authenticated with HMAC-SHA256. The
 MAC covers the request and plan digests, fixed snapshot time, provider-run position,
 provider cursor, issuance/expiry times, admission set, and authenticated principal
