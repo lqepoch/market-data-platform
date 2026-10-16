@@ -66,7 +66,7 @@
     },
     {
       "path": "docs/CI.md",
-      "sha256": "f7a1d4bbc4d3dae88b59824b2f656ff4b37221cb0fe8b482323179c194e03101"
+      "sha256": "de4e3c5a679ee91e364c76dc8ebe2f66e1a78ba260f85c0532a55007f8951532"
     },
     {
       "path": "docs/ARCHITECTURE.md",
@@ -2489,7 +2489,7 @@
       },
       {
         "path": "src/http_api/tests.rs",
-        "sha256": "e01cdb4b43318d1eb6018ca75edcc5b7fd7bcabe062b5b3751e9e6fc217fc2ce"
+        "sha256": "79f12e13a45d6399b71c72471cc63192ddf54487498fdcc5b5dd68bf02726251"
       },
       {
         "path": "src/http_api/tests/pair_tests.rs",
@@ -2720,7 +2720,7 @@
         "sha256": "64f4ee11fad8a55330b2949fb4c632c35ae5a6298a1a3b5517d511bc75802e00"
       }
     ],
-    "sha256": "f9d06fca2bd1b1473c1b67ca227964d0e63583c5055c2ee18ca0e85114a74aca"
+    "sha256": "151ae07e6d9430c5abb3d3ef715e23177cb4650cdb1fa514a3361f339adaf1b3"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",

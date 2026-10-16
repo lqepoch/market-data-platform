@@ -31,6 +31,9 @@ The Linux job also runs `python3 -m unittest discover -s tests -p 'test_windows_
 to reject candidate mismatch, tampered package members, duplicate hashes and incorrect PE architecture.
 Package smoke cleanup terminates and reaps only its owned child; Windows Ctrl-C graceful shutdown
 is not assessed by this lane.
+The market-discovery authorization test uses an empty archive root and verifies it remains empty;
+it must not generate an unrelated Parquet fixture to test metadata/auth-only routes. Archive
+query/readback tests retain their existing Linux fixtures and checks.
 
 `MDP_MARKET_CACHE_ROOT` is omitted on Windows: isolated Parquet decoding and Pair verification remain
 Linux-only and fail `Unsupported` elsewhere. An empty LocalTest root permits HTTP service startup;
