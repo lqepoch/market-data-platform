@@ -1,5 +1,10 @@
 # LQEpoch Market Data Platform
 
+Windows local HTTP evaluation uses the exact-candidate package produced by the
+`Windows Core Bars runtime` GitHub Actions job; see [CI delivery boundaries](docs/CI.md#windows-local-evaluation-runtime).
+This does not enable Windows Parquet/Pair readback, establish market entitlement or replace the
+operator-supplied hash-pinned calendar. Public builds and tests run in Actions only.
+
 Offline-first Rust pipeline for validating shared market event envelopes, preserving immutable
 event Parquet, producing strict one-minute equity trade bars, and publishing readback-verified
 objects through a single-writer archive boundary.

@@ -406,6 +406,13 @@ any external write is enabled.
 
 ## Supply-chain records
 
+The Windows local-evaluation HTTP runtime is built and exercised only by exact-candidate GitHub
+Actions. It reuses `serve` with an isolated empty LocalTest root and independent MDP verifier keys;
+Core Bars continues to use the existing calendar/router/provider contracts. Windows does not gain
+inline Parquet decoding, Pair readback, provider credentials or execution authority. See
+`docs/CI.md` for executable delivery and the distinction between transport/auth readiness and
+market/source readiness.
+
 `deny.toml` is the dependency policy for the locked all-target graph. The committed CycloneDX SBOM
 covers all-target, all-feature normal and build dependencies; dev-only packages remain in the lock
 inventory and are still checked by cargo-deny. Exact git origins and revisions are checked against
