@@ -525,7 +525,7 @@ fn canonical_cache_hit_page_is_revalidated_without_losing_rows_or_provisional_st
 }
 
 #[test]
-fn exhausted_cache_hit_advances_to_the_next_provider_run_without_provider_cursor_receipt() {
+fn failed_and_exhausted_futu_run_advances_to_the_next_planned_provider_run() {
     use chrono::{Duration, NaiveDate};
     use market_contracts::{
         AdjustmentV1, BarResolutionV1, BarRowV1, BarSourceProvenanceV1, DecimalString,
@@ -674,6 +674,117 @@ fn exhausted_cache_hit_advances_to_the_next_provider_run_without_provider_cursor
         selection.provider_group().source,
         crate::session_router::PlannedSource::Futu
     );
+
+    // A failed NEW/BUFFER attempt keeps its own coverage gap while issuing the signed cursor for
+    // the remaining OLD run. This is continuation through the existing plan, not source fallback.
+    let failed_futu = super::response::response_for_provider_failure(
+        &request,
+        &plan,
+        Some(&selection),
+        crate::market_query::providers::ProviderQueryError::ProviderUnavailable,
+        market_contracts::BarsCacheStatusV1::Unavailable,
+    )
+    .unwrap();
+    request.validate_response(&failed_futu).unwrap();
+    assert!(failed_futu.rows.is_empty());
+    assert_eq!(failed_futu.coverage_status, BarsCoverageStatusV1::Partial);
+    assert!(failed_futu.truncated);
+    assert!(
+        failed_futu
+            .gaps
+            .iter()
+            .any(|gap| { gap.reason_code == CoverageGapReasonV1::ProviderUnavailable })
+    );
+    let failed_futu_cursor = failed_futu
+        .continuation_cursor
+        .as_ref()
+        .expect("failed provider run continues to the next planned source");
+
+    let mut continued_request = request.clone();
+    continued_request.cursor = Some(failed_futu_cursor.clone());
+    let next_selection = provider_runtime
+        .select_page_at_synthetic_for_test(
+            &continued_request,
+            &plan,
+            &rights_profile_sha256,
+            now_unix_seconds,
+        )
+        .expect("signed failure cursor selects the next planned run");
+    assert_eq!(
+        next_selection.provider_group().source,
+        crate::session_router::PlannedSource::Alpaca {
+            feed: crate::session_router::AlpacaFeed::Sip
+        }
+    );
+    assert!(
+        next_selection
+            .provider_group()
+            .slices_recent_to_old
+            .iter()
+            .all(|slice| slice.phase == Some(crate::session_router::SessionPhase::Pre))
+    );
+
+    let mut tampered_cursor_request = continued_request.clone();
+    let mut tampered_cursor = failed_futu_cursor.clone();
+    let payload_start = "mdp2.".len();
+    let replacement = if tampered_cursor.as_bytes()[payload_start] == b'A' {
+        'B'
+    } else {
+        'A'
+    };
+    tampered_cursor.replace_range(payload_start..payload_start + 1, &replacement.to_string());
+    tampered_cursor_request.cursor = Some(tampered_cursor);
+    assert!(
+        provider_runtime
+            .select_page_at_synthetic_for_test(
+                &tampered_cursor_request,
+                &plan,
+                &rights_profile_sha256,
+                now_unix_seconds,
+            )
+            .is_err()
+    );
+
+    let research_rights_profile_sha256 = hash_cache_rights_profile(
+        "",
+        test_support::research_principal().principal_scope_sha256(),
+    );
+    assert!(matches!(
+        provider_runtime.select_page_at_synthetic_for_test(
+            &continued_request,
+            &plan,
+            &research_rights_profile_sha256,
+            now_unix_seconds,
+        ),
+        Err(crate::market_query::providers::ProviderQueryError::CursorQueryMismatch)
+    ));
+
+    let mut changed_plan = plan.clone();
+    changed_plan.calendar_version.push_str("-changed");
+    assert!(matches!(
+        provider_runtime.select_page_at_synthetic_for_test(
+            &continued_request,
+            &changed_plan,
+            &rights_profile_sha256,
+            now_unix_seconds,
+        ),
+        Err(crate::market_query::providers::ProviderQueryError::CursorPlanChanged)
+    ));
+
+    let last_run_failure = super::response::response_for_provider_failure(
+        &continued_request,
+        &plan,
+        Some(&next_selection),
+        crate::market_query::providers::ProviderQueryError::ProviderUnavailable,
+        market_contracts::BarsCacheStatusV1::Unavailable,
+    )
+    .unwrap();
+    continued_request
+        .validate_response(&last_run_failure)
+        .unwrap();
+    assert!(!last_run_failure.truncated);
+    assert!(last_run_failure.continuation_cursor.is_none());
+
     let row_start = ProtoTimestampV2::parse("2026-01-05T21:00:00Z").unwrap();
     let row_end = ProtoTimestampV2::parse("2026-01-05T21:01:00Z").unwrap();
     let received_at = ProtoTimestampV2::parse("2026-01-05T21:01:01Z").unwrap();

@@ -321,6 +321,10 @@ entitlement and actual feed, and A04 admission plus conflict checks remain requi
 cache promotion. Missing Futu configuration remains a capability gap; provider authentication,
 permission, and transport failures keep their existing error behavior. Calendar instances and
 archive authority are independent of this attempt policy.
+Provider failure pages keep their classified gaps and unknown source facts. If the frozen plan
+contains an older run, the existing principal/plan-bound cursor advances to it with `truncated=true`;
+the final run has no continuation. This preserves access to later planned pages without retrying
+the failed provider, changing NEW/BUFFER routing, or admitting failed observations to the cache.
 
 On Linux only, an operator may mount
 `GET /v2/local-test/capture-pairs/{receipt_sha256}/verify` by supplying all three explicit startup

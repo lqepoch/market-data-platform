@@ -537,6 +537,9 @@ cursors are authenticated and principal-bound; their dedicated signing-key lifec
 documented with the runtime configuration. An explicitly configured Futu Gateway port enables
 only provisional historical attempts for planner NEW/BUFFER slices; it does not claim realtime
 transport, entitlement, feed, or cache authority.
+When a planned provider run fails, its empty partial page retains the classified gap and a
+signed continuation to the next existing run, if any. Continue paging to reach older available
+history; this never substitutes a different provider for the failed run.
 
 The separate `GET /v1/research/yfinance/daily` endpoint is default-off and returns validated
 Yahoo bridge observations for research display without converting them to Bars V1 or asserting
