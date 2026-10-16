@@ -29,6 +29,12 @@ jobs:
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
 
+      - name: Cache locked Linux compilation inputs
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          shared-key: mdp-linux-verify-v1
+          cache-on-failure: true
+
       - name: Install pinned supply-chain tools
         run: |
           cargo +1.99.0 install cargo-deny --version 0.20.2 --locked
@@ -48,6 +54,9 @@ jobs:
 
       - name: Run Rust tests
         run: CARGO_BUILD_JOBS=2 cargo +1.99.0 test --offline
+
+      - name: Run feature-gated library safety tests
+        run: CARGO_BUILD_JOBS=2 cargo +1.99.0 test --offline --features offline-capture-synthetic --lib
 
       - name: Run offline fixture CLI integration
         run: CARGO_BUILD_JOBS=2 cargo +1.99.0 test --offline --features offline-capture-synthetic --test offline_capture_cli
@@ -81,6 +90,11 @@ jobs:
           persist-credentials: false
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.99.0 --profile minimal
+      - name: Cache locked Windows compilation inputs
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          shared-key: mdp-windows-runtime-v1
+          cache-on-failure: true
       - name: Install pinned Windows Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:

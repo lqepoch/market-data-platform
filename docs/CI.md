@@ -17,6 +17,13 @@ full commit SHA `3d3c42e5aac5ba805825da76410c181273ba90b1` (release `v7.0.1`). I
 checkout credentials. The job token has `contents: read`; all other workflow permissions are
 disabled.
 
+Compilation caching uses `Swatinem/rust-cache` v2.9.2 at
+`6323deb102c322ba6fcbdcafc7e3dddab59af2b6`, with separate Linux/Windows scopes and the
+action's lockfile/toolchain fingerprint. GitHub isolates PR cache writes from main. Cache hits
+never replace the current candidate's tests or packaging validation. The feature-gated library
+safety suite is an explicit Linux step as required by AGENTS, in addition to opt-in Clippy and CLI
+integration; compiling those tests alone is not evidence of executing them.
+
 ## Windows local-evaluation runtime
 
 The separate `Windows Core Bars runtime` job uses `windows-2022`, Rust 1.99.0, Python 3.14.6 and
