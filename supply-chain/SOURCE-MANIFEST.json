@@ -2297,7 +2297,7 @@
       },
       {
         "path": "scripts/windows_runtime.py",
-        "sha256": "231939338647b15d01d16d5b7b66b893082260c3f386fc156c81ddde1c18fdd2"
+        "sha256": "bda106127e8cb5cced4221abd588ffde83b63f76e0ec49fea90c874503b9096b"
       },
       {
         "path": "src/aggregate.rs",
@@ -2717,10 +2717,10 @@
       },
       {
         "path": "tests/test_windows_runtime.py",
-        "sha256": "8c1264d41d276e6835caa96a5ec5482175a20fd3a57d473d981ebe1b28e33e90"
+        "sha256": "64f4ee11fad8a55330b2949fb4c632c35ae5a6298a1a3b5517d511bc75802e00"
       }
     ],
-    "sha256": "b3782a3f10b71531ab96f8e7881194c1d980f644299f9531bf004fffcfb7280a"
+    "sha256": "f9d06fca2bd1b1473c1b67ca227964d0e63583c5055c2ee18ca0e85114a74aca"
   },
   "tools": {
     "cargo_cyclonedx": "0.5.9",

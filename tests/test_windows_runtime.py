@@ -62,6 +62,12 @@ class WindowsRuntimePackageTests(unittest.TestCase):
                 self.directory, "2" * 40, self.source_manifest_sha256
             )
 
+    def test_source_manifest_mismatch_is_rejected(self) -> None:
+        with self.assertRaises(runtime.RuntimeFailure):
+            runtime.verify_runtime_directory(
+                self.directory, self.candidate, "b" * 64
+            )
+
     def test_tampered_package_member_is_rejected(self) -> None:
         with (self.directory / "LICENSE").open("ab") as stream:
             stream.write(b"tamper")

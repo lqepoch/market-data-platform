@@ -301,9 +301,9 @@ def b64url(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
 
 
-def make_market_token(secret: str, *, research: bool = False) -> str:
-    issuer = "openterminal-research" if research else "eqoboard-openterminal"
-    kid = "mdp-research" if research else "mdp-terminal"
+def make_market_token(secret: str) -> str:
+    issuer = "eqoboard-openterminal"
+    kid = "mdp-terminal"
     now = int(time.time())
     header = {"alg": "HS256", "typ": "JWT", "kid": kid}
     claims = {
