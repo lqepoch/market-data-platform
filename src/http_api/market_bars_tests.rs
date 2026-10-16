@@ -689,9 +689,12 @@ fn failed_and_exhausted_futu_run_advances_to_the_next_planned_provider_run() {
     assert!(failed_futu.rows.is_empty());
     assert_eq!(failed_futu.coverage_status, BarsCoverageStatusV1::Partial);
     assert!(failed_futu.truncated);
-    assert!(failed_futu.gaps.iter().any(|gap| {
-        gap.reason_code == CoverageGapReasonV1::ProviderUnavailable
-    }));
+    assert!(
+        failed_futu
+            .gaps
+            .iter()
+            .any(|gap| { gap.reason_code == CoverageGapReasonV1::ProviderUnavailable })
+    );
     let failed_futu_cursor = failed_futu
         .continuation_cursor
         .as_ref()
@@ -713,11 +716,13 @@ fn failed_and_exhausted_futu_run_advances_to_the_next_planned_provider_run() {
             feed: crate::session_router::AlpacaFeed::Sip
         }
     );
-    assert!(next_selection
-        .provider_group()
-        .slices_recent_to_old
-        .iter()
-        .all(|slice| slice.phase == Some(crate::session_router::SessionPhase::Pre)));
+    assert!(
+        next_selection
+            .provider_group()
+            .slices_recent_to_old
+            .iter()
+            .all(|slice| slice.phase == Some(crate::session_router::SessionPhase::Pre))
+    );
 
     let mut tampered_cursor_request = continued_request.clone();
     let mut tampered_cursor = failed_futu_cursor.clone();
@@ -729,14 +734,16 @@ fn failed_and_exhausted_futu_run_advances_to_the_next_planned_provider_run() {
     };
     tampered_cursor.replace_range(payload_start..payload_start + 1, &replacement.to_string());
     tampered_cursor_request.cursor = Some(tampered_cursor);
-    assert!(provider_runtime
-        .select_page_at_synthetic_for_test(
-            &tampered_cursor_request,
-            &plan,
-            &rights_profile_sha256,
-            now_unix_seconds,
-        )
-        .is_err());
+    assert!(
+        provider_runtime
+            .select_page_at_synthetic_for_test(
+                &tampered_cursor_request,
+                &plan,
+                &rights_profile_sha256,
+                now_unix_seconds,
+            )
+            .is_err()
+    );
 
     let research_rights_profile_sha256 = hash_cache_rights_profile(
         "",
